@@ -31,7 +31,8 @@
 - TraceDev (ISSTA 2026), requirement-to-code traceability: https://github.com/ISSE-Lab/ISSTA2026-TraceDev
 - Trust-aware multi-agent traceability with confidence-calibrated knowledge graphs (2026): https://arxiv.org/abs/2606.17203
 - TDAD, graph-based impact analysis to reduce agent regressions (2026): https://arxiv.org/abs/2603.17973
-- GumTree — fine-grained source-code differencing (tree matching).
+- GumTree — fine-grained source-code differencing (tree matching); relevant only to an optional structure tool.
+- W3C Web Annotation Data Model (TextQuoteSelector, TextPositionSelector) and Hypothesis — robust anchoring of annotations to text by quote plus context, the model for code-unit anchors (§8.3).
 - Kleppmann et al. — a highly available move operation for replicated trees.
 
 **Versioning and storage patterns**

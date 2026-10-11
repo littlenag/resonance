@@ -4,7 +4,7 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 
 **S1 — Onboard an existing repository.** A developer runs `resonance init` in an existing git repository.
 - AC1: No existing file is modified, moved or reformatted.
-- AC2: The graph is populated with files and code units, and with any requirements it can import (§8.10).
+- AC2: The graph is populated with files and with any requirements it can import (§8.10). Code units appear as people and agents declare them; nothing is parsed.
 - AC3: Build, test and IDE behavior are unchanged.
 - AC4: Removing Resonance (deleting `.resonance/`) leaves a working project.
 - AC5: In a repository with no committed Resonance data, `init` starts in offline mode, and `git status` is unchanged afterwards (S15, FR-180).
@@ -18,7 +18,7 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 
 **S4 — Annotate code for an agent.** A code-fluent developer marks a function ("do not change the signature; external callers depend on it") or calls out a set of functions as relevant to a task.
 - AC1: The annotation is attached to the code unit, not to a line number.
-- AC2: It survives edits, reformatting, and moves or renames of the code unit (§8.3).
+- AC2: It survives edits elsewhere in the file, edits inside the region, and moves or renames of the file (§8.3). A region rewritten beyond recognition is orphaned and goes on the repair list for the agent to re-anchor; it is never silently re-attached.
 - AC3: If its anchor disappears, the annotation becomes *orphaned* and is surfaced, never silently lost. If implemented correctly, we would be able to ask where that annotation used to be anchored in a previous version, and surface that as helpful context.
 - AC4: Agents receive relevant annotations when working on that code unit.
 
@@ -37,7 +37,7 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 
 **S8 — Developer edits a file in an IDE.**
 - AC1: The file save is accepted immediately; the graph's text for that file updates.
-- AC2: Structure and links update once the file parses; until then they are marked stale, not deleted.
+- AC2: Code-unit anchors in the file are re-located immediately. Any that cannot be re-located become orphaned and appear on the repair list; they are never deleted.
 - AC3: No IDE or build-tool behavior changes.
 - AC4: Any Resonance-aware tools surface changes, and the effect on the graph.
 

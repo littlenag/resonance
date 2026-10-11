@@ -42,7 +42,7 @@ Textual operations are recorded locally (for undo, history, recovery and self-wr
 
 | Operation | Meaning |
 | --- | --- |
-| `identity.rename(id, newQualifiedName)` | Same node, new name |
+| `identity.rename(id, newName)` | Same node, new name |
 | `identity.move(id, newLocation)` | Same node, new file or parent |
 | `identity.split(id, [newIds])` | One node became several; links need re-targeting |
 | `identity.merge([ids], newId)` | Several nodes became one |

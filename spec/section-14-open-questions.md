@@ -7,7 +7,7 @@
 | **OQ-03** | Which graph engine replaces SQLite, and when? Build, fork, or build on an existing one (G11)? | Mark expects to move to a real graph engine after research. SQLite stays behind the store API until then (§8.2.1); candidates are judged against the conformance suite and NFR-030–035. |
 | **OQ-04** | API transport: JSON-RPC or gRPC over Unix sockets? | §8.8 |
 | **OQ-05** | Is a general query language needed, and which one? | Start with fixed operations and a read-only SQL escape hatch. |
-| **OQ-06** | Which languages are supported first? | Rust first, for dogfooding (FR-114, `spec/mvp.md`); then likely Scala plus the evaluation codebase's language. |
+| **OQ-06** | Which languages would an optional structure tool cover, if built? | Not applicable to core, which is language-agnostic and parses no code (FR-110, FR-114). |
 | **OQ-07** | Windows support: when, and with which file-event API? | Not in the first release. |
 | **OQ-08** | Do git worktrees share a derived-data cache? | §8.6 FR-070 |
 | **OQ-09** | Is verification evidence committed, summarized, or kept local? | Proposed: full records local, latest summary committed. |

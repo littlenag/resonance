@@ -31,13 +31,16 @@ Taking this model to its logical conclusion Resonance will offer a container in 
 
 ### 2.5 Position on code structure  [Decided]
 
-Mark is skeptical that giving agents easy access to *code structure* (as Mache does, using tree-sitter) is a first-order benefit. Agents already handle large codebases well when requests are well structured. Structural access is likely a second- or third-order efficiency gain, useful mainly for planning and verifying large refactors. Consequences for this specification:
+Mark is skeptical that giving agents easy access to *code structure* (as Mache does, using tree-sitter) is a first-order benefit. Agents already handle large codebases well when requests are well structured. Structural access is likely a second- or third-order efficiency gain, useful mainly for planning and verifying large refactors.
 
-- The code-structure layer is **derived, cheap, and secondary** (§8.9).
-- The product's value is concentrated in the **intent and verification layers** (§6).
-- Whether structure measurably helps is **tested before building** (§11, Phase 0).
+Going further, **Resonance core does not parse source code.** It does not turn source into syntax trees or any other abstract data type, and semantic understanding of code (symbols, types, call graphs) is outside Resonance's scope as Mark envisions it today. Consequences for this specification:
 
-To the extent code structure is meaningful, it will need to be replaced by tooling that produces views that fit an "agent's mind". It is not yet clear how that tooling is to be created.
+- **Code units are regions of file content that people and agents name.** Resonance tracks them through edits by their text (§6.2, §8.3). The semantic judgement ("this is the function that implements FR-042") comes from the agent or developer, who already understands the code. Resonance's job is to remember that judgement and keep it attached.
+- **An optional structure tool, maybe.** A separate tool that derives structure (with tree-sitter or compiler data, for example) MAY be offered later. It would write ordinary code units and edges through the API. Mark is not yet sold on the idea, and Phase 0 tests whether it would be worth building (§8.9, §11).
+- **Value is in intent and verification.** The product's value is concentrated in the intent and verification layers (§6).
+- **An alternative to files, eventually.** As an eventual goal, Resonance offers an alternative to files for languages that want to store their source in another format (G15). Even then, understanding that source remains the language's job, not Resonance's.
+
+To the extent code structure is meaningful, it will need to be replaced by tooling that produces views that fit an "agent's mind". It is not yet clear how that tooling is to be created, or whether it belongs in Resonance.
 
 ### 2.6 Why this can work now when earlier attempts stalled  [Decided]
 

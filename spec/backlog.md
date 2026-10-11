@@ -46,9 +46,9 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **S14** [daemon] Discovery without the registry; `doctor` shows readiness and lag.
 
 ## B2 — Stronger identity reconciliation
-- **FR-031** [identity] Every clone agrees on IDs that authored data refers to: deterministic derived IDs, or committed ID minting.
-- **FR-032** (remainder) [identity] Content-similarity and GumTree-style tree-diff matching.
-- **FR-033** [identity] Identity decisions (rename, move, split, merge) recorded as identity operations so that clones agree. MVP-013 records move and rename locally; split and merge are not covered.
+- **FR-031** [identity] Every clone agrees on IDs that authored data refers to, by committing code-unit creation and re-anchoring operations (with B6).
+- **FR-032** (remainder) [identity] Smarter textual re-anchoring: token- or character-level diffs, better approximate matching, searching unchanged files for moved regions. Still no parsing (NG4).
+- **FR-033** (remainder) [identity] Splits and merges declared through the API and recorded as identity operations; operations committed so that clones agree (with B6).
 - **FR-036** [identity] Real file moves detected by content similarity and recorded.
 - **§9.4** (remainder) [identity] `identity.split` and `identity.merge`, and producing a `Conflict` for irreconcilable concurrent identity operations.
 
@@ -76,7 +76,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 
 ## B4 — Breadth of intent and ontology
 - **§6.2** (remainder) [model] Node types `Design`, `Constraint` and `Conflict`; requirement `kind`, `priority`, and statuses `draft`/`superseded`.
-- **§6.3** (remainder) [model] Edge types `derivedFrom`, `supersedes`, `realizes` and `references`.
+- **§6.3** (remainder) [model] Edge types `derivedFrom`, `supersedes` and `realizes`. (`references` comes only from the optional structure tool, B13.)
 - **§6.4** [model] Stable identity anchored on intent; code units as the current realization.
 - **FR-007** [model] Namespaced extension types (`acme:Service`) that do not change core meaning.
 - **FR-008** [model] Unknown extension types preserved on read and write.
@@ -140,7 +140,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **FR-173** (remainder) [adoption] Reversibility for `leave`, `unshare` and stage changes; Markdown export option.
 - **FR-174** [adoption] Hold-outs work with plain git; taking either side of a `.resonance/` conflict is safe.
 - **FR-175** [adoption] Both data paths at every stage.
-- **FR-176** [adoption] Consistency checks: blocking for opted-in developers; CI reports at stage 2 and blocks at stage 3.
+- **FR-176** (stage 2 part) [adoption] Consistency checks: blocking for opted-in developers; CI reports at stage 2.
 - **FR-177** [adoption] Never overwrite existing hooks or hook managers.
 - **FR-178** [adoption] Path-scoped governance (OQ-20).
 - **FR-179** [adoption] No tracked file outside `.resonance/` modified without confirmation.
@@ -179,12 +179,12 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **FR-222** [agent] Agent-side harness hooks gating git commands.
 - **FR-223** [agent] Agents are the first line; hooks, CI and recovery back them up.
 - **FR-224** [agent] Measure kit effectiveness.
-- **FR-225** (remainder) [agent] An orientation at the end of onboarding.
+- **FR-225** [agent] An orientation at the end of onboarding.
 - **NFR-046** [nfr] Over 95% of agent commits pass checks on the first attempt.
 - **S22** [agent] Onboard the agent and let it steward a change.
 
 ## B8 — Guardrails and user communication
-- **FR-013** (remainder) [guardrails] `doctor` reverts unparseable core files (git configs and similar) to known-good versions.
+- **FR-013** (remainder) [guardrails] Parse git configuration; `doctor` reverts unparseable core files (git configs and similar) to known-good versions.
 - **FR-200** [guardrails] Every message says what, why (with git evidence), what was done, where things were preserved, how to undo, and what next.
 - **FR-201** [guardrails] Info, attention and action-required levels.
 - **FR-202** [guardrails] Aggregated messages.
@@ -222,21 +222,22 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 ## B11 — Enforcement (stage 3)
 *Depends on B6, B7 and B9.*
 
-- **FR-176** (remainder) [adoption] Stage 3 CI rejection, an exception path, absorbing what slips through (C8).
+- **FR-176** (stage 3 part) [adoption] Stage 3 CI rejection, an exception path, absorbing what slips through (C8).
 - **Roadmap Phase 7** [adoption] `resonance enforce`, team-wide adoption-health reporting.
 
 ## B12 — Verification and impact
 - **FR-135** (remainder) [verification] Test frameworks beyond `cargo test`; per-language selectors.
 - **§6.3** (remainder) [verification] Indirect checking of `satisfies` through tests that verify both endpoints.
+- **FR-105** (remainder) [query] A general query language (OQ-05).
 - **Impact operations** [query] What is affected by changing a requirement, decision or code unit (§8.8 "Impact").
 - **OQ-09** [verification] Commit evidence summaries vs keep them local.
 
-## B13 — More languages and structure
-- **FR-111** (remainder) [extraction] Extractors for further languages.
-- **FR-112** [extraction] Reference edges from compiler-grade data (SemanticDB, SCIP, LSP); tree-sitter fallback.
-- **FR-113** [extraction] Further structural investment justified by Phase 0.
-- **FR-114** (remainder) [extraction] Scala, plus the evaluation codebase's language (OQ-06).
-- **FR-105** (remainder) [query] A general query language (OQ-05).
+## B13 — Optional structure tool (outside core; not yet committed to)
+*A separate tool, never part of `resonance-core` (NG4, FR-110). Mark is not yet sold on it; build it only if Phase 0 (B17) justifies it.*
+
+- **FR-112** [structure] An optional tool that supplies code units and reference edges through the API with provenance `imported`, preferring compiler-grade data (SemanticDB, SCIP, LSP).
+- **FR-113** [structure] Investment in structural queries justified by Phase 0.
+- **OQ-06** [structure] Which languages such a tool would cover.
 
 ## B14 — IDE
 - **FR-140** [ide] Works fully without an IDE plugin (already true; kept as a constraint).
@@ -270,5 +271,6 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **§11.1–§11.6** [eval] Hypotheses H1 and H2, tasks, arms A–D, metrics, protocol, decision gates.
 
 ## Long term
+- **G15** [model] An alternative to files: languages may store their source in Resonance in another format; Resonance stores and renders it, the language understands it (§2.5, §8.1 rationale).
 - **§2.7** [model] Resonance's own change control, mimicking the git CLI; captured collaboration context (tickets, reviews); runtime feedback packets.
 - **OQ-19** [git] Files leave git (stage 4).

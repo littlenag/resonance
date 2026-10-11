@@ -7,8 +7,8 @@ The graph is divided into layers by where information comes from, because origin
 | Layer | Contents | Origin | Versioned in git? |
 | --- | --- | --- | --- |
 | **Intent** | Requirements, decisions, designs, constraints | Authored by people and agents | Yes |
-| **Realization** | Files (as content), code units (modules, types, functions), their references | Files: authored as text. Code units: derived from text | Files: yes, as ordinary files. Code units: no, rebuilt |
-| **Verification** | Tests (as code units), test runs, evidence records | Tests: derived. Evidence: recorded from execution | Evidence summaries: [Open] (OQ-09) |
+| **Realization** | Files (as content); code units (named regions of file content) | Files: authored as text. Code units: declared by people and agents; their current positions are tracked from the text | Files: yes, as ordinary files. Code units: yes (identity and anchors); positions recomputed |
+| **Verification** | Tests (code units with a way to run them), test runs, evidence records | Tests: declared by people and agents. Evidence: recorded from execution | Evidence summaries: [Open] (OQ-09) |
 | **Annotation** | Notes, call-outs, constraints on specific code units | Authored | Yes |
 | **Identity** | Stable IDs and their history (renames, moves, splits, merges) | Recorded by reconciliation and by people | Yes |
 
@@ -25,8 +25,8 @@ Keep the core small. Everything else goes through namespaced extensions (§6.6).
 | `Design` | A design element: component, interface, flow | `title`, `description` |
 | `Constraint` | A rule code must obey (performance, compatibility, policy) | `text`, `scope` |
 | `File` | A file in the working tree | `path`, `blob` (content hash), `language` |
-| `CodeUnit` | A module, type, function, method, or other symbol | `kind`, `qualifiedName`, `language`, `span` (file + byte range) |
-| `Test` | A test case (a `CodeUnit` specialization) | `framework`, `selector` (how to run it alone) |
+| `CodeUnit` | A named region of a file's content, such as a function or type as a person or agent sees it. Declared by a person or agent; Resonance does not parse code to find it (§2.5) | `name`, `kind` (free text: function, type, test, block…), `file`, `anchor` (byte range plus quoted text and surrounding context, §8.3) |
+| `Test` | A test case (a `CodeUnit` specialization) | `run` (how to run it alone), `framework` (optional) |
 | `Evidence` | The outcome of a check, such as a test run | `kind`, `result`, `commit`, `timestamp`, `toolVersion` |
 | `Annotation` | A note or call-out from a person or agent | `text`, `kind` (note, warning, call-out, instruction), `author` |
 | `Conflict` | An unresolved semantic conflict found during a merge | `ops`, `description` |
@@ -42,8 +42,8 @@ Keep the core small. Everything else goes through namespaced extensions (§6.6).
 | `supersedes` | Requirement/Decision → same type | Replaces an earlier version | No |
 | `realizes` | CodeUnit → Design | This code is the current realization of a design element | No |
 | `annotates` | Annotation → any | Attaches an annotation | No |
-| `contains` | File/CodeUnit → CodeUnit | Structural containment | Derived |
-| `references` | CodeUnit → CodeUnit | Calls, uses, imports, inherits | Derived |
+| `contains` | File/CodeUnit → CodeUnit | Containment of one region in another | Derived from anchor ranges |
+| `references` | CodeUnit → CodeUnit | Calls, uses, imports, inherits | Not produced by core; only by an optional structure tool (FR-112) |
 | `evidences` | Evidence → edge or node | This evidence supports a link or node status | — |
 
 Every edge carries: `provenance` (human, agent, derived, imported), `author`, `createdAt`, `confidence` (for agent-created links), `status` (§6.5), and optional `evidence` references.

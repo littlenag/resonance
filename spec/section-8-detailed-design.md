@@ -7,14 +7,14 @@
 That is the end state for a whole team, and it is reached one developer at a time (§8.16). **A developer who joins a repository's shared graph has opted in, and from that moment the graph is their source of truth, including for file bytes.** All of their operations (edits, commits, merges, rebases, pushes) must stay consistent with the graph, and their agent does most of the work of keeping it so (§8.20). For developers who have not opted in, git remains the source of truth for their own work. That includes developers trying Resonance in offline mode, whose private graph is derived from git history and the file tree (§8.17). Their commits reach the graph through ingest, and files arriving that way are taken seriously and never silently discarded (§8.18). Graph-only data (intent, links, annotations, identity) is authoritative in the graph at every stage. [Decided]
 
 - **FR-010** The graph MUST hold the exact content of every tracked file, stored as content-addressed blobs, at every adoption stage. For every developer who has opted in, the graph's content is authoritative for bytes (FR-203). For an offline trial user, git and the file tree are the input, and the graph follows them (§8.17). Changes made by developers who do not run Resonance reach the graph through ingest (§8.18). Path scoping may limit which files Resonance governs at all (FR-178). [Decided in substance]
-- **FR-011** Structure derived from file content (code units, references) MUST be recomputable from that content and MUST NOT be the only record of anything a person or agent authored. [Proposed]
-- **FR-012a** A file change on disk MUST update the graph's copy of that file whether or not the file parses. [Proposed]
+- **FR-011** The positions of code-unit anchors, and containment derived from them, MUST be recomputable from file content plus the recorded anchors, and MUST NOT be the only record of anything a person or agent authored. [Proposed]
+- **FR-012a** A file change on disk MUST update the graph's copy of that file whatever its content. Resonance never needs to understand a file to store it. [Proposed]
 - **FR-012b** File changes that occur while the daemon is not running MUST be detected at start-up (FR-047) and classified (§8.18) before anything is written. Changes that a git operation explains (checkout, pull, reset and so on) are applied to the graph as git-originated. For a developer who has opted in, Resonance is their source of truth (§8.16), so any remaining unexplained change is a *conflict* that is surfaced to the user. The file is restored from the graph, the disk version is preserved in the recovery journal (FR-192), and the user, usually through their agent, is asked whether to merge, keep the disk version, discard it, or take other action. In offline mode, where the graph follows the file tree, such changes are simply ingested (FR-188). [Decided: such changes become conflicts that the user resolves. Proposed: classify first, and preserve the disk version in `.resonance/local/recovery/` rather than renaming it in the source tree; see T9.]
-- **FR-013** When a file does not parse, its derived structure MUST be marked stale, and links and annotations on it MUST be kept. This should be an exception circumstance as there is no particular parsing of user files that is required. Unparseable git files must result in a message to the user. The `doctor` command should revert unparseable core files (like git configs, etc) to their known good graph counterparts. [Proposed]
+- **FR-013** Resonance parses only files it interprets itself: intent documents, its own configuration, and git configuration. Source code is never parsed (NG4). When such a file does not parse, what was derived from it MUST be marked stale, and links and annotations on it MUST be kept. This should be an exception circumstance as there is no particular parsing of user files that is required. Unparseable git files must result in a message to the user. The `doctor` command should revert unparseable core files (like git configs, etc) to their known good graph counterparts. [Proposed]
 - **FR-014** The working tree MUST be a standard software project for the project's language and build system. [Decided]
 - **FR-015** All graph-only information (intent, links, annotations, evidence, identity history) MUST be reachable only through the API, never as extra files mixed into the source tree. Projected intent documents (§8.10) are the one deliberate exception, and are opt-in. This is solely because tooling has yet to be built that would move these intent documents entirely into the graph. Nevertheless, real projects will have a split of graph-native and file-native intent documents. [Decided, with the exception Proposed]
 
-Rationale: storing file text in the graph and treating it as authoritative for bytes avoids the lossless round-trip problem of printing files from syntax trees (comments, whitespace, formatting). If a future version makes syntax trees primary, it should use a lossless tree that keeps trivia (as Roslyn and rust-analyzer's `rowan` do), so that rendering a file is concatenation. (No programming language in wide-spread usage is yet graph-native; resonance is a key step in enabling that future.) [Proposed]
+Rationale: storing file text in the graph and treating it as authoritative for bytes avoids the lossless round-trip problem of printing files from syntax trees (comments, whitespace, formatting), and it means Resonance never needs to understand the code it stores. If a language later chooses to store its source in Resonance in another format (G15), that format and its rendering to text are the language's responsibility; a lossless tree that keeps trivia (as Roslyn and rust-analyzer's `rowan` do) is the likely shape. (No programming language in wide-spread usage is yet graph-native; resonance is a key step in enabling that future.) [Proposed]
 
 ### 8.2 Storage
 
@@ -58,7 +58,7 @@ Illustrative core tables. These are an internal detail of the SQLite adapter (FR
 | `edges` | `id`, `type`, `src`, `dst`, `props`, `status`, `provenance`, `confidence`, `created_op`, `removed_op` |
 | `blobs` | `hash`, `bytes`, `size` |
 | `files` | `path`, `blob`, `generation`, `last_ingested_at`, `parse_state`, `authority` |
-| `spans` | `code_unit`, `file`, `start_byte`, `end_byte` |
+| `anchors` | `code_unit`, `file`, `start_byte`, `end_byte`, `quote_hash`, `quote`, `prefix`, `suffix`, `confidence` |
 | `ops` | `op_id`, `kind`, `payload`, `actor`, `hlc`, `change_set`, `delta`, `commit` |
 | `deltas` | `delta_id`, `state` (open, sealed, folded), `commit`, `epoch`, `manifest` |
 | `identity` | `id`, `lineage` (previous IDs), `op` |
@@ -84,16 +84,24 @@ SQLite is the starting engine because it is embedded, robust, ubiquitous and goo
 
 ### 8.3 Identity and reconciliation
 
-This component determines whether annotations and links survive real editing. It SHOULD be built and tested first, against real editing histories. [Proposed]
+This component determines whether annotations and links survive real editing. It SHOULD be built and tested first, against real editing histories. [Proposed] Code units are anchors on text, not parsed symbols (§2.5), so reconciliation is purely textual. Whenever meaning is needed, it comes from the agent. [Decided in substance]
 
 - **FR-030** Authored nodes (requirements, decisions, annotations, and so on) MUST receive a permanent, globally unique ID when created (for example UUIDv7 or ULID). [Proposed]
-- **FR-031** Every clone of a repository MUST agree on the IDs of nodes that authored data refers to. Either derived IDs are deterministic (a function of language, path, kind and qualified name, plus a disambiguator), or the minting of an ID is itself a committed operation. [Proposed]
-- **FR-032** After each successful parse, the daemon MUST match the new code units against the previous ones and carry IDs, links and annotations across. Matching order: same kind, qualified name and parent; then content similarity; then tree-diff matching (GumTree-style). [Proposed]
-- **FR-033** When the daemon decides that a code unit was renamed, moved, split or merged, and authored data depends on it, it MUST record that decision as an identity operation (§9.4), so that other clones apply the same judgement rather than recomputing it differently. [Proposed]
+- **FR-031** Every clone of a repository MUST agree on the IDs of nodes that authored data refers to. Code units are authored nodes with permanent IDs (FR-030), so agreement comes from committing their creation and every re-anchoring decision as operations. [Proposed]
+- **FR-032** After each change to a file, the daemon MUST re-locate every code-unit anchor in it, and carry IDs, links and annotations across. Locating proceeds in order:
+  1. Map the previous range through the text diff between the old and new content.
+  2. If the anchored text was deleted or rewritten, search the file for the quoted text, using the surrounding context to disambiguate.
+  3. Search other changed files for it (a move).
+  4. Accept an approximate match of quote and context above a threshold, with its confidence recorded.
+  5. Otherwise orphan the anchor (FR-034).
+
+  No parsing is involved. [Proposed]
+- **FR-033** When the daemon re-anchors a code unit to another file, or to text it matched only approximately, and authored data depends on it, it MUST record that decision as an identity operation (§9.4), so that other clones apply the same judgement rather than recomputing it differently. Splits and merges are declared by people or agents through the API. [Proposed]
 - **FR-034** When matching fails, affected links and annotations MUST become `orphaned` with a record of the last known location. They MUST NOT be deleted. [Proposed]
 - **FR-035** File identity MUST be path-based. An editor that saves by writing a temporary file and renaming it over the original MUST be treated as a new version of the same file node. [Proposed]
 - **FR-036** Real file moves MUST be detected by content similarity, as git does, and recorded as identity operations. [Proposed]
 - **FR-037** People and agents MUST be able to correct a reconciliation decision (for example, re-attach an orphaned annotation) through the API. [Proposed]
+- **FR-038** When a region is rewritten beyond textual recognition, deciding what it now corresponds to is a semantic judgement, and it belongs to the agent. Such code units, and approximate matches below a confidence threshold, go on the repair list. The agent, which understands the code, re-anchors, splits, merges or retires them through the API (FR-037, FR-238). [Proposed]
 
 ### 8.4 Watcher and ingest
 
@@ -106,7 +114,7 @@ This component determines whether annotations and links survive real editing. It
 - **FR-046** Generated and build-output directories MUST NOT be ingested as graph content. Defaults include `target/`, `.bsp/`, `.bloop/`, `.metals/`, `build/`, `dist/`, `out/`, `.gradle/`, `node_modules/`, `.venv/`, `__pycache__/`. The watcher SHOULD also respect `.gitignore`. Mache's experience (a watcher on `target/` leaking roughly 129,000 file descriptors) shows why this matters. [Proposed]
 - **FR-047** On startup, the daemon MUST reconcile the graph against the disk before serving queries, using content hashes. It MAY use FSEvents' replay-since-event-ID as an optimization, but MUST fall back to a full hash scan because that history is advisory. The order of catch-up and the classification of each difference follow FR-195. [Proposed]
 - **FR-048** A burst of changes that matches a git operation MUST be handed to the git monitor instead of being processed as individual edits (§8.6). [Proposed]
-- **FR-049** Ingest of a changed file MUST be incremental: re-hash, update the blob, re-extract that file, reconcile identity, update link statuses. [Proposed]
+- **FR-049** Ingest of a changed file MUST be incremental: re-hash, update the blob, re-locate the anchors in that file, update link statuses. [Proposed]
 
 ### 8.5 Projection writer (graph → disk)
 
@@ -241,15 +249,15 @@ Operation groups [Proposed]:
 
 - **FR-105** A general query language is [Open] (OQ-05). Proposed default: a fixed set of operations like those above, plus a read-only SQL escape hatch over documented views, offered only as an engine-specific, unstable capability that will change when the engine changes (FR-168). Cypher-like or Datalog-like languages can be added once real query needs are known.
 
-### 8.9 Code-structure extraction (secondary layer)
+### 8.9 Code structure (outside core)
 
-Consistent with §2.5, this layer is deliberately minimal until Phase 0 says otherwise.
+Consistent with §2.5, Resonance core does not parse source code. This section records that boundary.
 
-- **FR-110** Extractors MUST be pluggable per language. [Proposed]
-- **FR-111** The minimum extracted structure is: files, modules or packages, types, functions and methods, and tests, with their spans. This is enough to anchor links and annotations. [Proposed]
-- **FR-112** Reference edges (calls, uses, implements) are OPTIONAL and SHOULD come from compiler-grade semantic data where available (for example SemanticDB for Scala, or SCIP / language-server data), because questions such as "who calls this through an interface" or "what breaks if this signature changes" need name and type resolution, which syntax-only parsing cannot provide reliably. Tree-sitter MAY be used as a syntax-only fallback. [Proposed]
+- **FR-110** Resonance core MUST NOT parse source code or depend on language-specific parsers. Code units and tests are declared by people and agents through the API. Importers MAY create nodes only from files that Resonance itself interprets, such as intent documents. [Decided]
+- **FR-111** The minimum structure Resonance provides is files, plus the code units and tests that people and agents declare, with their anchors. This is enough to anchor links and annotations, and it works for every text file in every language. [Decided in substance]
+- **FR-112** Richer structure (types, functions, and reference edges such as calls, uses and implements) MAY be supplied by an optional, separate tool. That tool writes ordinary code units and edges through the API, with provenance `imported`, and SHOULD prefer compiler-grade data (SemanticDB, SCIP, language servers) over syntax-only parsing. Whether to build it is [Open]: Mark is not yet sold on it. [Proposed]
 - **FR-113** Further investment in structural queries MUST be justified by Phase 0 results (§11). [Decided in substance]
-- **FR-114** The first supported languages are [Open] (OQ-06). Rust comes first, because Resonance is written in Rust and dogfoods on its own code (`spec/mvp.md`); then likely Scala, plus the main language of the codebase used for evaluation. [Proposed]
+- **FR-114** Because core is language-agnostic, Resonance itself has no "first supported language": any text file can carry code units. Which languages an optional structure tool would cover, if built, is [Open] (OQ-06). [Proposed]
 
 ### 8.10 Intent layer authoring and import
 
@@ -463,6 +471,8 @@ Onboarding Resonance explicitly includes onboarding the developer's agent. Befor
   - Run `share`, `unshare`, `enforce`, `eject` or `compact --commit`.
   - Run a git command that could discard uncommitted graph state (`reset --hard`, `checkout -- <path>`, `clean -fdx`, `stash drop`, force-push) without first checking `resonance status` and getting confirmation.
 - **FR-219** **Traceability duties.** The agent MUST:
+  - Declare code units and tests for the code it writes or needs to talk about. Resonance does not parse code, so this is how code enters the graph.
+  - Keep anchors healthy by working through the repair list (FR-038).
   - Link the code and tests it writes to intent (`satisfies`, `verifies`), with agent provenance (FR-134).
   - Run linked tests to record evidence (FR-135).
   - Honor annotations and call-outs in its context pack (FR-133). For example, a "do not change this signature" annotation is a constraint, not a suggestion.

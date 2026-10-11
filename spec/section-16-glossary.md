@@ -7,7 +7,7 @@
 | **Intent layer** | Requirements, decisions, designs and constraints. |
 | **Realization** | The code that currently implements intent. |
 | **Authored data** | Anything a person or agent stated directly: intent, links, annotations. Versioned in git. |
-| **Derived data** | Anything recomputable from file content: code units, references. Not versioned. |
+| **Derived data** | Anything recomputable from file content and recorded anchors: anchor positions, containment, caches. Not versioned. |
 | **Identity layer** | Stable IDs and the recorded history of renames, moves, splits and merges. |
 | **Evidence** | A recorded result of a check, such as a test run, supporting a link. |
 | **Link status** | `asserted`, `verified`, `stale` or `orphaned` (§6.5). |
@@ -16,7 +16,8 @@
 | **Self-write suppression** | Ignoring file events caused by the daemon's own writes. |
 | **Context pack** | The bundle of intent, links, locations and annotations given to an agent for a task. |
 | **Registry** | The system-wide daemon for discovery and health. |
-| **Code Unit** | (This needs a definition!) |
+| **Code unit** | A named region of a file's content, such as a function or type as a person or agent sees it. Declared by a person or agent, and tracked by Resonance through edits by its text. Resonance does not parse code to find code units (§2.5). |
+| **Anchor** | How a code unit is attached to text: a byte range, the quoted text, and surrounding context, re-located after every change (§8.3). |
 | **Snapshot** | `.resonance/graph.db`: the committed authored and identity data as of the last compaction. Immutable between compactions. |
 | **Epoch** | The identity of a snapshot; each compaction starts a new epoch. |
 | **Delta** | A small, add-only, uniquely named file of edit-algebra operations plus a file manifest, committed next to the code. *Open* while still being written; *sealed* once committed. |

@@ -3,7 +3,7 @@
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | Links rot and people stop trusting them (the historical failure of traceability tools) | Product value collapses | Link lifecycle (§6.5); prefer execution-checkable links; surface stale links prominently |
-| Identity reconciliation makes wrong matches | Annotations attach to the wrong code | Build and test §8.3 first against real histories; orphan rather than guess; allow correction (FR-037) |
+| Anchor re-location makes wrong matches | Annotations attach to the wrong code | Build and test §8.3 first against real histories; use quoted text and context, not just positions; orphan rather than guess; confidence recorded; the agent repairs (FR-037, FR-038) |
 | Ontology grows until nobody agrees on it | Semantics become meaningless | Small core, namespaced extensions, evidence-driven additions (§6.6) |
 | File-event unreliability (coalescing, delays, missed events) | Graph silently diverges from disk | Hash-based re-examination, ingest watermark, startup reconciliation, read-your-writes (§8.4, §8.8) |
 | Committing SQLite causes merge conflicts and repository growth | Unusable for teams | Snapshot rewritten only once per compaction; add-only deltas on branches; trunk-only compaction; mechanical repair of colliding snapshots (§8.6.1, FR-154–FR-157) |

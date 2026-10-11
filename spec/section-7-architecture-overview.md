@@ -17,7 +17,7 @@ flowchart LR
             G[Git monitor]
             R[Sync and recovery]
             API[Query and mutation API]
-            X[Extractors]
+            X[Anchor tracker]
             S[Store API<br/>engine-neutral]
             SA[SQLite adapter<br/>own module]
         end
@@ -59,7 +59,7 @@ flowchart LR
 | **Per-repo daemon** | Single owner of the repo's graph: watcher, ingest, projection writer, git monitor and API in one process. | [Decided] persistent watcher; [Proposed] co-location |
 | **Watcher** | Receives OS file events for the working tree. | [Decided] |
 | **Ingest and reconcile** | Turns file changes into graph updates; maintains identity across edits. | [Proposed] |
-| **Extractors** | Language plugins that derive code units and references from file text. | [Proposed] |
+| **Anchor tracker** | Keeps code-unit anchors attached to the right text as files change, by diffing and text matching; no parsing (§8.3). | [Proposed] |
 | **Projection writer** | Writes graph-originated changes to the working tree. | [Proposed] |
 | **Git monitor** | Detects checkouts, rebases, merges and pulls; switches the daemon into bulk-reconcile mode. | [Proposed] |
 | **Sync and recovery** | Classifies every disagreement between git, the working tree and the graph using git evidence; applies authority rules; keeps the recovery journal; produces user-facing explanations (§8.18, §8.19). | [Decided] in substance; [Proposed] shape |
@@ -68,13 +68,13 @@ flowchart LR
 | **Clients** | CLI, MCP adapter for agents, IDE plugin later. | [Proposed] |
 | **Agent kit** | Instructions, a skill and harness hooks installed into each developer's agent during onboarding, plus conventions served live by the MCP adapter. Makes the agent the first line of enforcement (§8.20). | [Decided] in substance; [Proposed] shape |
 
-**Implementation language** [Decided]: Rust, for every component (daemon, CLI, MCP adapter, store adapters, extractors), organized as a Cargo workspace. Resolves OQ-11. Rust gives small, fast, single-binary daemons and CLIs with no runtime to install; this matters for per-repository daemons (FR-085) and for the locally fetched quiet CLI (FR-231).
+**Implementation language** [Decided]: Rust, for every component (daemon, CLI, MCP adapter, store adapters, anchor tracker), organized as a Cargo workspace. Resolves OQ-11. Rust gives small, fast, single-binary daemons and CLIs with no runtime to install; this matters for per-repository daemons (FR-085) and for the locally fetched quiet CLI (FR-231).
 
 ### 7.2 Principles
 
 - **P1 — Single writer per repository.** Exactly one daemon owns a repository's graph and serializes every change, whether it comes from disk or from the API. [Proposed]
 - **P2 — Unaware tools see only files.** Nothing about Resonance is visible in the working tree except the `.resonance/` directory. [Decided]
-- **P3 — Never refuse a text write.** A file saved to disk is always accepted, even if it does not parse. Structure catches up. [Proposed]
+- **P3 — Never refuse a text write.** A file saved to disk is always accepted, whatever its content. Anchors catch up. [Proposed]
 - **P4 — Absence means delay, not error.** If the daemon is down, clients wait or start it; they never receive answers from an index that does not match the disk. [Proposed]
 - **P5 — The registry is never on the request path.** [Proposed]
 - **P6 — Explicit authority.** Opting in makes the graph the developer's source of truth. For every file, at every moment, Resonance can say whether it governs that file (path scope) and where a given change came from: from a Resonance user, and therefore consistent with the graph, or from outside Resonance through git, and therefore to be absorbed (§8.16, §8.18). [Decided]

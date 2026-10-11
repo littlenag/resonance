@@ -16,11 +16,12 @@
 - **G12** — Support incremental adoption by people and by teams: offline trial by one developer, a shared graph, Resonance as source of truth for one developer, then a few, then most, and finally enforcement. Each stage must be safe to stay in indefinitely and to step back from, with strong guardrails, recovery-focused communication, and working data paths in both directions between git and the graph at every stage (§8.16–§8.19). [Decided]
 - **G13** — Keep the storage engine replaceable. SQLite is the starting engine; a dedicated graph engine is expected later. All engine-specific code sits behind an engine-neutral storage API in its own module (§8.2.1). [Decided]
 - **G14** — Onboarding Resonance includes onboarding the developer's agent, which gets foreknowledge of Resonance's conventions and operations and enforces most of them: it keeps the graph and the git tree in sync and keeps pull requests merging cleanly. Deterministic checks back it up, with hooks and CI behind those (§8.20). [Decided]
+- **G15** — As an eventual goal, offer an alternative to files for languages that want to store their source in a format other than text files. Semantic understanding of that source stays outside Resonance (NG4). [Decided]
 
 ### 3.2 Non-goals
 
 - **NG1** — No NFS-mounted file system; Mark judged NFS mounting too fraught. [Decided] The problems identified in discussion were that changes made on the server side produce no FSEvents or inotify events, and that NFS client caching delays visibility. Other virtual file systems (FUSE, FSKit) are excluded for similar file-event reasons. [Proposed]
 - **NG2** — No required changes to build tools, IDEs, test runners or CI. Integrations (such as an IDE plugin) are optional improvements. [Proposed]
 - **NG3** — Not a hosted multi-user server in the first versions. Resonance is local-first; collaboration happens through git, or other change control. [Proposed]
-- **NG4** — Code-structure extraction is not a primary investment until Phase 0 shows it pays off. [Decided in substance; see §2.5]
+- **NG4** — Resonance core does not parse source code into syntax trees or other abstract data types, and does not provide semantic understanding of code (symbols, types, references). An optional, separate structure tool may be offered later if Phase 0 justifies it (§2.5, §8.9). [Decided]
 - **NG5** — No reshaping of the data model for git's benefit. Beyond committing a SQLite snapshot plus delta files that are periodically compacted (FR-026, §8.6.1), Resonance will not adopt line-oriented formats, one-file-per-node layouts or similar structures just to improve git diffs or merges. [Decided]

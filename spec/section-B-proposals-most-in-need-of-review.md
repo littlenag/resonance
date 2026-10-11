@@ -19,3 +19,4 @@ These **[Proposed]** items shape the rest of the design most. Confirming or reje
 15. The store API's scope and the snapshot-never-live rule (FR-162, FR-169).
 16. The agent kit's layered delivery and the stewardship duties (FR-212, FR-215–FR-222).
 17. Quiet onboarding: the bootstrap and pinning mechanism, and what quiet bookkeeping may write (§8.21, OQ-22).
+18. Code units as declared, textual anchors re-located by diff and quote matching, with the agent repairing what text cannot (§8.3, FR-032, FR-038).
