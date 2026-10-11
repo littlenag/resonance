@@ -63,4 +63,4 @@ assets/                          # embedded templates: agent kit, hooks, README,
 .github/workflows/release.yml    # reproducible release builds, checksums, signatures (first releases)
 ```
 
-The licence, which affects every channel above, is still [Open] (OQ-15).
+The license, which affects every channel above, is still [Open] (OQ-15).

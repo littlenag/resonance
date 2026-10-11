@@ -272,7 +272,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **NFR-045** [nfr] Under 1% of divergences unexplained.
 - **OQ-07** [nfr] Windows support.
 - **OQ-14** [nfr] A shared multi-user graph service, or git-only collaboration.
-- **OQ-15** [nfr] Licence.
+- **OQ-15** [nfr] License.
 
 ## B18 — The binary's remaining modes, and packaging
 *Modes arrive with the increments that need them (the daemon and registry with B1, plumbing with B6 and B7, quiet mode with B9). Release packaging is needed before the first users outside the project.*

@@ -78,7 +78,7 @@ SQLite is the starting engine because it is embedded, robust, ubiquitous and goo
 - **FR-164** The committed delta format MUST be engine-neutral: it serializes edit-algebra operations (§9), not SQLite pages, rows or a SQLite file. Deltas written by one engine MUST be readable by any other. [Proposed; follows from FR-160; see T14]
 - **FR-165** The snapshot format is owned by the adapter and MUST carry a format identifier and version. A change of engine or format MUST be possible through a **migration compaction**: fold the current snapshot and deltas through the old adapter, and write the new snapshot through the new one. Delta files and git history need no rewriting (S21). [Proposed]
 - **FR-166** The store MUST support a complete engine-neutral export and import of authored and identity data as edit-algebra operations. This is the format of last resort for engine migration, backups, `resonance share` (FR-185) and `resonance eject` (FR-173). [Proposed]
-- **FR-167** A conformance test suite MUST define the store API's behaviour, and every adapter MUST pass it. A second, minimal adapter (for example in-memory) SHOULD exist from the start, to keep the boundary honest and to speed up tests. [Proposed]
+- **FR-167** A conformance test suite MUST define the store API's behavior, and every adapter MUST pass it. A second, minimal adapter (for example in-memory) SHOULD exist from the start, to keep the boundary honest and to speed up tests. [Proposed]
 - **FR-168** Engine-specific escape hatches, such as read-only SQL over documented views (FR-105) or direct read-only access to the store file (FR-081), MAY be offered only as explicitly engine-specific, unstable capabilities. They MUST NOT be part of the stable API, and MUST NOT be used by Resonance's own higher-level code. [Proposed; see T12]
 - **FR-169** The committed snapshot MUST never be the live store. The daemon reads it to build `.resonance/local/state.db` and writes a new one only during compaction, so that git checkouts, merges and stashes can replace `graph.db` safely at any moment without corrupting an open database. [Proposed]
 
@@ -96,12 +96,12 @@ This component determines whether annotations and links survive real editing. It
   5. Otherwise orphan the anchor (FR-034).
 
   No parsing is involved. [Proposed]
-- **FR-033** When the daemon re-anchors a code unit to another file, or to text it matched only approximately, and authored data depends on it, it MUST record that decision as an identity operation (§9.4), so that other clones apply the same judgement rather than recomputing it differently. Splits and merges are declared by people or agents through the API. [Proposed]
+- **FR-033** When the daemon re-anchors a code unit to another file, or to text it matched only approximately, and authored data depends on it, it MUST record that decision as an identity operation (§9.4), so that other clones apply the same judgment rather than recomputing it differently. Splits and merges are declared by people or agents through the API. [Proposed]
 - **FR-034** When matching fails, affected links and annotations MUST become `orphaned` with a record of the last known location. They MUST NOT be deleted. [Proposed]
 - **FR-035** File identity MUST be path-based. An editor that saves by writing a temporary file and renaming it over the original MUST be treated as a new version of the same file node. [Proposed]
 - **FR-036** Real file moves MUST be detected by content similarity, as git does, and recorded as identity operations. [Proposed]
 - **FR-037** People and agents MUST be able to correct a reconciliation decision (for example, re-attach an orphaned annotation) through the API. [Proposed]
-- **FR-038** When a region is rewritten beyond textual recognition, deciding what it now corresponds to is a semantic judgement, and it belongs to the agent. Such code units, and approximate matches below a confidence threshold, go on the repair list. The agent, which understands the code, re-anchors, splits, merges or retires them through the API (FR-037, FR-238). [Proposed]
+- **FR-038** When a region is rewritten beyond textual recognition, deciding what it now corresponds to is a semantic judgment, and it belongs to the agent. Such code units, and approximate matches below a confidence threshold, go on the repair list. The agent, which understands the code, re-anchors, splits, merges or retires them through the API (FR-037, FR-238). [Proposed]
 
 ### 8.4 Watcher and ingest
 

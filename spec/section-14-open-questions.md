@@ -16,7 +16,7 @@
 | **OQ-12** | Where do projected intent documents live, and in what Markdown conventions? | FR-121 |
 | **OQ-13** | Should the registry ever supervise (restart) daemons? | FR-094 |
 | **OQ-14** | Is there eventually a shared, multi-user graph service, or does collaboration stay git-only? | NG3 |
-| **OQ-15** | Licence. | Project name decided: Resonance. |
+| **OQ-15** | License. | Project name decided: Resonance. |
 | **OQ-16** | Are folded operations ever pruned from snapshots, and how? | FR-157 needs them for mechanical repair; git history keeps the original deltas. |
 | **OQ-17** | Compaction defaults: the value of N, a size trigger, how the trunk is detected, and whether the daemon compacts automatically or only CI and explicit commands do. | FR-154–FR-156 |
 | **OQ-18** | Must offline mode be branch-aware from Phase 1, or is one global local graph acceptable at first? | FR-183 |
