@@ -474,11 +474,11 @@ Onboarding Resonance explicitly includes onboarding the developer's agent. Befor
   1. Wait until the daemon has caught up (the ingest watermark has passed its last edit).
   2. Make sure no *action required* divergences are unresolved.
   3. Run `resonance check --staged` and fix what it reports. That check covers:
-     - The open delta is staged together with the code it describes.
-     - The staged files match the delta's file manifest.
-     - Nothing from `.resonance/local/` is staged.
-     - No compaction is staged on a non-trunk branch.
-     - No sealed delta or snapshot has been modified.
+    - The open delta is staged together with the code it describes.
+    - The staged files match the delta's file manifest.
+    - Nothing from `.resonance/local/` is staged.
+    - No compaction is staged on a non-trunk branch.
+    - No sealed delta or snapshot has been modified.
   4. If a finding cannot be fixed safely, stop and ask the developer.
 - **FR-216** **Before opening or updating a pull request** the agent MUST:
   - Run `resonance check --range <base>..HEAD`, which verifies that every commit's file changes are covered by delta manifests or explained, that no `Conflict` nodes are outstanding, and that the branch will merge into its target without conflicts in `.resonance/`.
@@ -514,8 +514,8 @@ Onboarding Resonance explicitly includes onboarding the developer's agent. Befor
 Developers who are not using Resonance are allowed to commit outside it and to push without Resonance's data being updated (FR-203). Quiet onboarding makes life easier for everyone else: the developer's agent runs a locally fetched Resonance CLI that quietly handles some of the bookkeeping. It can never be required. But new developers are usually given setup instructions when they join a team, and quiet onboarding is designed to be one step in those instructions. [Decided]
 
 - **FR-230** Resonance MUST offer quiet onboarding to developers who have not opted in. A quiet participant's agent runs the Resonance CLI on demand to do bookkeeping. Git stays the quiet participant's source of truth, and nothing they do is ever blocked (FR-203). [Decided]
-- **FR-231** The quiet CLI MUST be fetched locally rather than installed. A small bootstrap script committed at `.resonance/bin/resonance-quiet` fetches the CLI version pinned in `config.toml`, verifies it against a checksum also pinned there, and caches it in the user's cache directory. No system install, daemon, watcher, registry entry or background service is involved. The bootstrap command MUST be documented in `.resonance/README.md` in a form a team can paste into its new-developer setup instructions. [Proposed]
-- **FR-232** Quiet participation is opted into locally and explicitly. `resonance-quiet setup` records the choice in local git configuration (for example `resonance.participation=quiet`) and installs a quiet variant of the agent kit, which tells the agent which bookkeeping to do and when. It MUST NOT install blocking hooks. It MAY install non-blocking helpers (for example `post-commit`) if the developer agrees. [Proposed]
+- **FR-231** The quiet CLI MUST be fetched locally rather than installed. A small bootstrap script committed at `.resonance/bin/resonance-quiet` fetches the `resonance` binary version pinned in `config.toml` (the same binary everyone uses, run in quiet mode, FR-257), verifies it against a checksum also pinned there, and caches it in the user's cache directory. No system install, daemon, watcher, registry entry or background service is involved. The bootstrap command MUST be documented in `.resonance/README.md` in a form a team can paste into its new-developer setup instructions. [Proposed]
+- **FR-232** Quiet participation is opted into locally and explicitly. `resonance-quiet setup` (which runs `resonance quiet setup`) records the choice in local git configuration (for example `resonance.participation=quiet`) and installs a quiet variant of the agent kit, which tells the agent which bookkeeping to do and when. It MUST NOT install blocking hooks. It MAY install non-blocking helpers (for example `post-commit`) if the developer agrees. [Proposed]
 - **FR-233** Quiet bookkeeping is best-effort and never blocks. It consists of:
   - **After each commit, or at the latest before a push:** write a delta for the commit's changes, containing the file manifest and identity operations for detected moves and renames, attributed to the developer with provenance `quiet`. Resonance users then ingest the change as consistent (C1) rather than as an outside change (C2), and annotations follow renamed code.
   - **During merges and rebases:** resolve conflicts in `.resonance/` mechanically (FR-157, FR-193).

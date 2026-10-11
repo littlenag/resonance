@@ -203,7 +203,7 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 - **FR-105 (partial)** A fixed set of operations; no query language and no SQL escape hatch.
 - **Node addressing.** Commands accept a ULID; a requirement key (`FR-042`); a code-unit address (`path::name`) or a bare unit name where it is unique; or a file path. Ambiguous references list the candidates.
 - **CLI commands:**
-  - setup and lifecycle: `init`, `status`, `reconcile [--full]`, `rebuild-derived`, `mcp`, `agent install`, `export [--out]`, `eject`;
+  - setup and lifecycle: `init`, `status`, `reconcile [--full]`, `rebuild-derived`, `mcp`, `agent install`, `export [--out]`, `eject`, `version [--json]`;
   - intent: `import <paths…>`, `req add|edit|retire`, `decision add|edit`;
   - code units and tests: `unit add <path:START-END|path --match TEXT> --name --kind`, `unit edit`, `unit remove`, `unit list [path]`, `test add … --run CMD`;
   - linking: `link <src> <type> <dst> [--confidence]`, `unlink <edge>`, `confirm <edge>`;
@@ -244,6 +244,25 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 - **NFR-037** Never wrong answers: every answer follows a reconcile (MVP-002).
 - **NFR-038** Supported platforms are macOS and Linux.
 - **NFR-041** `resonance init` leaves `git status` unchanged.
+
+---
+
+### 3.13 The binary  `[binary]`
+
+- **FR-250 (partial)** Everything ships as the single executable `resonance`. The MVP provides the CLI and MCP modes (`resonance mcp`).
+- **FR-251 (partial)** The CLI and the MCP server share one implementation of every operation.
+- **FR-252 (partial)** There is no daemon; each command reconciles before answering (MVP-002).
+- **FR-253 (partial)** `-C <path>`; `--json`; `--dry-run` and `--yes` for `eject` and `agent install`; exit codes `0` (success), `1` (error) and `2` (usage). Configuration precedence: flags, then `RESONANCE_*` environment variables, then `.resonance/config.toml`, then defaults.
+- **FR-254 (partial)** MCP tool names mirror CLI commands (`resonance_<command>`).
+- **FR-255 (partial)** The agent instructions (MVP-014) and schema migrations are embedded in the binary. Nothing is downloaded at run time.
+- **FR-256 (partial)** `resonance version [--json]` reports the binary version, the store schema version and the MCP protocol version.
+- **FR-258** The binary refuses to write a store with a newer schema than it understands, and says which version is needed.
+
+### 3.14 Packaging  `[packaging]`
+
+- **FR-260 (partial)** The binary builds and runs on macOS and Linux, with SQLite bundled.
+- **FR-261 (partial)** The MVP channel is build from source: `cargo install --path crates/resonance-cli`, or `cargo install --git <repo>`.
+- **FR-263 (partial)** Installing the binary changes nothing anywhere. `resonance agent install` is the only user-level install, and it is explicit and previewed.
 
 ---
 

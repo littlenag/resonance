@@ -274,6 +274,26 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **OQ-14** [nfr] A shared multi-user graph service, or git-only collaboration.
 - **OQ-15** [nfr] Licence.
 
+## B18 — The binary's remaining modes, and packaging
+*Modes arrive with the increments that need them (the daemon and registry with B1, plumbing with B6 and B7, quiet mode with B9). Release packaging is needed before the first users outside the project.*
+
+- **FR-250** (remainder) [binary] Daemon, registry, quiet and plumbing modes in the same binary (with B1, B6, B7, B9).
+- **FR-251** (remainder) [binary] One implementation of every operation across all modes, including the daemon.
+- **FR-252** (remainder) [binary] CLI and MCP become clients of the daemon, starting it on demand (B1).
+- **FR-253** (remainder) [binary] Exit codes `3` and `4`; user-level configuration; `--dry-run` everywhere.
+- **FR-254** (remainder) [binary] Versioned JSON output schemas; semantic-versioning policy for the command surface.
+- **FR-255** (remainder) [binary] Embedded hook shims, `.resonance/` templates, service units, quiet bootstrap and import-format schema.
+- **FR-256** (remainder) [binary] Delta, snapshot and import-format versions in `version --json`.
+- **FR-257** [binary] Quiet mode as a restricted capability set of the same binary (with B9).
+- **FR-260** (remainder) [packaging] Release targets (macOS arm64/x86_64, Linux x86_64/aarch64, musl static).
+- **FR-261** (remainder) [packaging] GitHub Releases, crates.io, Homebrew tap; later an official formula, distribution packages, a CI container image.
+- **FR-262** [packaging] Checksums and signatures; reproducible release builds in CI.
+- **FR-263** (remainder) [packaging] Registry service install and uninstall; `uninstall --user`.
+- **FR-264** [packaging] Semantic versioning; minimum binary version recorded in committed configuration (stage 2+); exact pin for quiet mode.
+- **FR-265** [packaging] Upgrades through the install channel; daemons restart on new versions.
+- **FR-266** [packaging] `resonance uninstall --user`.
+- **§18.3** [packaging] Later deliverables outside the binary: CI wrappers, IntelliJ plugin, agent kit as a harness plugin, graph adapters.
+
 ## B17 — Evaluation (Phase 0, §11)
 *Not product code. The MVP can serve as arm C's intent server.*
 

@@ -72,6 +72,8 @@ flowchart LR
 | **Clients** | CLI, MCP adapter for agents, IDE plugin later. | [Proposed] |
 | **Agent kit** | Instructions, a skill and harness hooks installed into each developer's agent during onboarding, plus conventions served live by the MCP adapter. Makes the agent the first line of enforcement (§8.20). | [Decided] in substance; [Proposed] shape |
 
+**One binary** [Decided]: every component above that runs on a developer's or CI machine ships in the single `resonance` executable, as subcommands (§17). Packaging and distribution are in §18.
+
 **Implementation language** [Decided]: Rust, for every component (daemon, CLI, MCP adapter, store adapters, anchor tracker), organized as a Cargo workspace. Resolves OQ-11. Rust gives small, fast, single-binary daemons and CLIs with no runtime to install; this matters for per-repository daemons (FR-085) and for the locally fetched quiet CLI (FR-231).
 
 ### 7.2 Principles
