@@ -9,8 +9,8 @@ These **[Proposed]** items shape the rest of the design most. Confirming or reje
 5. Queries served by the same owner as the watcher (FR-080, FR-081).
 6. Operation-log commits (option A) as the git strategy (§8.6).
 7. Opt-in projection of intent documents as Markdown (FR-121).
-8. Evaluation arms separating code structure from intent structure (§11.3).
-9. Phase order, especially building identity reconciliation first and deferring graph-to-disk writes to Phase 4 (§12).
+8. Evaluation arms separating code structure from intent structure (§12.3).
+9. Phase order, especially building identity reconciliation first and deferring graph-to-disk writes to Phase 4 (§14).
 10. Semantic, engine-neutral deltas, and the open/sealed delta lifecycle (FR-075–FR-077, T14).
 11. Trunk-only compaction, no commits made by Resonance itself, and mechanical repair of colliding snapshots (FR-155–FR-157).
 12. The four adoption stages, the four kinds of participation, and per-developer authority from the moment of joining the shared graph (§8.16, FR-203).

@@ -258,7 +258,7 @@ Consistent with §2.5, Resonance core does not parse source code. Richer structu
 - **FR-110** Resonance core MUST NOT parse source code or depend on language-specific parsers. Code units and tests are declared by people and agents through the API. Importers MAY create nodes only from files that Resonance itself interprets, such as intent documents. [Decided]
 - **FR-111** The minimum structure Resonance provides is files, plus the code units and tests that people and agents declare, with their anchors. This is enough to anchor links and annotations, and it works for every text file in every language. [Decided in substance]
 - **FR-112** Richer structure (modules, types, functions, and reference edges such as calls, uses and implements) MAY be supplied by a separate tool *as a parallel code-structure graph* (FR-115 onward), never as primary nodes. Mache is the obvious candidate; compiler-grade sources (SemanticDB, SCIP, language servers) are preferable to syntax-only parsing where available. Whether to build or integrate one is [Open]: Mark is not yet sold on it. [Decided: parallel, never primary. Open: whether to build]
-- **FR-113** Further investment in structural queries MUST be justified by Phase 0 results (§11). [Decided in substance]
+- **FR-113** Further investment in structural queries MUST be justified by Phase 0 results (§12). [Decided in substance]
 - **FR-114** Because core is language-agnostic, Resonance itself has no "first supported language": any text file can carry code units. Which languages a code-structure parallel graph would cover, if one is integrated, is [Open] (OQ-06). [Proposed]
 
 **Parallel graphs**

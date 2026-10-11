@@ -292,12 +292,12 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **FR-264** [packaging] Semantic versioning; minimum binary version recorded in committed configuration (stage 2+); exact pin for quiet mode.
 - **FR-265** [packaging] Upgrades through the install channel; daemons restart on new versions.
 - **FR-266** [packaging] `resonance uninstall --user`.
-- **§18.3** [packaging] Later deliverables outside the binary: CI wrappers, IntelliJ plugin, agent kit as a harness plugin, graph adapters.
+- **§13.3** [packaging] Later deliverables outside the binary: CI wrappers, IntelliJ plugin, agent kit as a harness plugin, graph adapters.
 
-## B17 — Evaluation (Phase 0, §11)
+## B17 — Evaluation (Phase 0, §12)
 *Not product code. The MVP can serve as arm C's intent server.*
 
-- **§11.1–§11.6** [eval] Hypotheses H1 and H2, tasks, arms A–D, metrics, protocol, decision gates.
+- **§12.1–§12.6** [eval] Hypotheses H1 and H2, tasks, arms A–D, metrics, protocol, decision gates.
 
 ## Long term
 - **G15** [model] An alternative to files: languages may store their source in Resonance in another format; Resonance stores and renders it, the language understands it (§2.5, §8.1 rationale).

@@ -1,8 +1,8 @@
-## 11. Evaluation plan (Phase 0)
+## 12. Evaluation plan (Phase 0)
 
 Before building Resonance, test the hypothesis on real work.
 
-### 11.1 Hypothesis  [Decided]
+### 12.1 Hypothesis  [Decided]
 
 > Fine-grained mapping of intent in high-level human produced artifacts (requirements, designs, diagrams, etc) into agent-produced and agent-managed artifacts (source code, build configs, etc) will have many benefits: improve agent reasoning, decrease agent cost (tokens used), improve developer confidence in output and intermediate actions, and improve developer productivity.
 
@@ -11,7 +11,7 @@ Because Mark is also skeptical that *code* structure is a first-order benefit (�
 - **H1 — Code structure.** Symbol and reference structure (Mache-like) reduces tokens and wall-clock time on bug fixes and features. Expected by Mark to be a small effect.
 - **H2 — Intent structure.** Linked requirements, decisions, tests and annotations reduce tokens, wall-clock time **and developer time**. This is the thesis behind Resonance.
 
-### 11.2 Tasks  [Decided]
+### 12.2 Tasks  [Decided]
 
 - **"Fix this bug"** and **"add this feature"** tasks.
 - On an existing, fairly large codebase. The codebase at Mark's workplace is the ideal candidate, subject to employer policy on sending source code to model providers. A large open-source codebase in a similar language is the fallback.
@@ -22,7 +22,7 @@ Proposed task selection:
 - Phrase tasks the way colleagues actually write them, not as formal issue text. One study found that rewriting benchmark issues into realistic user-style requests cut measured pass rates by over 50% for some models.
 - For each task, check out the commit before the historical fix and remove later commits from the sandbox's history, so the agent cannot find the answer in git.
 
-### 11.3 Arms  [Proposed]
+### 12.3 Arms  [Proposed]
 
 | Arm | Agent has | Tests |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ Proposed task selection:
 
 Using off-the-shelf tools for arm B tests code structure itself, not the quality of a new implementation. Arm C needs no Resonance code: a small curated graph is enough to measure whether intent context changes outcomes.
 
-### 11.4 Metrics
+### 12.4 Metrics
 
 | Metric | Source | Status |
 | --- | --- | --- |
@@ -45,15 +45,15 @@ Using off-the-shelf tools for arm B tests code structure itself, not the quality
 | Cost | Provider billing or token pricing | [Proposed] |
 | Tool calls and files read | Agent logs | [Proposed] |
 
-### 11.5 Protocol  [Proposed]
+### 12.5 Protocol  [Proposed]
 
 - Hold the model and model version fixed across arms.
 - Run each task in each arm at least three times; results vary run to run.
 - Use a fresh sandbox per run.
 - Analyze paired results per task (same task across arms).
-- Write down the decision thresholds before running (§11.6).
+- Write down the decision thresholds before running (§12.6).
 
-### 11.6 Decision gates  [Proposed]
+### 12.6 Decision gates  [Proposed]
 
 | Outcome | Consequence |
 | --- | --- |

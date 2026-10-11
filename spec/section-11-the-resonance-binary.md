@@ -1,10 +1,10 @@
-## 17. The `resonance` binary
+## 11. The `resonance` binary
 
-Everything Resonance does on a developer's machine is delivered by **one executable, `resonance`**. It is a CLI, a per-repository daemon, an MCP server, the system-wide registry, the quiet participant's helper, the git plumbing that hooks and drivers call, and the CI checker. These are subcommands of the same program, built from one Cargo workspace (MVP-001), so there is one thing to install, version, pin and trust. Separate deliverables (the IntelliJ plugin, CI wrappers, graph adapters) come later and sit on top of this binary (§18). [Decided]
+Everything Resonance does on a developer's machine is delivered by **one executable, `resonance`**. It is a CLI, a per-repository daemon, an MCP server, the system-wide registry, the quiet participant's helper, the git plumbing that hooks and drivers call, and the CI checker. These are subcommands of the same program, built from one Cargo workspace (MVP-001), so there is one thing to install, version, pin and trust. Separate deliverables (the IntelliJ plugin, CI wrappers, graph adapters) come later and sit on top of this binary (§13). [Decided]
 
 This section is the reference for the binary: what it is responsible for, how it runs, and its complete command surface. Commands are specified in detail where their requirements live; this section collects them and records the conventions they share. The **Available** column says whether a command is in the MVP (`spec/mvp.md`) or which backlog increment (`spec/backlog.md`) adds it.
 
-### 17.1 Responsibilities
+### 11.1 Responsibilities
 
 | Responsibility | What the binary does | Spec |
 | --- | --- | --- |
@@ -25,7 +25,7 @@ This section is the reference for the binary: what it is responsible for, how it
 | **Parallel graphs** | Loads, lists, drops and queries parallel and disconnected graphs, enforcing that they cannot modify the primary graph. | §6.7, §8.9 |
 | **Projection writer** | Writes graph-originated changes to the working tree. | §8.5 |
 
-### 17.2 Execution modes
+### 11.2 Execution modes
 
 - **FR-250** All of Resonance's local functionality MUST ship as the single executable `resonance`. That covers the CLI, daemon, MCP server, registry, quiet mode, git plumbing, CI checks and the agent kit. No second binary is required on a developer's or CI machine. [Decided]
 - **FR-251** The binary runs in one of the modes below, chosen by subcommand. The modes share one implementation of every operation, so the same question gets the same answer whichever mode serves it. [Proposed]
@@ -41,7 +41,7 @@ This section is the reference for the binary: what it is responsible for, how it
 
 - **FR-252** When a daemon is available, CLI and MCP commands MUST be served by it (P1). If none is running, the client starts one and waits (P4). A command MUST never answer from a graph that has not been reconciled. In the MVP, which has no daemon, each command reconciles before answering (MVP-002). [Proposed]
 
-### 17.3 Command reference
+### 11.3 Command reference
 
 The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both when the MVP provides a narrower form that a later increment completes.
 
@@ -153,7 +153,7 @@ The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both
 | `agent-hook <event>` | Entry point for agent-harness hooks that gate the agent's git commands. | FR-222 | B7 |
 | `git-driver merge <base> <ours> <theirs>` | Merge driver for `graph.db`: mechanical union-and-refold. | FR-157 | B6 |
 
-### 17.4 Conventions shared by all commands
+### 11.4 Conventions shared by all commands
 
 - **FR-253** Every command MUST follow these conventions: [Proposed]
   - **Repository.** `-C <path>` runs as if started in that directory. The repository root comes from git (MVP-009).

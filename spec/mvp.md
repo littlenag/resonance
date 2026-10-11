@@ -23,7 +23,7 @@ This file is the **working spec**: the part of the full specification (`spec/sec
 
 **Why this cut.**
 
-1. It tests the product thesis directly: intent structure reaching an agent (H2, §11.1).
+1. It tests the product thesis directly: intent structure reaching an agent (H2, §12.1).
 2. It can be dogfooded on day one: Resonance imports its own spec, and its own code is linked to its own requirements.
 3. It builds the seams that later features depend on: the store API boundary, an operation log, textual anchors, and stage and participation metadata.
 5. It is language-agnostic from day one. Resonance parses no source code (NG4); meaning comes from the agent, and Resonance remembers it.
