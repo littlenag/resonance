@@ -9,14 +9,17 @@ flowchart LR
     end
     subgraph Repo["Repository (one per repo)"]
         WT[Working tree<br/>ordinary files]
-        DB[(".resonance/ graph store<br/>SQLite")]
+        DB[(".resonance/<br/>committed: snapshot + deltas<br/>local: live store, journal")]
         subgraph D[Per-repo daemon]
             W[Watcher]
             I[Ingest and reconcile]
             P[Projection writer]
             G[Git monitor]
+            R[Sync and recovery]
             API[Query and mutation API]
             X[Extractors]
+            S[Store API<br/>engine-neutral]
+            SA[SQLite adapter<br/>own module]
         end
     end
     TOOLS[IDEs, build tools,<br/>git, CI, test runners]
@@ -29,11 +32,15 @@ flowchart LR
     W --> I
     WT -.file events.-> W
     I --> X
-    I --> DB
+    I --> S
     P --> WT
-    G --> I
-    API --> DB
+    G --> R
+    R --> I
+    R --> S
+    API --> S
     API --> P
+    S --> SA
+    SA --> DB
     CLI --> API
     MCP --> API
     AG --> MCP
@@ -45,7 +52,9 @@ flowchart LR
 
 | Component | Responsibility | Status |
 | --- | --- | --- |
-| **Graph store** | Holds all graph data for one repository, in a structured binary store (SQLite) inside the repo. | [Decided] as the starting point |
+| **Graph store** | Holds all graph data for one repository inside the repo: a committed snapshot plus delta files (§8.6.1) and a local live store. | [Decided] |
+| **Store API** | Engine-neutral persistence interface (nodes, edges, operations, traversals, blobs, snapshots). The only way any other component touches storage. | [Decided] (§8.2.1) |
+| **SQLite adapter** | The first implementation of the store API, in its own module; the only code that knows SQLite exists. Expected to be replaced by a graph engine adapter later. | [Decided] (§8.2.1) |
 | **Working tree** | Ordinary files, used by every unaware tool. A replica of the file content held in the graph. | [Decided] no mount; [Proposed] replica framing |
 | **Per-repo daemon** | Single owner of the repo's graph: watcher, ingest, projection writer, git monitor and API in one process. | [Decided] persistent watcher; [Proposed] co-location |
 | **Watcher** | Receives OS file events for the working tree. | [Decided] |
@@ -53,9 +62,11 @@ flowchart LR
 | **Extractors** | Language plugins that derive code units and references from file text. | [Proposed] |
 | **Projection writer** | Writes graph-originated changes to the working tree. | [Proposed] |
 | **Git monitor** | Detects checkouts, rebases, merges and pulls; switches the daemon into bulk-reconcile mode. | [Proposed] |
+| **Sync and recovery** | Classifies every disagreement between git, the working tree and the graph using git evidence; applies authority rules; keeps the recovery journal; produces user-facing explanations (§8.18, §8.19). | [Decided] in substance; [Proposed] shape |
 | **Query and mutation API** | The separate API through which all graph-only information is reached. | [Decided] separate API; [Proposed] shape |
 | **Registry daemon** | System-wide; answers "which endpoint serves this directory" and monitors daemon health. Nothing else. | [Decided] |
 | **Clients** | CLI, MCP adapter for agents, IDE plugin later. | [Proposed] |
+| **Agent kit** | Instructions, a skill and harness hooks installed into each developer's agent during onboarding, plus conventions served live by the MCP adapter. Makes the agent the first line of enforcement (§8.20). | [Decided] in substance; [Proposed] shape |
 
 ### 7.2 Principles
 
@@ -64,3 +75,7 @@ flowchart LR
 - **P3 — Never refuse a text write.** A file saved to disk is always accepted, even if it does not parse. Structure catches up. [Proposed]
 - **P4 — Absence means delay, not error.** If the daemon is down, clients wait or start it; they never receive answers from an index that does not match the disk. [Proposed]
 - **P5 — The registry is never on the request path.** [Proposed]
+- **P6 — Explicit authority.** Opting in makes the graph the developer's source of truth. For every file, at every moment, Resonance can say whether it governs that file (path scope) and where a given change came from: from a Resonance user, and therefore consistent with the graph, or from outside Resonance through git, and therefore to be absorbed (§8.16, §8.18). [Decided]
+- **P7 — Never destroy, always explain.** Resonance acts automatically only when nothing is lost. Whatever a resolution displaces is preserved and can be restored, and every non-trivial event is explained in terms the developer already knows: git operations, commits, files (§8.18, §8.19). [Decided in substance]
+- **P8 — Engine behind an API.** No component other than the storage adapter knows which database engine is in use (§8.2.1). [Decided]
+- **P9 — Agents enforce, Resonance checks, hooks back up.** Onboarding Resonance includes onboarding the agent. The agent keeps the graph and the git tree in sync, and keeps PRs clean, by running Resonance's deterministic checks at the right moments. Hooks and CI catch what agents miss (§8.20). [Decided]

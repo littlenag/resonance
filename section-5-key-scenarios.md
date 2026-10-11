@@ -7,6 +7,7 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 - AC2: The graph is populated with files and code units, and with any requirements it can import (§8.10).
 - AC3: Build, test and IDE behavior are unchanged.
 - AC4: Removing Resonance (deleting `.resonance/`) leaves a working project.
+- AC5: In a repository with no committed Resonance data, `init` starts in offline mode, and `git status` is unchanged afterwards (S15, FR-180).
 
 **S2 — Trace forward from a requirement.** Given requirement `FR-042`, the developer asks what satisfies and verifies it.
 - AC1: One query returns the code units linked by `satisfies`, the tests linked by `verifies`, and each link's status (asserted, verified, stale, orphaned).
@@ -54,12 +55,65 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 - AC2: True semantic conflicts become visible conflict items, never silent data loss.
 
 **S12 — Fresh clone.**
-- AC1: Resonance rebuilds everything derivable locally, and the authored graph is complete from what git carried.
+- AC1: Resonance rebuilds everything derivable locally, and the authored graph is complete from what git carried (snapshot plus deltas at HEAD, stage 2 and later).
+- AC2: In a repository where nobody has shared a graph yet, Resonance says so plainly and offers to start in offline mode.
 
 **S13 — Edits while the daemon is not running.**
 - AC1: On start, the daemon reconciles the graph with the disk before answering any query.
 - AC2: A missing or crashed daemon causes delay, never wrong answers.
+- AC3: Each difference found is classified using git evidence and resolved according to who is authoritative for that file (§8.18). Nothing is lost, and the developer gets one summary, not one message per file.
 
 **S14 — Discovery and health.**
 - AC1: A client can find a repository's daemon without the registry.
 - AC2: `resonance doctor` shows every running daemon, whether it is ready, and how far behind the disk it is.
+
+**S15 — Try Resonance offline.** A developer wants to try Resonance on a team repository without committing anything or letting teammates know.
+- AC1: `resonance init` modifies no tracked file; `git status` is unchanged. `init` explains plainly what offline mode cannot do and what repair will cost (FR-180).
+- AC2: Every local feature works: import, trace, annotate, verify, MCP (FR-181).
+- AC3: Branch switches, pulls and rebases keep the developer's local graph data attached to the right code (FR-183).
+- AC4: Teammates see no trace of Resonance: nothing in commits, branches, pull requests or code (FR-189).
+- AC5: After a teammate renames an annotated function, the next pull produces a repair list; the agent re-anchors the annotation, asking when unsure; and the cost is shown (FR-238, FR-239).
+- AC6: `resonance value` shows what Resonance did for the developer, and how to upgrade (FR-240).
+- AC7: Leaving is clean: `resonance eject` offers an export, then removes `.resonance/` and every local hook and exclusion it added.
+
+**S16 — Share the graph (offline → stage 2).** The offline developer decides to buy in and commit the graph.
+- AC1: `resonance share` previews exactly what will be committed. Local-only annotations stay local (FR-185).
+- AC2: The result is ordinary new files under `.resonance/` for the developer to commit. No existing tracked file changes without an explicit confirmation.
+- AC3: If a teammate shared first, the local graph merges into the committed one with no duplicated requirements (FR-186).
+
+**S17 — Hold-out teammate.** A teammate who does not run Resonance keeps working with plain git.
+- AC1: The hold-out never installs, configures or learns Resonance. In the common case they never see a conflict in `.resonance/`; in the rare case they do, taking either side is safe and `.resonance/README.md` says so (FR-174).
+- AC2: When a Resonance user pulls the hold-out's commits, the file changes are ingested as git-originated edits attributed to that commit. Affected links become stale, and the user gets a single summary (C2 in §8.18).
+
+**S18 — Git and the graph disagree.** After a pull, reset, stash, merge, daemon outage or bypassed hook, the working tree no longer matches the graph.
+- AC1: Resonance classifies the cause from git evidence before acting (FR-190).
+- AC2: It acts automatically only when the action destroys nothing. The displaced version is preserved and can be restored with one command (FR-192).
+- AC3: The message says what happened, why (citing git evidence), what Resonance did, where the displaced version is, how to undo, and what to do next (FR-200).
+
+**S19 — Compaction with branches in flight.** Trunk reaches N deltas and is compacted while feature branches still carry older deltas.
+- AC1: Feature branches created before compaction merge into trunk with no conflict in `.resonance/` (FR-155).
+- AC2: If two compactions do collide on `graph.db`, the collision is repaired mechanically, with no data loss (FR-157).
+
+**S20 — Step up, step back down.** A team moves between adoption stages, and at some point steps back.
+- AC1: Each move is one explicit command with a preflight check and a preview (FR-172).
+- AC2: Stepping back, including all the way to stage 0, loses no authored data (FR-173).
+
+**S21 — Replace the storage engine.** Resonance moves from SQLite to a graph engine.
+- AC1: No code outside the storage module changes, and the new adapter passes the store conformance suite (FR-161, FR-167).
+- AC2: Existing repositories move over through one migration compaction. Delta files and git history need no rewriting (FR-165).
+
+**S22 — Onboard the agent and let it steward a change.** A developer runs `resonance init`; later their agent implements a change and opens a pull request.
+- AC1: Onboarding installs the agent kit, and the agent's orientation shows that it knows the stage, the developer's participation and its duties (FR-210, FR-225).
+- AC2: Every commit the agent makes passes `resonance check --staged`, with the open delta committed together with its code (FR-215).
+- AC3: The pull request carries a readable summary of graph changes and merges with no conflicts in `.resonance/` (FR-216).
+- AC4: Asked to do something that breaks a convention (for example `git commit --no-verify`), the agent names the convention and offers the compliant alternative. It proceeds only on explicit instruction (FR-218, FR-220).
+
+**S23 — Quiet onboarding.** A new team member follows the team's setup instructions, which include quiet onboarding, but does not opt in to Resonance.
+- AC1: One documented bootstrap command fetches and verifies the pinned CLI. Nothing is installed system-wide, and no daemon runs (FR-231).
+- AC2: The developer's commits are never blocked, and they may push without Resonance data (FR-203).
+- AC3: When bookkeeping succeeds, Resonance users ingest the developer's commits as consistent, and annotations follow renamed code. When it fails, the commits are absorbed as outside commits, and nothing breaks (FR-233, FR-235).
+- AC4: The developer can opt in later with `resonance init`, or stop by removing the local setting (FR-237).
+
+**S24 — An opted-in developer slips.** A Resonance user commits with `--no-verify` while their daemon is down.
+- AC1: Before the push leaves the machine, Resonance detects that the commit is inconsistent with the graph and explains how (C8).
+- AC2: The agent repairs it by amending or adding a follow-up delta, with the developer's confirmation, and nothing is lost (FR-192, FR-203).

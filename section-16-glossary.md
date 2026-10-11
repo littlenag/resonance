@@ -17,3 +17,22 @@
 | **Context pack** | The bundle of intent, links, locations and annotations given to an agent for a task. |
 | **Registry** | The system-wide daemon for discovery and health. |
 | **Code Unit** | (This needs a definition!) |
+| **Snapshot** | `.resonance/graph.db`: the committed authored and identity data as of the last compaction. Immutable between compactions. |
+| **Epoch** | The identity of a snapshot; each compaction starts a new epoch. |
+| **Delta** | A small, add-only, uniquely named file of edit-algebra operations plus a file manifest, committed next to the code. *Open* while still being written; *sealed* once committed. |
+| **File manifest** | The content hashes, recorded in a delta, of files whose changes Resonance saw or made. Used to detect commits made without Resonance. |
+| **Compaction** | Folding a snapshot and N deltas into a new snapshot and deleting the folded deltas. Trunk only by default. |
+| **Store API / adapter** | The engine-neutral persistence interface, and its engine-specific implementation (first: SQLite) in its own module. |
+| **Adoption stage** | Where a repository stands: 0 absent, 1 offline trial, 2 shared (developers join one by one), 3 enforced (§8.16). |
+| **Participation** | A developer's relationship to Resonance: *Resonance user* (opted in; the graph is their source of truth), *offline trial user*, *quiet participant* (§8.21) or *hold-out*. |
+| **Opting in** | Joining a repository's shared graph (stage 2 or later). Opting in commits the developer to keeping their operations consistent with the graph (FR-203). Offline mode is not opting in. |
+| **Quiet participant** | A developer who has not opted in, but whose agent runs a locally fetched Resonance CLI to do bookkeeping; never blocked. |
+| **Offline mode** | Trying Resonance without buying in: a private graph whose only inputs are git history and the file tree; nothing committed and no visible trace (§8.17). |
+| **Hold-out** | A developer who works in a Resonance repository without running Resonance at all. |
+| **Authority** | Which side is the source of truth: the graph for anyone who has opted in, git for changes made outside Resonance; limited by path scope. |
+| **Divergence** | A disagreement between the graph and the working tree, the index or committed `.resonance/` data, classified from git evidence (C1–C9, §8.18). |
+| **Recovery journal** | The local record of every automatic resolution and of the versions it displaced, which makes each resolution undoable. |
+| **Agent kit** | What onboarding installs into a developer's agent: a short static part, conventions served live over MCP, and harness hooks (§8.20). |
+| **Stewardship** | The agent's duty to keep the graph and the git tree in sync and pull requests clean, by running Resonance's checks and following its conventions. |
+| **Repair list** | What an offline graph needs fixed after outside changes arrive: orphaned or at-risk annotations, stale links, low-confidence identities (FR-238). |
+| **Detached pool** | Offline deltas whose commits were rewritten and could not be re-associated; kept and surfaced, never dropped. |

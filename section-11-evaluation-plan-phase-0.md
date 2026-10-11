@@ -59,5 +59,5 @@ Using off-the-shelf tools for arm B tests code structure itself, not the quality
 | --- | --- |
 | B shows little or no gain over A | Confirms §2.5. Keep §8.9 minimal. |
 | C shows clear gains over A, especially in developer time | Proceed to Phase 1 with the intent layer as the priority. |
-| B shows large gains | Revisit NG7 and invest more in §8.9, preferring compiler-grade data. |
+| B shows large gains | Revisit NG4 and invest more in §8.9, preferring compiler-grade data. |
 | Neither B nor C helps | Revisit the thesis before building. |

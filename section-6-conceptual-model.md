@@ -12,6 +12,8 @@ The graph is divided into layers by where information comes from, because origin
 | **Annotation** | Notes, call-outs, constraints on specific code units | Authored | Yes |
 | **Identity** | Stable IDs and their history (renames, moves, splits, merges) | Recorded by reconciliation and by people | Yes |
 
+"Versioned in git" assumes the repository has reached adoption stage 2 or later (§8.16). In offline mode (§8.17) nothing is committed: the same layers are kept locally, with the same structure, so that sharing later is a move and not a conversion.
+
 ### 6.2 Core node types  [Proposed]
 
 Keep the core small. Everything else goes through namespaced extensions (§6.6).

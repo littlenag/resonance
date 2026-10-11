@@ -14,3 +14,10 @@ Numeric targets below are placeholders to be replaced with measurements from Pha
 | **NFR-037** | A missing or crashed daemon causes delay, never wrong answers (P4) | always | [Proposed] |
 | **NFR-038** | Platforms for the first release | macOS and Linux | [Proposed] |
 | **NFR-039** | Git hosting | Must work with any host; no host-specific features required | [Proposed] |
+| **NFR-040** | No automatic action loses file content or authored graph data; whatever a resolution displaces can be restored (FR-192) | always | [Decided in substance] |
+| **NFR-041** | `resonance init` in offline mode leaves `git status` unchanged (FR-180) | always | [Proposed] |
+| **NFR-042** | New `graph.db` blobs entering git history | at most one per compaction (every N deltas on trunk, FR-154) | [Proposed] |
+| **NFR-043** | Catch-up after a pull that changes 1,000 files, including classification (FR-195) | under 30 s | [Open] |
+| **NFR-044** | Committed snapshot size at reference scale (authored and identity data only) | to be measured | [Open] |
+| **NFR-045** | Divergences classified as unexplained (C9) after the first months of real use | under 1% of divergences | [Open] |
+| **NFR-046** | Agent-made commits that pass `resonance check` on the first attempt (FR-224) | over 95% | [Open] |
