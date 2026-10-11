@@ -14,3 +14,10 @@ path = "src/main.rs"
 [dependencies]
 resonance-core.workspace = true
 resonance-store-sqlite.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true

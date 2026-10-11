@@ -10,3 +10,17 @@ publish.workspace = true
 [features]
 # Exports the generic store conformance suite so adapters can run it (FR-167).
 conformance = []
+
+[dependencies]
+globset.workspace = true
+ignore.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+similar.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

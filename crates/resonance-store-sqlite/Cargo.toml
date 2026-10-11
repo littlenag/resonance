@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 resonance-core.workspace = true
+rusqlite.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 resonance-core = { workspace = true, features = ["conformance"] }
+tempfile.workspace = true
