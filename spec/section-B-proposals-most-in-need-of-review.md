@@ -20,3 +20,4 @@ These **[Proposed]** items shape the rest of the design most. Confirming or reje
 16. The agent kit's layered delivery and the stewardship duties (FR-212, FR-215–FR-222).
 17. Quiet onboarding: the bootstrap and pinning mechanism, and what quiet bookkeeping may write (§8.21, OQ-22).
 18. Code units as declared, textual anchors re-located by diff and quote matching, with the agent repairing what text cannot (§8.3, FR-032, FR-038).
+19. Parallel-graph mechanics: structural enforcement of read-only access, dangling cross-graph links (orphaned versus unresolved), freshness labeling, and the minimum conditions for write-back (FR-116–FR-119, FR-241).

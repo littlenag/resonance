@@ -43,7 +43,7 @@ Keep the core small. Everything else goes through namespaced extensions (§6.6).
 | `realizes` | CodeUnit → Design | This code is the current realization of a design element | No |
 | `annotates` | Annotation → any | Attaches an annotation | No |
 | `contains` | File/CodeUnit → CodeUnit | Containment of one region in another | Derived from anchor ranges |
-| `references` | CodeUnit → CodeUnit | Calls, uses, imports, inherits | Not produced by core; only by an optional structure tool (FR-112) |
+| `references` | CodeUnit → CodeUnit | Calls, uses, imports, inherits | Never in the primary graph; only in a parallel code-structure graph (§6.7, FR-112) |
 | `evidences` | Evidence → edge or node | This evidence supports a link or node status | — |
 
 Every edge carries: `provenance` (human, agent, derived, imported), `author`, `createdAt`, `confidence` (for agent-created links), `status` (§6.5), and optional `evidence` references.
@@ -77,6 +77,32 @@ asserted ──(evidence recorded)──▶ verified
 - **FR-003** An edge whose endpoint is removed without an identity operation MUST become `orphaned`, not be deleted.
 - **FR-004** `verifies` edges SHOULD be verified automatically by recording test results as `Evidence`.
 - **FR-005** Queries MUST be able to filter by link status, so that "requirements with no verified test" is a single query.
+
+### 6.7 Primary and parallel graphs  [Decided]
+
+The graph Resonance stores is the **primary graph**: intent, files, code units, tests, evidence, annotations and their links. Other graphs MAY exist **in parallel** to it. A parallel graph is derived from, or based on, the primary graph; a code-structure graph built by a tool such as Mache from the file content that the primary graph holds is the motivating example.
+
+```mermaid
+flowchart LR
+    subgraph Primary["Primary graph (Resonance)"]
+        R[Requirement] -->|satisfied by| U[CodeUnit]
+        U -->|in| F[File]
+    end
+    subgraph Parallel["Parallel graph: code structure (derived)"]
+        FN[fn open] -->|calls| FN2[fn migrate]
+    end
+    FN -.based on.-> U
+    FN -.derived from.-> F
+    R -.link authored in primary.-> FN2
+```
+
+- **Derived from the primary graph.** A parallel graph is built from primary data at a known version, and can be dropped and rebuilt without loss to the primary graph.
+- **Links in both directions are allowed.** A parallel node may point at primary nodes, and a primary edge may point at a parallel node.
+- **Queries are fair game.** Any read operation may traverse into parallel graphs and back.
+- **Operations on a parallel graph cannot modify the primary graph.** Building, updating or editing a parallel graph never changes primary nodes, edges or file content. A person or agent who *reads* a parallel graph may still change the primary graph through the primary API, as themselves.
+- **The one possible exception.** The restriction may be relaxed for a parallel graph only if its nodes carry enough information to make *exact* edits of primary nodes, so that an edit to a parallel node is guaranteed to translate soundly into a primary edit. Until a sufficiently powerful and well-integrated tool exists, every parallel graph is read-only with respect to the primary graph (FR-241).
+
+Requirements are in §8.9.
 
 ### 6.6 Ontology governance  [Proposed]
 

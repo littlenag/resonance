@@ -26,3 +26,5 @@
 | Supply-chain attack through the quiet CLI bootstrap | Code execution on developers' machines | Version and checksum pinned in committed `config.toml` and verified before running (FR-231); signed releases |
 | Quiet bookkeeping writes wrong manifests or identity operations | Annotations follow the wrong code | Resonance users verify quiet deltas against their commits (FR-235); orphan rather than guess (FR-034) |
 | Offline trial users judge Resonance by its hobbled form (divergence, repair cost) and walk away | Lost adopters | Set expectations at `init`; recommend repositories with few outside changes; lazy, budgeted repair; `resonance value` showing benefit against cost; an easy upgrade (FR-180, FR-238–FR-240) |
+| A stale or imprecise parallel graph misleads agents | Wrong structural answers presented as fact | Graph labeling and freshness on every result (FR-118); parallel graphs never treated as authoritative |
+| Write-back through a parallel graph corrupts code | Silent damage to the primary graph and files | Read-only by default; write-back only past the exact-edit gate, with base-version checks and verification (FR-116, FR-241) |

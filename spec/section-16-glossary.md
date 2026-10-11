@@ -17,6 +17,9 @@
 | **Context pack** | The bundle of intent, links, locations and annotations given to an agent for a task. |
 | **Registry** | The system-wide daemon for discovery and health. |
 | **Code unit** | A named region of a file's content, such as a function or type as a person or agent sees it. Declared by a person or agent, and tracked by Resonance through edits by its text. Resonance does not parse code to find code units (§2.5). |
+| **Primary graph** | The graph Resonance stores and is authoritative for: intent, files, code units, tests, evidence, annotations and links (§6.7). |
+| **Parallel graph** | A graph derived from the primary graph by a separate tool (for example code structure from Mache). Linked both ways and queried freely, but never able to modify the primary graph (FR-115–FR-119). |
+| **Write-capable parallel graph** | A parallel graph whose nodes carry enough information for exact edits of primary nodes, so that its edits can be translated soundly; gated (FR-241). |
 | **Anchor** | How a code unit is attached to text: a byte range, the quoted text, and surrounding context, re-located after every change (§8.3). |
 | **Snapshot** | `.resonance/graph.db`: the committed authored and identity data as of the last compaction. Immutable between compactions. |
 | **Epoch** | The identity of a snapshot; each compaction starts a new epoch. |

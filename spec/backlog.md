@@ -76,7 +76,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 
 ## B4 — Breadth of intent and ontology
 - **§6.2** (remainder) [model] Node types `Design`, `Constraint` and `Conflict`; requirement `kind`, `priority`, and statuses `draft`/`superseded`.
-- **§6.3** (remainder) [model] Edge types `derivedFrom`, `supersedes` and `realizes`. (`references` comes only from the optional structure tool, B13.)
+- **§6.3** (remainder) [model] Edge types `derivedFrom`, `supersedes` and `realizes`. (`references` lives only in a parallel code-structure graph, B13.)
 - **§6.4** [model] Stable identity anchored on intent; code units as the current realization.
 - **FR-007** [model] Namespaced extension types (`acme:Service`) that do not change core meaning.
 - **FR-008** [model] Unknown extension types preserved on read and write.
@@ -232,12 +232,18 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **Impact operations** [query] What is affected by changing a requirement, decision or code unit (§8.8 "Impact").
 - **OQ-09** [verification] Commit evidence summaries vs keep them local.
 
-## B13 — Optional structure tool (outside core; not yet committed to)
-*A separate tool, never part of `resonance-core` (NG4, FR-110). Mark is not yet sold on it; build it only if Phase 0 (B17) justifies it.*
+## B13 — Parallel graphs and a code-structure graph
+*Parallel graphs are never part of the primary graph (§6.7, P10). The facility (FR-115–FR-119) can come before any particular producer. A code-structure producer such as Mache is not yet committed to; integrate one only if Phase 0 (B17) justifies it. Write-back (FR-241) is gated on a tool that does not exist yet.*
 
-- **FR-112** [structure] An optional tool that supplies code units and reference edges through the API with provenance `imported`, preferring compiler-grade data (SemanticDB, SCIP, LSP).
-- **FR-113** [structure] Investment in structural queries justified by Phase 0.
-- **OQ-06** [structure] Which languages such a tool would cover.
+- **FR-115** [parallel] Primary graph versus named parallel graphs; every result labeled with its graph.
+- **FR-116** [parallel] Operations on parallel graphs never modify the primary graph; enforced by per-graph write capabilities (MVP-018 is the seam).
+- **FR-117** [parallel] Cross-graph links both ways; orphaned versus unresolved; stable parallel IDs.
+- **FR-118** [parallel] Queries traverse across graphs; graph labels and freshness on every result.
+- **FR-119** [parallel] Producer and derivation record; derived, never committed, cacheable (OQ-23).
+- **FR-112** [parallel] A code-structure parallel graph (Mache or compiler-grade data).
+- **FR-113** [parallel] Investment in structural queries justified by Phase 0.
+- **OQ-06** [parallel] Which languages a code-structure graph would cover.
+- **FR-241** [parallel] *Gated.* Write-back only when parallel nodes carry enough information for exact edits of primary nodes (OQ-24).
 
 ## B14 — IDE
 - **FR-140** [ide] Works fully without an IDE plugin (already true; kept as a constraint).

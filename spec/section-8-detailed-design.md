@@ -249,15 +249,30 @@ Operation groups [Proposed]:
 
 - **FR-105** A general query language is [Open] (OQ-05). Proposed default: a fixed set of operations like those above, plus a read-only SQL escape hatch over documented views, offered only as an engine-specific, unstable capability that will change when the engine changes (FR-168). Cypher-like or Datalog-like languages can be added once real query needs are known.
 
-### 8.9 Code structure (outside core)
+### 8.9 Code structure and parallel graphs
 
-Consistent with §2.5, Resonance core does not parse source code. This section records that boundary.
+Consistent with §2.5, Resonance core does not parse source code. Richer structure, if any, lives in parallel graphs (§6.7). This section records both boundaries.
+
+**Core**
 
 - **FR-110** Resonance core MUST NOT parse source code or depend on language-specific parsers. Code units and tests are declared by people and agents through the API. Importers MAY create nodes only from files that Resonance itself interprets, such as intent documents. [Decided]
 - **FR-111** The minimum structure Resonance provides is files, plus the code units and tests that people and agents declare, with their anchors. This is enough to anchor links and annotations, and it works for every text file in every language. [Decided in substance]
-- **FR-112** Richer structure (types, functions, and reference edges such as calls, uses and implements) MAY be supplied by an optional, separate tool. That tool writes ordinary code units and edges through the API, with provenance `imported`, and SHOULD prefer compiler-grade data (SemanticDB, SCIP, language servers) over syntax-only parsing. Whether to build it is [Open]: Mark is not yet sold on it. [Proposed]
+- **FR-112** Richer structure (modules, types, functions, and reference edges such as calls, uses and implements) MAY be supplied by a separate tool *as a parallel code-structure graph* (FR-115 onward), never as primary nodes. Mache is the obvious candidate; compiler-grade sources (SemanticDB, SCIP, language servers) are preferable to syntax-only parsing where available. Whether to build or integrate one is [Open]: Mark is not yet sold on it. [Decided: parallel, never primary. Open: whether to build]
 - **FR-113** Further investment in structural queries MUST be justified by Phase 0 results (§11). [Decided in substance]
-- **FR-114** Because core is language-agnostic, Resonance itself has no "first supported language": any text file can carry code units. Which languages an optional structure tool would cover, if built, is [Open] (OQ-06). [Proposed]
+- **FR-114** Because core is language-agnostic, Resonance itself has no "first supported language": any text file can carry code units. Which languages a code-structure parallel graph would cover, if one is integrated, is [Open] (OQ-06). [Proposed]
+
+**Parallel graphs**
+
+- **FR-115** The graph Resonance stores is the **primary graph**. A **parallel graph** is a graph derived from, or based on, the primary graph, produced and maintained by a separate tool and identified by a name (for example `structure`). Its nodes and edges are distinct from primary nodes and edges, and every result says which graph each came from. [Decided]
+- **FR-116** Operations on a parallel graph (building it, updating it, or editing its nodes and edges) MUST NOT modify the primary graph: no primary node, edge, property, anchor, file content or operation may be created, changed or removed by them. This MUST be enforced structurally, not by convention: a parallel graph's producer receives a write capability only for its own graph, and the store API rejects anything else. A person or agent who reads a parallel graph MAY change the primary graph through the primary API; that is an ordinary primary mutation, attributed to them, not an operation on the parallel graph. [Decided: the restriction. Proposed: enforcement]
+- **FR-117** Links across graphs are allowed in both directions. A parallel node or edge MAY reference primary nodes; such references are stored in the parallel graph. A primary edge MAY reference a parallel node; it is authored primary data, created through the primary API, and names the parallel graph it depends on. When its target disappears after a rebuild, the edge becomes `orphaned` (FR-003) and goes on the repair list. Where the parallel graph is not available at all (for example a clone without the producing tool), the edge is shown as *unresolved*, not orphaned. Parallel graphs SHOULD keep node IDs stable across rebuilds so that such links survive. [Decided: links both ways. Proposed: dangling-link rules]
+- **FR-118** Read operations are fair game across graphs. Navigation, search, `trace`, `why`, impact and context packs MAY traverse into parallel graphs and back along cross-graph links. Results MUST label which graph each node came from, and MUST state whether a parallel graph is current with respect to the primary graph or stale. A stale parallel result is never presented as current (P4). [Decided: queries allowed. Proposed: labeling and freshness]
+- **FR-119** Each parallel graph MUST record its producer (tool and version) and the primary version it was derived from (file content hashes or a tree hash). It is derived data: never committed (FR-062), cacheable by that version (FR-024), and droppable or rebuildable at any time without loss to the primary graph. Whether parallel graphs are stored in Resonance's store under their own namespace or federated from the producer's own store (for example Mache's) is [Open] (OQ-23). [Proposed]
+- **FR-241** **Write-back gate.** A parallel graph MAY become *write-capable*, meaning that an edit to one of its nodes is translated into an edit of primary nodes, if and only if its nodes carry enough information to make **exact** edits of primary nodes. At a minimum that is the primary node, the exact content version and byte range each parallel node was derived from, and a deterministic translation of a parallel edit into edit-algebra operations on the primary graph. Only then can a parallel edit be guaranteed sound. Even then:
+  - The translated edit is applied as an ordinary primary mutation: through the edit algebra, attributed to the person or agent who made it, and checked against its base version and conflict policy (FR-052, FR-053).
+  - Resonance verifies the result (for example, re-deriving the parallel node from the new primary content reproduces the edited node), and rejects the edit otherwise.
+
+  Until a producer meets this bar, every parallel graph is read-only with respect to the primary graph. Existing tools, Mache included, were not built for this purpose and are not expected to output enough information, so this is gated until a sufficiently powerful and well-integrated tool exists (OQ-24). [Decided: the gate. Proposed: the minimum conditions]
 
 ### 8.10 Intent layer authoring and import
 

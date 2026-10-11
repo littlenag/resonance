@@ -27,6 +27,7 @@ flowchart LR
     MCP[MCP adapter]
     AG[Agents]
     IDEP[IDE plugin<br/>later phase]
+    PAR[Parallel graphs<br/>e.g. code structure<br/>derived, read-only to primary]
 
     TOOLS <--> WT
     W --> I
@@ -41,6 +42,8 @@ flowchart LR
     API --> P
     S --> SA
     SA --> DB
+    PAR -.derived from.-> API
+    API -.queries.-> PAR
     CLI --> API
     MCP --> API
     AG --> MCP
@@ -59,6 +62,7 @@ flowchart LR
 | **Per-repo daemon** | Single owner of the repo's graph: watcher, ingest, projection writer, git monitor and API in one process. | [Decided] persistent watcher; [Proposed] co-location |
 | **Watcher** | Receives OS file events for the working tree. | [Decided] |
 | **Ingest and reconcile** | Turns file changes into graph updates; maintains identity across edits. | [Proposed] |
+| **Parallel graphs** | Graphs derived from the primary graph by separate tools (for example a code-structure graph from Mache). Linked both ways; queried freely; never able to modify the primary graph (§6.7, §8.9). | [Decided] in substance; [Open] storage (OQ-23) |
 | **Anchor tracker** | Keeps code-unit anchors attached to the right text as files change, by diffing and text matching; no parsing (§8.3). | [Proposed] |
 | **Projection writer** | Writes graph-originated changes to the working tree. | [Proposed] |
 | **Git monitor** | Detects checkouts, rebases, merges and pulls; switches the daemon into bulk-reconcile mode. | [Proposed] |
@@ -81,3 +85,4 @@ flowchart LR
 - **P7 — Never destroy, always explain.** Resonance acts automatically only when nothing is lost. Whatever a resolution displaces is preserved and can be restored, and every non-trivial event is explained in terms the developer already knows: git operations, commits, files (§8.18, §8.19). [Decided in substance]
 - **P8 — Engine behind an API.** No component other than the storage adapter knows which database engine is in use (§8.2.1). [Decided]
 - **P9 — Agents enforce, Resonance checks, hooks back up.** Onboarding Resonance includes onboarding the agent. The agent keeps the graph and the git tree in sync, and keeps PRs clean, by running Resonance's deterministic checks at the right moments. Hooks and CI catch what agents miss (§8.20). [Decided]
+- **P10 — The primary graph is sovereign.** Parallel graphs are derived from it, may link to it and be queried alongside it, but nothing done to a parallel graph changes it, unless the parallel graph can prove exact edits (FR-241). [Decided]

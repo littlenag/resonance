@@ -4,7 +4,7 @@ Before building Resonance, test the hypothesis on real work.
 
 ### 11.1 Hypothesis  [Decided]
 
-> Adding structure to an agent's repertoire decreases tokens used and wall-clock time, and, if fully leveraged in the way envisioned here, also reduces developer time.
+> Fine-grained mapping of intent in high-level human produced artifacts (requirements, designs, diagrams, etc) into agent-produced and agent-managed artifacts (source code, build configs, etc) will have many benefits: improve agent reasoning, decrease agent cost (tokens used), improve developer confidence in output and intermediate actions, and improve developer productivity.
 
 Because Mark is also skeptical that *code* structure is a first-order benefit (§2.5), the evaluation separates two kinds of structure. [Proposed]
 
@@ -59,5 +59,5 @@ Using off-the-shelf tools for arm B tests code structure itself, not the quality
 | --- | --- |
 | B shows little or no gain over A | Confirms §2.5. Keep §8.9 minimal. |
 | C shows clear gains over A, especially in developer time | Proceed to Phase 1 with the intent layer as the priority. |
-| B shows large gains | Consider building the optional structure tool (FR-112), outside core (NG4), preferring compiler-grade data. |
+| B shows large gains | Consider integrating a code-structure parallel graph (FR-112, §6.7), for example from Mache, outside core (NG4), preferring compiler-grade data. |
 | Neither B nor C helps | Revisit the thesis before building. |

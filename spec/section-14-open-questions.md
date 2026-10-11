@@ -7,7 +7,7 @@
 | **OQ-03** | Which graph engine replaces SQLite, and when? Build, fork, or build on an existing one (G11)? | Mark expects to move to a real graph engine after research. SQLite stays behind the store API until then (§8.2.1); candidates are judged against the conformance suite and NFR-030–035. |
 | **OQ-04** | API transport: JSON-RPC or gRPC over Unix sockets? | §8.8 |
 | **OQ-05** | Is a general query language needed, and which one? | Start with fixed operations and a read-only SQL escape hatch. |
-| **OQ-06** | Which languages would an optional structure tool cover, if built? | Not applicable to core, which is language-agnostic and parses no code (FR-110, FR-114). |
+| **OQ-06** | Which languages would a code-structure parallel graph cover, if one is integrated? | Not applicable to core, which is language-agnostic and parses no code (FR-110, FR-114). |
 | **OQ-07** | Windows support: when, and with which file-event API? | Not in the first release. |
 | **OQ-08** | Do git worktrees share a derived-data cache? | §8.6 FR-070 |
 | **OQ-09** | Is verification evidence committed, summarized, or kept local? | Proposed: full records local, latest summary committed. |
@@ -24,3 +24,5 @@
 | **OQ-20** | Is path-scoped authority needed, and at what granularity (directory, glob, file)? | FR-178 |
 | **OQ-21** | Which agent harnesses beyond Claude Code get first-class kits (skills, hooks), and which get only `AGENTS.md` plus MCP? | FR-214 |
 | **OQ-22** | What may quiet bookkeeping write: manifests and identity operations only, or also agent-asserted links? Should a CI bot add bookkeeping commits by default at stage 3? | FR-233, FR-235, FR-236 |
+| **OQ-23** | Are parallel graphs stored in Resonance's store under their own namespace, or federated from the producing tool's own store (for example Mache's)? | FR-119. Storage gives one query engine; federation avoids copying and keeps the tool independent. |
+| **OQ-24** | What exactly must a producer supply for a parallel graph to become write-capable, and does any tool meet it? | FR-241. Mache was not built for this. |

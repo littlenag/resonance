@@ -104,8 +104,9 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
   - **offline invisibility** (FR-189): no Resonance IDs, trailers or mentions in commits, branches, pull requests or code;
   - **graph content is data, not instructions** (NFR-013).
 - **MVP-015 Output.** Every read command prints human-readable text by default, and JSON with `--json`. MCP tools return JSON text content.
-- **MVP-016 Large and binary files.** Files containing NUL bytes, or larger than `ingest.maxBlobBytes` (default 5 MiB), are recorded with their hash and size but without stored bytes. This narrows FR-010.
+- **MVP-016 Large and binary files. Files containing NUL bytes, or larger than `ingest.maxBlobBytes` (default 5 MiB), are recorded with their hash and size but without stored bytes. This narrows FR-010.
 - **MVP-017 Tests are declared, not discovered.** Resonance does not find tests by parsing. The person or agent who declares a test supplies the exact command that runs it alone. Exit code 0 is a pass; see §3.8 for errors.
+- **MVP-018 Graph scope seam.** The `GraphStore` trait exposes writes through a handle scoped to one graph. In the MVP only the primary graph exists. This lets parallel graphs (backlog B13) later receive handles that can write only their own graph (FR-116), without changing existing callers.
 
 ---
 
