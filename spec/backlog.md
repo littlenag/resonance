@@ -298,6 +298,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 *Not product code. The MVP can serve as arm C's intent server.*
 
 - **§12.1–§12.6** [eval] Hypotheses H1 and H2, tasks, arms A–D, metrics, protocol, decision gates.
+- **Self-dogfood** [eval] Run Resonance on its own repository: `resonance import spec/section-*.md spec/mvp.md` imports every FR and NFR item; the MVP's own main code units and tests are declared and linked to the requirements they satisfy and verify; `resonance unverified` shows what remains; a Claude Code session answers "why does `SqliteStore` exist?" using the MCP tools. Done only after the MVP has passed field tests on other repositories (`mvp.md` §5) and Mark judges it reliable.
 
 ## Long term
 - **G15** [model] An alternative to files: languages may store their source in Resonance in another format; Resonance stores and renders it, the language understands it (§2.5, §8.1 rationale).

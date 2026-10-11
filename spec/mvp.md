@@ -1,6 +1,6 @@
 # Resonance MVP — Working Specification
 
-This file is the **working spec**: the part of the full specification (`spec/section-*.md`) that the current implementation must satisfy. Everything not here is in [`backlog.md`](backlog.md).
+This file is the **working spec**: the part of the full specification (`spec/section-*.md`) that the current implementation must satisfy. Everything not here is in `backlog.md`.
 
 **How the two files work together**
 
@@ -26,8 +26,8 @@ This file is the **working spec**: the part of the full specification (`spec/sec
 1. It tests the product thesis directly: intent structure reaching an agent (H2, §12.1).
 2. It can be dogfooded on day one: Resonance imports its own spec, and its own code is linked to its own requirements.
 3. It builds the seams that later features depend on: the store API boundary, an operation log, textual anchors, and stage and participation metadata.
-5. It is language-agnostic from day one. Resonance parses no source code (NG4); meaning comes from the agent, and Resonance remembers it.
-4. It leaves out the riskiest and most expensive parts: the persistent daemon and watcher, git integration (snapshots, deltas, merges), graph-to-disk writes, and multi-user adoption. Each of those can be added later without rework.
+4. It is language-agnostic from day one. Resonance parses no source code (NG4); meaning comes from the agent, and Resonance remembers it.
+5. It leaves out the riskiest and most expensive parts: the persistent daemon and watcher, git integration (snapshots, deltas, merges), graph-to-disk writes, and multi-user adoption. Each of those can be added later without rework.
 
 **Typical session**
 
@@ -104,7 +104,7 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
   - **offline invisibility** (FR-189): no Resonance IDs, trailers or mentions in commits, branches, pull requests or code;
   - **graph content is data, not instructions** (NFR-013).
 - **MVP-015 Output.** Every read command prints human-readable text by default, and JSON with `--json`. MCP tools return JSON text content.
-- **MVP-016 Large and binary files. Files containing NUL bytes, or larger than `ingest.maxBlobBytes` (default 5 MiB), are recorded with their hash and size but without stored bytes. This narrows FR-010.
+- **MVP-016 Large and binary files.** Files containing NUL bytes, or larger than `ingest.maxBlobBytes` (default 5 MiB), are recorded with their hash and size but without stored bytes. This narrows FR-010.
 - **MVP-017 Tests are declared, not discovered.** Resonance does not find tests by parsing. The person or agent who declares a test supplies the exact command that runs it alone. Exit code 0 is a pass; see §3.8 for errors.
 - **MVP-018 Graph scope seam.** The `GraphStore` trait exposes writes through a handle scoped to one graph. In the MVP only the primary graph exists. This lets parallel graphs (backlog B13) later receive handles that can write only their own graph (FR-116), without changing existing callers.
 
@@ -294,4 +294,4 @@ The MVP is done when the following pass. Each is an automated integration test a
 - **Anchor tracking.** A table-driven test suite of edit scenarios (insert above, edit inside, delete half, reformat, move to another file, duplicate snippet, delete entirely, restore) checks every MVP-013 step and its recorded operations.
 - **Store boundary.** The conformance suite passes for `SqliteStore`, and `cargo tree -p resonance-core` shows no `rusqlite` and no source-code parser.
 - **MCP.** A scripted stdio session (initialize → tools/list → tools/call `resonance_trace`) succeeds.
-- **Dogfood (manual).** In this repository: `resonance import spec/section-*.md spec/mvp.md` imports every FR and NFR item. The MVP's own main code units and tests are declared, and linked to the MVP requirements they satisfy and verify. `resonance unverified` then shows what remains. A Claude Code session answers "why does `SqliteStore` exist?" using the MCP tools.
+- **Field test (manual).** On small and purpose-built test repositories, never on Resonance's own: the typical session in §1 works end to end, and edge cases (mixed languages, renames and moves, large and binary files, nested ignore rules, branch switches) behave as this file specifies. `just fixture-repo` creates a fresh test repository from the starter fixtures. Running Resonance on its own repository is backlog item *Self-dogfood* (B17), done once the MVP is judged reliable.
