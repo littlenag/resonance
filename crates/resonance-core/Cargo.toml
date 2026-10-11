@@ -1,0 +1,12 @@
+[package]
+name = "resonance-core"
+description = "Resonance core: model, store API, ingest, anchors, queries, MCP. No SQLite, no source parser (FR-110, FR-161)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# Exports the generic store conformance suite so adapters can run it (FR-167).
+conformance = []

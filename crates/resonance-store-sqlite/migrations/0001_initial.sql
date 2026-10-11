@@ -1,0 +1,2 @@
+-- Initial schema: nodes, edges, blobs, files, anchors, ops, meta (§8.2, mvp.md §4).
+-- An internal detail of the SQLite adapter; never part of any interface (FR-161).

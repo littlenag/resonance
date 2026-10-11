@@ -1,0 +1,19 @@
+//! Resonance core library: everything except the storage engine and the CLI front end.
+//!
+//! Depends on no SQLite crate and no source-code parser (FR-110, FR-161).
+
+pub mod agent;
+pub mod anchors;
+pub mod api;
+pub mod error;
+pub mod export;
+pub mod ingest;
+pub mod intent;
+pub mod lifecycle;
+pub mod mcp;
+pub mod model;
+pub mod ops;
+pub mod query;
+pub mod repo;
+pub mod store;
+pub mod verify;

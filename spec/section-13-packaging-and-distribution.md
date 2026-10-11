@@ -54,13 +54,17 @@ These come after the MVP has matured. Each depends on the binary and adds no loc
 
 ```
 Cargo.toml                       # workspace
+rust-toolchain.toml              # pinned stable toolchain
 crates/
   resonance-core/                # library: model, store trait, queries, anchors, import, MCP/CLI logic
+    assets/                      # embedded templates: agent kit, default config (later: hooks, README, service units, schemas)
   resonance-store-sqlite/        # library: the SQLite adapter (only crate that depends on rusqlite)
+    migrations/                  # embedded schema migrations
   resonance-cli/                 # binary: `resonance`
   resonance-store-memory/        # library: in-memory adapter for tests (B5)
-assets/                          # embedded templates: agent kit, hooks, README, service units, schemas
 .github/workflows/release.yml    # reproducible release builds, checksums, signatures (first releases)
 ```
+
+Embedded assets live inside the crate that embeds them, not at the repository root, so that every crate stays publishable (`cargo publish` packages only files inside a crate's directory). [Proposed]
 
 The license, which affects every channel above, is still [Open] (OQ-15).

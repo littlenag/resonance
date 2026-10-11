@@ -1,0 +1,18 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/resonance-core",
+    "crates/resonance-store-sqlite",
+    "crates/resonance-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+repository = "https://github.com/littlenag/resonance"
+publish = false   # license is still open (OQ-15); crates.io comes later (§13.1)
+
+[workspace.dependencies]
+resonance-core = { path = "crates/resonance-core" }
+resonance-store-sqlite = { path = "crates/resonance-store-sqlite" }
