@@ -87,10 +87,10 @@ fn scenarios() -> Vec<Scenario> {
             expect_confident: true,
         },
         Scenario {
-            name: "reformat (re-indent every line)",
+            name: "reformat (re-indent every line): changed lines still pair up (MVP-024)",
             new: Some(ORIGINAL.replace("\n    ", "\n  ")),
             others: vec![],
-            expect_step: Step::Approximate,
+            expect_step: Step::Diff,
             expect_quote: Some(open_fn.replace("\n    ", "\n  ")),
             expect_path: "src/store.rs",
             expect_confident: true,
@@ -276,19 +276,77 @@ fn an_ambiguous_exact_match_goes_on_the_repair_list() {
 }
 
 #[test]
-fn a_light_rewrite_is_matched_approximately_with_its_confidence() {
+fn a_light_rewrite_is_followed_through_the_diff_with_its_confidence() {
     let anchor = open_anchor(ORIGINAL);
-    // Rename one variable throughout the function: too many lines change for diff mapping.
+    // Rename one variable throughout the function: most lines change a little. They still
+    // pair up with their old versions (MVP-024), so diff mapping follows the region, with a
+    // confidence below 1.0 because it relied on changed lines.
     let new = ORIGINAL
         .replace("let conn =", "let db =")
         .replace("conn.", "db.")
         .replace("{ conn }", "{ conn: db }");
     let r = relocate(&anchor, Some(ORIGINAL), Some(&new), &[]);
-    assert_eq!(r.step, Step::Approximate);
+    assert_eq!(r.step, Step::Diff);
     assert!(
         r.anchor.confidence >= 0.8 && r.anchor.confidence < 1.0,
         "{}",
         r.anchor.confidence
     );
     assert!(r.anchor.quote.contains("let db = connect(path);"));
+    assert!(r.anchor.quote.starts_with("pub fn open") && r.anchor.quote.ends_with('}'));
+}
+
+#[test]
+fn a_snippet_anchor_keeps_its_columns_through_edits_on_its_line() {
+    let text = "fn main() {\n    let conn = connect(path);\n}\n";
+    let start = text.find("connect(path)").unwrap();
+    let anchor = Anchor::at(
+        "m.rs",
+        text,
+        start,
+        start + "connect(path)".len(),
+        Method::Declared,
+    );
+    let new = "fn main() {\n    let connection = connect(&path)?;\n}\n";
+    let r = relocate(&anchor, Some(text), Some(new), &[]);
+    assert_eq!(r.step, Step::Diff);
+    assert_eq!(r.anchor.quote, "connect(&path)");
+    assert!(r.anchor.confidence >= 0.8, "{}", r.anchor.confidence);
+}
+
+#[test]
+fn an_approximate_snippet_match_is_narrowed_to_the_aligned_text() {
+    let text = "a\nb\nfn helper() { compute_total(items, tax_rate) }\nc\nd\n";
+    let snippet = "compute_total(items, tax_rate)";
+    let start = text.find(snippet).unwrap();
+    let anchor = Anchor::at("h.rs", text, start, start + snippet.len(), Method::Declared);
+    // The line moves and changes, so neither diff mapping nor exact search applies.
+    let new = "x\ny\nz\na\nb\nfn helper() { compute_totals(items, tax_rate) }\nc\nd\n";
+    let r = relocate(&anchor, None, Some(new), &[]);
+    assert_eq!(r.step, Step::Approximate);
+    assert_eq!(r.anchor.quote, "compute_totals(items, tax_rate)");
+}
+
+#[test]
+fn a_region_moved_into_an_unchanged_file_is_found() {
+    let anchor = open_anchor(ORIGINAL);
+    let open_fn = &ORIGINAL
+        [ORIGINAL.find("/// Opens the store.").unwrap()..ORIGINAL.find("pub fn close").unwrap()];
+    let without = ORIGINAL.replace(open_fn, "");
+    // The function was copied into another file in an earlier change; now it is removed here.
+    let elsewhere = format!("use std::io;\n\n{open_fn}");
+    let mut asked = false;
+    let r = resonance_core::anchors::locate::relocate_with(
+        &anchor,
+        Some(ORIGINAL),
+        Some(&without),
+        &[],
+        &mut |_| {
+            asked = true;
+            vec![("src/open.rs".to_string(), elsewhere.clone())]
+        },
+    );
+    assert!(asked);
+    assert_eq!(r.step, Step::Move);
+    assert_eq!(r.anchor.path, "src/open.rs");
 }

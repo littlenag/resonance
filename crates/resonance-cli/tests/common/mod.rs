@@ -15,6 +15,8 @@ pub struct TestRepo {
     /// A short directory for daemon sockets (socket paths are limited to about 100 bytes).
     runtime: TempDir,
     extra_path: Option<PathBuf>,
+    /// Always go through a daemon, even when the suite runs in direct mode.
+    force_daemon: bool,
 }
 
 impl Drop for TestRepo {
@@ -44,6 +46,7 @@ impl TestRepo {
                 .tempdir_in("/tmp")
                 .expect("runtime dir"),
             extra_path: None,
+            force_daemon: false,
         };
         repo.git(&["init", "-q", "-b", "main"]);
         repo.git(&["config", "user.email", "dev@example.com"]);
@@ -56,7 +59,17 @@ impl TestRepo {
 
     /// A repository with a small Rust-like project, a spec, and Resonance initialized.
     pub fn with_project() -> TestRepo {
-        let repo = TestRepo::new();
+        Self::project(false)
+    }
+
+    /// [`TestRepo::with_project`], always served by a daemon.
+    pub fn with_project_daemon() -> TestRepo {
+        Self::project(true)
+    }
+
+    fn project(force_daemon: bool) -> TestRepo {
+        let mut repo = TestRepo::new();
+        repo.force_daemon = force_daemon;
         repo.write("spec/requirements.md", SPEC);
         repo.write("src/store.rs", STORE);
         repo.write("tests/store_test.sh", TEST_SCRIPT);
@@ -150,7 +163,7 @@ impl TestRepo {
         }
         cmd.env("RESONANCE_RUNTIME_DIR", self.runtime.path())
             .env("RESONANCE_DAEMON_IDLE_SECONDS", "120");
-        if direct_mode() {
+        if direct_mode() && !self.force_daemon {
             cmd.env("RESONANCE_NO_DAEMON", "1");
         }
         if let Some(extra) = &self.extra_path {

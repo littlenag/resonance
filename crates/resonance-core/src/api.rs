@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::anchors::{self, Anchor, AnchorState, Method};
 use crate::error::{Error, Result};
+use crate::ingest::lineindex::LineIndex;
 use crate::ingest::reconcile::{put_anchor, recompute_containment};
 use crate::ingest::{ReconcileOptions, ReconcileReport, reconcile};
 use crate::intent::{self, IntentReport};
@@ -52,6 +53,8 @@ pub struct Engine {
     actor: Actor,
     /// Relative paths typed by a person are resolved against this directory.
     cwd: PathBuf,
+    /// Lines to files, for finding regions moved into unchanged files (MVP-024).
+    index: LineIndex,
 }
 
 /// Counts for `status`.
@@ -288,6 +291,7 @@ impl Engine {
             store,
             actor,
             cwd,
+            index: LineIndex::default(),
         })
     }
 
@@ -318,12 +322,24 @@ impl Engine {
     /// Reconcile the graph with the disk (MVP-002). Re-reads the configuration first.
     pub fn reconcile(&mut self, opts: ReconcileOptions) -> Result<ReconcileReport> {
         self.config = Config::load(&self.repo.config_path())?;
-        reconcile(&mut *self.store, &self.repo.root, &self.config, opts)
+        reconcile(
+            &mut *self.store,
+            &self.repo.root,
+            &self.config,
+            opts,
+            &mut self.index,
+        )
     }
 
     /// Reconcile only the given paths, as reported by the watcher (FR-049).
     pub fn reconcile_paths(&mut self, paths: &[String]) -> Result<ReconcileReport> {
-        crate::ingest::reconcile_paths(&mut *self.store, &self.repo.root, &self.config, paths)
+        crate::ingest::reconcile_paths(
+            &mut *self.store,
+            &self.repo.root,
+            &self.config,
+            paths,
+            &mut self.index,
+        )
     }
 
     /// Re-read the configuration file (after it changes).

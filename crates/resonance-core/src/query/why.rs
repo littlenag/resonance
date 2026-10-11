@@ -76,6 +76,9 @@ pub fn why(r: &dyn GraphRead, node: &Node) -> Result<WhyView> {
         }
     }
 
+    requirements
+        .sort_by(|a, b| crate::query::search::cmp_keys(&a.requirement.key, &b.requirement.key));
+
     let enclosing_ids = enclosing(r, &node.id)?;
     let mut decisions = Vec::new();
     let mut annotations = annotations_on(r, &node.id, false)?;

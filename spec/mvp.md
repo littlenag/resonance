@@ -124,7 +124,7 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P1, P2, P3,
   - Approximate matches (step 4) of snippet anchors are refined to the best-aligned substring rather than whole lines.
   - After step 3, the exact quote is searched in every unchanged text file too, through an in-memory index of line hashes (step 3b, recorded as `identity.move`).
   - When a file disappears and another appears in the same reconcile with content at least 50% similar, the change is a file move (FR-036). It is recorded as a `file.move` operation; links and annotations on the old file follow it, and anchors are mapped through the diff between the old and new content.
-  - `resonance unit split <unit> --into <unit>…` and `resonance unit merge <unit>… --into <unit>` declare splits and merges (FR-033). They record `identity.split` / `identity.merge`, copy the links and annotations of the old units to the new ones as `asserted`, and retire the old units. Splitting into units that do not cover the old unit's region is refused.
+  - `resonance unit split <unit> --into <unit>…` and `resonance unit merge <unit>… --into <unit>` declare splits and merges (FR-033). The new units must already be declared and attached; the old unit may be attached or orphaned (a function rewritten into two is usually orphaned by then). They record `identity.split` / `identity.merge`, copy the links and annotations of the old units to the new ones as `asserted`, and retire the old units.
 ---
 
 ## 3. Requirements in the MVP

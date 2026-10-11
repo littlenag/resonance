@@ -26,7 +26,7 @@ resonance status                        # counts plus the repair list
 resonance eject                         # export the graph, then remove .resonance/
 ```
 
-Every command first brings the graph up to date with the files on disk, so edits made with any editor or agent are always reflected. References accept a requirement key (`FR-001`), a unit address (`src/store.rs::open`), a unique unit name, a file path, or an ID (or a unique prefix of one). Add `--json` to any command for machine-readable output.
+Commands are served by a per-repository daemon that watches the working tree; the first command starts it, and it exits after 30 idle minutes. Every answer reflects the files on disk, including edits made a moment before with any editor or agent. `resonance doctor` shows the daemon's health; `--no-daemon` runs a command in-process instead (for debugging), and `--cached` answers without waiting for changes still being applied. An optional system-wide registry (`resonance registry install`) tracks the daemons of every repository for `doctor`. References accept a requirement key (`FR-001`), a unit address (`src/store.rs::open`), a unique unit name, a file path, or an ID (or a unique prefix of one). Add `--json` to any command for machine-readable output.
 
 ## Development
 
@@ -34,8 +34,9 @@ Repeatable tasks are recipes in the [`justfile`](justfile); run `just` to list t
 
 | Recipe | What it does |
 | --- | --- |
-| `just check` | Everything CI should run: `fmt-check`, `lint`, `test`, `boundary`, `spec-check` |
+| `just check` | Everything CI should run: `fmt-check`, `lint`, `test`, `test-direct`, `boundary`, `spec-check` |
 | `just build` / `just test` | Build or test the whole workspace against the committed `Cargo.lock` |
+| `just test-direct` | Run the CLI acceptance tests in direct mode (`--no-daemon`) |
 | `just fmt` / `just fmt-check` | Format Rust code, or fail if it is not formatted |
 | `just lint` | Clippy, with warnings as errors |
 | `just boundary` | Fail if `resonance-core` depends on SQLite or a source-code parser (FR-110, FR-161) |
@@ -46,6 +47,6 @@ Repeatable tasks are recipes in the [`justfile`](justfile); run `just` to list t
 
 Field-test on fixture repositories and other small repositories, not on this one: running Resonance on its own repository is backlog item *Self-dogfood*, done once the MVP is judged reliable.
 
-The workspace has three crates (MVP-001): `resonance-core` (the model, store API, ingest, anchor tracking, queries, MCP, all engine-neutral), `resonance-store-sqlite` (the only crate that knows SQLite), and `resonance-cli` (the `resonance` binary). The acceptance tests for [`spec/mvp.md`](spec/mvp.md) §5 are in `crates/resonance-cli/tests/`; the anchor-tracking scenarios are in `crates/resonance-core/tests/anchors.rs`; the store conformance suite is in `crates/resonance-core/src/store/conformance.rs`.
+The workspace has three crates (MVP-001): `resonance-core` (the model, store API, ingest, anchor tracking, queries, MCP, daemon and registry, all engine-neutral), `resonance-store-sqlite` (the only crate that knows SQLite), and `resonance-cli` (the `resonance` binary). The acceptance tests for [`spec/mvp.md`](spec/mvp.md) §5 are in `crates/resonance-cli/tests/`; the anchor-tracking scenarios are in `crates/resonance-core/tests/anchors.rs`; the store conformance suite is in `crates/resonance-core/src/store/conformance.rs`.
 
 The specification is in [`spec/`](spec/): the working MVP spec is [`spec/mvp.md`](spec/mvp.md), and the remaining work is in [`spec/backlog.md`](spec/backlog.md).

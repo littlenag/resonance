@@ -455,6 +455,9 @@ impl Owner {
         if self.pending.is_empty() && !self.full {
             // Nothing outstanding: every event received so far is accounted for.
             self.watermark = self.events_received;
+        } else if self.git_lock_age().is_some_and(|a| a < GIT_LOCK_TIMEOUT) {
+            // Changes are being held back until the git command finishes (MVP-023).
+            self.set_state("git-operation");
         }
         let mut s = self.shared.lock().expect("shared");
         s.health.ingest_watermark = self.watermark;

@@ -14,10 +14,11 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::anchors::locate::{Step, relocate, restore};
+use crate::anchors::locate::{Step, relocate_with, restore};
 use crate::anchors::{Anchor, AnchorState};
 use crate::error::{Error, Result};
 use crate::ingest::blobs::should_store;
+use crate::ingest::lineindex::LineIndex;
 use crate::ingest::walk::{
     compile_ignores, git_ignored, in_nested_repository, is_ignored_path, mtime_ns, walk,
 };
@@ -27,7 +28,7 @@ use crate::model::{Edge, EdgeType, Layer, LinkStatus, Node, NodeType, content_ha
 use crate::ops::{Actor, Tx, hlc, kind};
 use crate::repo::abs_path;
 use crate::repo::config::Config;
-use crate::store::{EdgeQuery, FileRecord, GraphScope, GraphStore, NodeQuery, meta};
+use crate::store::{EdgeQuery, FileRecord, GraphRead, GraphScope, GraphStore, NodeQuery, meta};
 
 /// A file modified this close to when it was last recorded is re-hashed even if its size
 /// and modification time look unchanged (the "racy timestamp" problem).
@@ -67,6 +68,9 @@ pub struct ReconcileReport {
     pub files_added: usize,
     pub files_changed: usize,
     pub files_removed: usize,
+    /// Files detected as moved by content similarity (FR-036).
+    #[serde(default)]
+    pub files_moved: usize,
     pub anchors: AnchorReport,
     pub links: StatusChanges,
     pub intent: IntentReport,
@@ -95,10 +99,13 @@ pub fn reconcile(
     root: &Path,
     config: &Config,
     opts: ReconcileOptions,
+    index: &mut LineIndex,
 ) -> Result<ReconcileReport> {
     let started = Instant::now();
     let (hashed, removed, scanned) = scan_all(&*store, root, config, opts.full)?;
-    commit(store, root, config, opts, hashed, removed, scanned, started)
+    commit(
+        store, root, config, opts, index, hashed, removed, scanned, started,
+    )
 }
 
 /// Reconcile only the given repository-relative paths, as reported by the watcher (FR-049).
@@ -109,6 +116,7 @@ pub fn reconcile_paths(
     root: &Path,
     config: &Config,
     paths: &[String],
+    index: &mut LineIndex,
 ) -> Result<ReconcileReport> {
     let started = Instant::now();
     match scan_paths(&*store, root, config, paths)? {
@@ -117,12 +125,13 @@ pub fn reconcile_paths(
             root,
             config,
             ReconcileOptions::default(),
+            index,
             hashed,
             removed,
             scanned,
             started,
         ),
-        None => reconcile(store, root, config, ReconcileOptions::default()),
+        None => reconcile(store, root, config, ReconcileOptions::default(), index),
     }
 }
 
@@ -265,6 +274,7 @@ fn commit(
     root: &Path,
     config: &Config,
     opts: ReconcileOptions,
+    index: &mut LineIndex,
     hashed: Vec<Hashed>,
     removed: Vec<String>,
     scanned: usize,
@@ -277,7 +287,16 @@ fn commit(
     };
     store.write(GraphScope::Primary, &mut |w| {
         let mut tx = Tx::new(w, Actor::resonance())?;
-        apply(&mut tx, root, config, opts, &hashed, &removed, &mut report)?;
+        apply(
+            &mut tx,
+            root,
+            config,
+            opts,
+            index,
+            &hashed,
+            &removed,
+            &mut report,
+        )?;
         let now = hlc::now_ms();
         tx.w().set_meta(meta::LAST_RECONCILE, &hlc::rfc3339(now))?;
         report.operations = tx.finish()?;
@@ -293,11 +312,13 @@ struct ContentChange {
     old_blob: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn apply(
     tx: &mut Tx<'_>,
     root: &Path,
     config: &Config,
     opts: ReconcileOptions,
+    index: &mut LineIndex,
     hashed: &[Hashed],
     removed: &[String],
     report: &mut ReconcileReport,
@@ -352,22 +373,52 @@ fn apply(
         });
     }
 
+    // Files that disappeared, and whether each one moved to a new path (FR-036).
+    let added: Vec<&str> = changes
+        .iter()
+        .filter(|c| c.old_blob.is_none() && texts.contains_key(&c.path))
+        .map(|c| c.path.as_str())
+        .collect();
+    let mut gone: Vec<(String, Node)> = Vec::new();
     for path in removed {
         tx.w().delete_file(path)?;
         let id = ids::file_id(path);
-        let Some(node) = tx.r().get_node(&id)? else {
-            continue;
-        };
-        if node.retired {
-            continue;
+        if let Some(node) = tx.r().get_node(&id)?
+            && !node.retired
+        {
+            gone.push((path.clone(), node));
         }
-        tx.apply(kind::FILE_DELETE, json!({"path": path}))?;
-        report.files_removed += 1;
-        report.links += links::orphan_links(tx, &id)?;
+    }
+    let moves = detect_moves(tx, &gone, &added, &texts)?;
+    for (path, node) in &gone {
+        let id = ids::file_id(path);
+        let old_blob = node.str_prop("blob").map(String::from);
+        if let Some(to) = moves.get(path) {
+            tx.apply(kind::FILE_MOVE, json!({"from": path, "to": to}))?;
+            report.files_moved += 1;
+            // Links and annotations on the file follow it.
+            let to_id = ids::file_id(to);
+            for e in links::links_of(tx.r(), &id)? {
+                let end = if e.src == id { "src" } else { "dst" };
+                tx.apply(
+                    kind::IDENTITY_RETARGET,
+                    json!({"edgeId": e.id, "end": end, "from": id, "to": to_id}),
+                )?;
+            }
+        } else {
+            tx.apply(kind::FILE_DELETE, json!({"path": path}))?;
+            report.files_removed += 1;
+            report.links += links::orphan_links(tx, &id)?;
+        }
         changes.push(ContentChange {
             path: path.clone(),
-            old_blob: node.str_prop("blob").map(String::from),
+            old_blob,
         });
+    }
+    if index.is_built() {
+        for c in &changes {
+            index.set(&c.path, texts.get(&c.path).map(String::as_str));
+        }
     }
 
     // Anchors in changed files (MVP-013).
@@ -389,7 +440,10 @@ fn apply(
                     .and_then(|bytes| String::from_utf8(bytes).ok()),
                 None => None,
             };
-            let new_text = texts.get(&change.path).map(String::as_str);
+            // A file that moved is followed as the same file at its new path (FR-036).
+            let moved_to = moves.get(&change.path);
+            let current_path = moved_to.cloned().unwrap_or_else(|| change.path.clone());
+            let new_text = texts.get(&current_path).map(String::as_str);
             for unit in units {
                 let Some(anchor) = anchor_of(unit) else {
                     continue;
@@ -397,8 +451,12 @@ fn apply(
                 if anchor.state != AnchorState::Attached {
                     continue;
                 }
-                let r = relocate(&anchor, old_text.as_deref(), new_text, &others);
-                if r.step == Step::Move {
+                let mut seen_at = anchor.clone();
+                seen_at.path = current_path.clone();
+                let r = relocate_with(&seen_at, old_text.as_deref(), new_text, &others, &mut |a| {
+                    unchanged_files(tx.r(), index, a)
+                });
+                if r.anchor.path != anchor.path {
                     containment.insert(r.anchor.path.clone());
                 }
                 apply_relocation(
@@ -458,6 +516,90 @@ fn apply(
     Ok(())
 }
 
+/// Pair files that disappeared with new files whose content is at least half the same, as
+/// git does (FR-036). Only files that authored data depends on are followed.
+fn detect_moves(
+    tx: &Tx<'_>,
+    gone: &[(String, Node)],
+    added: &[&str],
+    texts: &BTreeMap<String, String>,
+) -> Result<HashMap<String, String>> {
+    let mut moves = HashMap::new();
+    if gone.is_empty() || added.is_empty() {
+        return Ok(moves);
+    }
+    let basename = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+    let mut taken: BTreeSet<&str> = BTreeSet::new();
+    for (path, node) in gone {
+        let id = ids::file_id(path);
+        let depends = !links::links_of(tx.r(), &id)?.is_empty()
+            || [NodeType::CodeUnit, NodeType::Test].iter().any(|t| {
+                tx.r()
+                    .find_nodes(&NodeQuery::of_type(*t).with_prop("path", path.as_str()))
+                    .is_ok_and(|v| !v.is_empty())
+            });
+        if !depends {
+            continue;
+        }
+        let Some(old_text) = node
+            .str_prop("blob")
+            .map(|b| tx.r().get_blob(b))
+            .transpose()?
+            .flatten()
+            .and_then(|b| String::from_utf8(b).ok())
+        else {
+            continue;
+        };
+        // With many candidates, compare only files of the same name.
+        let many = added.len() > 50;
+        let mut best: Option<(f64, &str)> = None;
+        for a in added.iter().copied() {
+            if taken.contains(a) || (many && basename(a) != basename(path)) {
+                continue;
+            }
+            let new_text = &texts[a];
+            let sim = similar::TextDiff::configure()
+                .timeout(std::time::Duration::from_millis(200))
+                .diff_lines(old_text.as_str(), new_text.as_str())
+                .ratio() as f64;
+            if sim >= 0.5 && best.is_none_or(|(b, _)| sim > b) {
+                best = Some((sim, a));
+            }
+        }
+        if let Some((_, a)) = best {
+            taken.insert(a);
+            moves.insert(path.clone(), a.to_string());
+        }
+    }
+    Ok(moves)
+}
+
+/// Stored files that may contain `anchor`'s quote, for step 3b (MVP-024).
+fn unchanged_files(
+    r: &dyn GraphRead,
+    index: &mut LineIndex,
+    anchor: &Anchor,
+) -> Vec<(String, String)> {
+    if !index.is_built() && index.build(r).is_err() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for path in index.candidates(&anchor.quote) {
+        let text = r
+            .get_node(&ids::file_id(&path))
+            .ok()
+            .flatten()
+            .filter(|n| !n.retired)
+            .and_then(|n| n.str_prop("blob").map(String::from))
+            .and_then(|b| r.get_blob(&b).ok().flatten())
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        if let Some(text) = text {
+            out.push((path, text));
+        }
+    }
+    out
+}
+
 /// Every code unit and test that is not retired, grouped by the file its anchor names.
 fn anchored_by_path(tx: &Tx<'_>) -> Result<BTreeMap<String, Vec<Node>>> {
     let mut by_path: BTreeMap<String, Vec<Node>> = BTreeMap::new();
@@ -500,12 +642,28 @@ fn apply_relocation(
     changed: &mut BTreeSet<String>,
 ) -> Result<()> {
     match step {
+        Step::Unchanged | Step::Diff | Step::Exact if new.path != old.path => {
+            // The file itself moved (FR-036): the same unit, at a new path.
+            put_anchor(tx, &unit.id, old, &new)?;
+            report.anchors.moved += 1;
+        }
         Step::Unchanged => return Ok(()),
         Step::Diff | Step::Exact => {
             if &new == old {
                 return Ok(());
             }
-            tx.set_prop(&unit.id, "anchor", serde_json::to_value(&new)?)?;
+            if new.confidence < 1.0 {
+                // A judgment with a confidence is an identity decision (FR-033).
+                tx.apply(
+                    kind::IDENTITY_RETARGET,
+                    json!({
+                        "id": unit.id, "from": old.location(), "to": new.location(),
+                        "confidence": new.confidence, "anchor": new,
+                    }),
+                )?;
+            } else {
+                tx.set_prop(&unit.id, "anchor", serde_json::to_value(&new)?)?;
+            }
             report.anchors.relocated += 1;
         }
         Step::Move => {

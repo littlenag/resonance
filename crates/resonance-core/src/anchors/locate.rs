@@ -48,6 +48,18 @@ pub fn relocate(
     new: Option<&str>,
     others: &[(&str, &str)],
 ) -> Relocation {
+    relocate_with(anchor, old, new, others, &mut |_| Vec::new())
+}
+
+/// [`relocate`], with `unchanged` supplying, on demand, files that did not change in this
+/// reconcile but may contain the quote (step 3b, MVP-024).
+pub fn relocate_with(
+    anchor: &Anchor,
+    old: Option<&str>,
+    new: Option<&str>,
+    others: &[(&str, &str)],
+    unchanged: &mut dyn FnMut(&Anchor) -> Vec<(String, String)>,
+) -> Relocation {
     if let (Some(o), Some(n)) = (old, new)
         && o == n
     {
@@ -86,6 +98,19 @@ pub fn relocate(
             step: Step::Move,
         };
     }
+    // Step 3b: exact quote search in files that did not change (MVP-024).
+    let extra = unchanged(anchor);
+    let extra: Vec<(&str, &str)> = extra
+        .iter()
+        .filter(|(p, _)| *p != anchor.path && !others.iter().any(|(o, _)| o == p))
+        .map(|(p, c)| (p.as_str(), c.as_str()))
+        .collect();
+    if let Some(a) = best_exact(anchor, &extra, Method::Move, 0.0) {
+        return Relocation {
+            anchor: a,
+            step: Step::Move,
+        };
+    }
     // Step 4: approximate match in the same file.
     if let Some(n) = new
         && let Some(a) = approximate(anchor, n)
@@ -112,8 +137,27 @@ fn split_lines(s: &str) -> Vec<&str> {
     s.split_inclusive('\n').collect()
 }
 
+/// A changed line paired with an old one counts as surviving at this similarity (MVP-024).
+pub const LINE_SURVIVAL_MIN: f64 = 0.6;
+
+/// What happened to one old line.
+#[derive(Debug, Clone, Copy)]
+enum LineFate {
+    /// Unchanged, now at this new line.
+    Same(usize),
+    /// Changed, paired with this new line at this similarity.
+    Modified(usize, f64),
+    /// Deleted, or rewritten beyond recognition; the new text continues at this line.
+    Gone(usize),
+}
+
 /// Step 1. Follows the range through the line diff if at least half the anchored lines
-/// survive, including lines inserted inside it.
+/// survive, including lines inserted inside it. A changed line survives when it is paired
+/// with a new line at least [`LINE_SURVIVAL_MIN`] similar; boundaries inside changed lines are
+/// mapped through a character diff, so snippet anchors keep their exact columns (MVP-024).
+///
+/// When unchanged lines alone are at least half, confidence is 1.0. Otherwise it is the mean
+/// similarity of the anchored lines, and a mapping below [`APPROXIMATE_MIN`] is refused.
 pub fn diff_map(anchor: &Anchor, old: &str, new: &str) -> Option<Anchor> {
     if old.get(anchor.start_byte..anchor.end_byte) != Some(anchor.quote.as_str()) {
         return None; // The stored old content does not match the anchor; no basis for mapping.
@@ -122,16 +166,14 @@ pub fn diff_map(anchor: &Anchor, old: &str, new: &str) -> Option<Anchor> {
     let new_lines = split_lines(new);
     let old_starts = line_starts(old);
     let new_starts = line_starts(new);
-    if old_lines.is_empty() {
+    if old_lines.is_empty() || new_lines.is_empty() {
         return None;
     }
     let first = anchor.start_line - 1;
     let last = (anchor.end_line - 1).min(old_lines.len() - 1);
     let ops = capture_diff_slices(Algorithm::Patience, &old_lines, &new_lines);
 
-    // For each old line: Some(new line) if unchanged, else the op that removed it.
-    let mut mapped: Vec<Option<usize>> = vec![None; old_lines.len()];
-    let mut removed_by: Vec<Option<DiffOp>> = vec![None; old_lines.len()];
+    let mut fate: Vec<LineFate> = vec![LineFate::Gone(0); old_lines.len()];
     for op in &ops {
         match *op {
             DiffOp::Equal {
@@ -140,65 +182,171 @@ pub fn diff_map(anchor: &Anchor, old: &str, new: &str) -> Option<Anchor> {
                 len,
             } => {
                 for k in 0..len {
-                    mapped[old_index + k] = Some(new_index + k);
+                    fate[old_index + k] = LineFate::Same(new_index + k);
                 }
             }
             DiffOp::Delete {
-                old_index, old_len, ..
-            }
-            | DiffOp::Replace {
-                old_index, old_len, ..
+                old_index,
+                old_len,
+                new_index,
             } => {
                 for k in 0..old_len {
-                    removed_by[old_index + k] = Some(*op);
+                    fate[old_index + k] = LineFate::Gone(new_index);
+                }
+            }
+            DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } => {
+                // Pair each old line with the most similar remaining new line, in order.
+                let mut next = new_index;
+                for k in 0..old_len {
+                    let o = old_lines[old_index + k];
+                    let mut best: Option<(usize, f64)> = None;
+                    for (j, line) in new_lines
+                        .iter()
+                        .enumerate()
+                        .take(new_index + new_len)
+                        .skip(next)
+                    {
+                        let sim = ratio(o.trim_end(), line.trim_end());
+                        if best.is_none_or(|(_, b)| sim > b) {
+                            best = Some((j, sim));
+                        }
+                    }
+                    fate[old_index + k] = match best {
+                        Some((j, sim)) if sim >= LINE_SURVIVAL_MIN => {
+                            next = j + 1;
+                            LineFate::Modified(j, sim)
+                        }
+                        _ => LineFate::Gone(next.min(new_index + new_len)),
+                    };
                 }
             }
             DiffOp::Insert { .. } => {}
         }
     }
+
     let total = last - first + 1;
-    let surviving = (first..=last).filter(|i| mapped[*i].is_some()).count();
+    let anchored = &fate[first..=last];
+    let exact = anchored
+        .iter()
+        .filter(|f| matches!(f, LineFate::Same(_)))
+        .count();
+    let surviving = anchored
+        .iter()
+        .filter(|f| !matches!(f, LineFate::Gone(_)))
+        .count();
     if surviving * 2 < total || surviving == 0 {
         return None;
     }
+    let confidence = if exact * 2 >= total {
+        1.0
+    } else {
+        let sum: f64 = anchored
+            .iter()
+            .map(|f| match f {
+                LineFate::Same(_) => 1.0,
+                LineFate::Modified(_, s) => *s,
+                LineFate::Gone(_) => 0.0,
+            })
+            .sum();
+        sum / total as f64
+    };
+    if confidence < APPROXIMATE_MIN {
+        return None;
+    }
 
-    let new_first = match mapped[first] {
-        Some(n) => n,
-        None => match removed_by[first]? {
-            DiffOp::Replace { new_index, .. } | DiffOp::Delete { new_index, .. } => new_index,
-            _ => return None,
-        },
+    let new_first = match fate[first] {
+        LineFate::Same(n) | LineFate::Modified(n, _) | LineFate::Gone(n) => n,
     };
-    let new_last = match mapped[last] {
-        Some(n) => n,
-        None => match removed_by[last]? {
-            DiffOp::Replace {
-                new_index, new_len, ..
-            } => new_index + new_len - 1,
-            DiffOp::Delete { new_index, .. } => new_index.saturating_sub(1),
-            _ => return None,
-        },
+    let new_last = match fate[last] {
+        LineFate::Same(n) | LineFate::Modified(n, _) => n,
+        LineFate::Gone(n) => n.saturating_sub(1),
     };
-    let new_last = new_last.max(new_first);
+    let new_last = new_last.max(new_first).min(new_lines.len() - 1);
     if new_first >= new_lines.len() {
         return None;
     }
 
-    // Keep the column offsets when the boundary lines themselves are unchanged.
-    let start = if mapped[first].is_some() {
-        new_starts[new_first] + (anchor.start_byte - old_starts[first])
-    } else {
-        new_starts[new_first]
+    let start_col = anchor.start_byte - old_starts[first];
+    let end_col = anchor.end_byte - old_starts[last];
+    let start = new_starts[new_first]
+        + match fate[first] {
+            LineFate::Same(_) => start_col,
+            LineFate::Modified(n, _) => {
+                map_offset(old_lines[first], new_lines[n], start_col, false)
+            }
+            LineFate::Gone(_) => 0,
+        };
+    let end = match fate[last] {
+        LineFate::Same(_) => new_starts[new_last] + end_col,
+        LineFate::Modified(n, _) => {
+            new_starts[new_last] + map_offset(old_lines[last], new_lines[n], end_col, true)
+        }
+        LineFate::Gone(_) => lines_to_bytes(new, new_last + 1, new_last + 1).ok()?.1,
     };
-    let end = if mapped[last].is_some() {
-        new_starts[new_last] + (anchor.end_byte - old_starts[last])
-    } else {
-        lines_to_bytes(new, new_last + 1, new_last + 1).ok()?.1
-    };
-    if end < start || !new.is_char_boundary(start) || !new.is_char_boundary(end) {
+    if end <= start || !new.is_char_boundary(start) || !new.is_char_boundary(end) {
         return None;
     }
-    Some(Anchor::at(&anchor.path, new, start, end, Method::Diff))
+    let mut found = Anchor::at(&anchor.path, new, start, end, Method::Diff);
+    found.confidence = (confidence * 1000.0).round() / 1000.0;
+    Some(found)
+}
+
+/// Map a byte offset in `old` to the corresponding byte offset in `new` through a character
+/// diff. An `end` offset (exclusive) that follows unchanged text stays after it.
+pub fn map_offset(old: &str, new: &str, offset: usize, end: bool) -> usize {
+    let old_chars: Vec<(usize, char)> = old.char_indices().collect();
+    let new_chars: Vec<(usize, char)> = new.char_indices().collect();
+    let to_char = |byte: usize| {
+        old_chars
+            .iter()
+            .position(|(b, _)| *b >= byte)
+            .unwrap_or(old_chars.len())
+    };
+    let to_byte = |ci: usize| new_chars.get(ci).map(|(b, _)| *b).unwrap_or(new.len());
+    let ci = to_char(offset);
+    let diff = similar::TextDiff::configure()
+        .timeout(std::time::Duration::from_millis(100))
+        .diff_chars(old, new);
+    // For an end offset, map the last character before it and step past it.
+    let probe = if end && ci > 0 { ci - 1 } else { ci };
+    for op in diff.ops() {
+        match *op {
+            DiffOp::Equal {
+                old_index,
+                new_index,
+                len,
+            } if (old_index..old_index + len).contains(&probe) => {
+                let n = new_index + (probe - old_index);
+                return to_byte(if end && ci > 0 { n + 1 } else { n });
+            }
+            DiffOp::Delete {
+                old_index,
+                old_len,
+                new_index,
+            } if (old_index..old_index + old_len).contains(&probe) => {
+                return to_byte(new_index);
+            }
+            DiffOp::Replace {
+                old_index,
+                old_len,
+                new_index,
+                new_len,
+            } if (old_index..old_index + old_len).contains(&probe) => {
+                return to_byte(if end { new_index + new_len } else { new_index });
+            }
+            _ => {}
+        }
+    }
+    if ci >= old_chars.len() {
+        new.len()
+    } else {
+        to_byte(ci)
+    }
 }
 
 /// Step 2 (and the per-file part of steps 3 and MVP-005): exact quote search in one file.
@@ -279,10 +427,22 @@ pub fn approximate(anchor: &Anchor, content: &str) -> Option<Anchor> {
     windows.sort_by(|a, b| b.0.total_cmp(&a.0));
     windows.truncate(12);
 
+    // A snippet anchor (starting or ending inside a line) is compared with the text in the
+    // window that aligns with its quote, rather than whole lines (MVP-024).
+    let starts_mid_line = !anchor.prefix.is_empty() && !anchor.prefix.ends_with('\n');
+    let ends_mid_line = !anchor.suffix.is_empty() && !anchor.suffix.starts_with(['\n', '\r']);
+    let snippet = starts_mid_line || ends_mid_line;
     let mut best: Option<(f64, f64, usize, usize)> = None;
     for (_, i, width) in windows {
-        let (s, e) = lines_to_bytes(content, i + 1, i + width).ok()?;
-        let sim = ratio(&anchor.quote, &content[s..e]);
+        let (mut s, mut e) = lines_to_bytes(content, i + 1, i + width).ok()?;
+        let mut sim = ratio(&anchor.quote, &content[s..e]);
+        if snippet && let Some((rs, re)) = align(&anchor.quote, &content[s..e]) {
+            let refined = ratio(&anchor.quote, &content[s + rs..s + re]);
+            if refined >= sim {
+                sim = refined;
+                (s, e) = (s + rs, s + re);
+            }
+        }
         if sim < APPROXIMATE_MIN {
             continue;
         }
@@ -307,4 +467,25 @@ pub fn approximate(anchor: &Anchor, content: &str) -> Option<Anchor> {
     let mut found = Anchor::at(&anchor.path, content, s, e, Method::Approximate);
     found.confidence = (sim * 1000.0).round() / 1000.0;
     Some(found)
+}
+
+/// The byte range of `window` that aligns with `quote`: from the first to the last character
+/// a character diff finds in common.
+fn align(quote: &str, window: &str) -> Option<(usize, usize)> {
+    let new_chars: Vec<usize> = window.char_indices().map(|(b, _)| b).collect();
+    let diff = similar::TextDiff::configure()
+        .timeout(std::time::Duration::from_millis(100))
+        .diff_chars(quote, window);
+    let equal: Vec<(usize, usize)> = diff
+        .ops()
+        .iter()
+        .filter_map(|op| match *op {
+            DiffOp::Equal { new_index, len, .. } => Some((new_index, new_index + len)),
+            _ => None,
+        })
+        .collect();
+    let (first, _) = *equal.first()?;
+    let (_, last) = *equal.last()?;
+    let to_byte = |ci: usize| new_chars.get(ci).copied().unwrap_or(window.len());
+    Some((to_byte(first), to_byte(last)))
 }
