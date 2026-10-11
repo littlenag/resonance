@@ -1,1 +1,256 @@
-//! Commands: init, status, reconcile, rebuild-derived, export, eject, version.
+//! Setup and lifecycle: init, status, reconcile, rebuild-derived, agent install, export, eject, version.
+
+use std::fs;
+use std::io::Write;
+use std::path::PathBuf;
+
+use resonance_core::agent::{self, AgentInstall};
+use resonance_core::api::{Engine, version_info};
+use resonance_core::error::{Error, Result};
+use resonance_core::ingest::ReconcileOptions;
+use resonance_core::lifecycle::{self, OFFLINE_EXPLANATION};
+use resonance_core::repo::Repo;
+use serde_json::json;
+
+use super::{Ctx, confirm, engine, human_actor, open_store, reconciled};
+use crate::cli::AgentCommand;
+use crate::render;
+
+pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool) -> Result<()> {
+    let repo = Repo::discover(&ctx.cwd)?;
+    let setup = lifecycle::init(&repo, &open_store)?;
+    let store = open_store(&repo.store_path())?;
+    let actor = human_actor(&repo);
+    let mut engine = Engine::open(repo.clone(), store, actor, ctx.cwd.clone())?;
+    let report = engine.reconcile(ReconcileOptions::default())?;
+    let status = engine.status()?;
+    drop(engine);
+
+    let agent = if with_agent {
+        Some(agent::install(&repo.root, &exe()?, true)?)
+    } else if no_agent || ctx.json {
+        None
+    } else {
+        match confirm(
+            "Register the Resonance MCP server with Claude Code for this project (local scope only)?",
+        ) {
+            Some(true) => Some(agent::install(&repo.root, &exe()?, true)?),
+            _ => None,
+        }
+    };
+
+    if ctx.json {
+        return ctx.emit(
+            &json!({"setup": setup, "reconcile": report, "counts": status.counts, "agent": agent}),
+            |_| String::new(),
+        );
+    }
+    let mut out = String::new();
+    if setup.already_initialized {
+        out.push_str(&format!(
+            "Resonance is already set up in {}; nothing was changed.\n",
+            repo.root.display()
+        ));
+    } else {
+        out.push_str(&format!(
+            "Initialized Resonance in {}/.resonance (offline mode).\n",
+            repo.root.display()
+        ));
+        if setup.exclusion_added {
+            out.push_str("Added /.resonance/ to .git/info/exclude; `git status` is unchanged.\n");
+        }
+        out.push('\n');
+        out.push_str(OFFLINE_EXPLANATION);
+        out.push_str("\n\n");
+    }
+    out.push_str(&render::counts_line(&status.counts));
+    out.push('\n');
+    match &agent {
+        Some(a) => out.push_str(&agent_text(a)),
+        None => out.push_str(
+            "Next: import requirements with `resonance import <file.md>`, and let Claude Code use Resonance with `resonance agent install`.\n",
+        ),
+    }
+    ctx.emit(&(), |_| out)
+}
+
+fn exe() -> Result<PathBuf> {
+    let p =
+        std::env::current_exe().map_err(|e| Error::io("finding the resonance executable", e))?;
+    Ok(p.canonicalize().unwrap_or(p))
+}
+
+fn agent_text(a: &AgentInstall) -> String {
+    let mut out = String::new();
+    if a.ran && a.succeeded {
+        out.push_str("Registered the Resonance MCP server with Claude Code (local scope: this project, this developer).\n");
+        if !a.output.is_empty() {
+            out.push_str(&format!("{}\n", a.output));
+        }
+        out.push_str("Start a new Claude Code session here to use it.\n");
+    } else {
+        if a.ran {
+            out.push_str(&format!(
+                "Registering with Claude Code failed:\n{}\n",
+                a.output
+            ));
+        }
+        if let Some(i) = &a.instructions {
+            out.push_str(i);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+pub fn agent(ctx: &Ctx, cmd: AgentCommand) -> Result<()> {
+    let AgentCommand::Install { dry_run, yes } = cmd;
+    let repo = Repo::discover(&ctx.cwd)?;
+    let exe = exe()?;
+    let plan = agent::install(&repo.root, &exe, false)?;
+    if dry_run || !plan.claude_found {
+        let mut text = String::new();
+        if dry_run && plan.claude_found {
+            text.push_str(&format!(
+                "Would run (in {}):\n  {}\nThis writes only to Claude Code's local configuration for this project; no tracked file changes.\n",
+                repo.root.display(),
+                plan.command
+            ));
+        } else {
+            text = agent_text(&plan);
+        }
+        return ctx.emit(&plan, |_| text);
+    }
+    let go = yes
+        || confirm(&format!(
+            "Run `{}`? It registers the server for this project only (Claude Code local scope).",
+            plan.command
+        ))
+        .unwrap_or(false);
+    if !go {
+        let text = format!(
+            "Nothing changed. To register, run `resonance agent install --yes`, or run this yourself:\n  {}\n",
+            plan.command
+        );
+        ctx.emit(&plan, |_| text)?;
+        return Err(Error::Invalid("not confirmed".into()));
+    }
+    let result = agent::install(&repo.root, &exe, true)?;
+    let text = agent_text(&result);
+    ctx.emit(&result, |_| text)?;
+    if result.succeeded {
+        Ok(())
+    } else {
+        Err(Error::Invalid("registering the MCP server failed".into()))
+    }
+}
+
+pub fn status(ctx: &Ctx) -> Result<()> {
+    let (engine, _) = reconciled(ctx)?;
+    ctx.emit(&engine.status()?, render::status)
+}
+
+pub fn reconcile(ctx: &Ctx, full: bool) -> Result<()> {
+    let mut engine = engine(ctx)?;
+    let report = engine.reconcile(ReconcileOptions {
+        full,
+        ..Default::default()
+    })?;
+    ctx.emit(&report, render::reconcile)
+}
+
+pub fn rebuild_derived(ctx: &Ctx) -> Result<()> {
+    let mut engine = engine(ctx)?;
+    let report = engine.rebuild_derived()?;
+    ctx.emit(&report, |r| {
+        format!("Rebuilt derived data.\n{}", render::reconcile(r))
+    })
+}
+
+pub fn version(ctx: &Ctx) -> Result<()> {
+    ctx.emit(&version_info(), render::version)
+}
+
+pub fn export(ctx: &Ctx, out: Option<PathBuf>) -> Result<()> {
+    let (engine, _) = reconciled(ctx)?;
+    match out {
+        None => {
+            let mut stdout = std::io::stdout().lock();
+            engine.export(&mut stdout)?;
+            stdout.flush().map_err(|e| Error::io("writing output", e))
+        }
+        Some(path) => {
+            let n = write_export(&engine, &path)?;
+            ctx.emit(&json!({"path": path, "operations": n}), |_| {
+                format!("Exported {n} operations to {}\n", path.display())
+            })
+        }
+    }
+}
+
+fn write_export(engine: &Engine, path: &PathBuf) -> Result<usize> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir).map_err(|e| Error::io(format!("creating {}", dir.display()), e))?;
+    }
+    let mut file =
+        fs::File::create(path).map_err(|e| Error::io(format!("creating {}", path.display()), e))?;
+    let n = engine.export(&mut file)?;
+    file.sync_all()
+        .map_err(|e| Error::io(format!("writing {}", path.display()), e))?;
+    Ok(n)
+}
+
+pub fn eject(ctx: &Ctx, dry_run: bool, yes: bool, out: Option<PathBuf>) -> Result<()> {
+    let (engine, _) = reconciled(ctx)?;
+    let repo = engine.repo.clone();
+    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
+        Error::Invalid("HOME is not set; give the export location with --out".into())
+    })?;
+    let path = match out {
+        Some(p) if p.is_relative() => ctx.cwd.join(p),
+        Some(p) => p,
+        None => lifecycle::default_export_path(&repo, &home),
+    };
+    if path.starts_with(&repo.root) && !path.starts_with(repo.resonance_dir()) {
+        ctx.note(&format!(
+            "Note: {} is inside the repository; git will see it.",
+            path.display()
+        ));
+    }
+    if path.starts_with(repo.resonance_dir()) {
+        return Err(Error::Usage(
+            "the export cannot go inside .resonance/, which eject removes".into(),
+        ));
+    }
+    let plan = format!(
+        "resonance eject will:\n  1. export the graph to {}\n  2. remove {}\n  3. remove the /.resonance/ line from .git/info/exclude\nNo other file is touched.\n",
+        path.display(),
+        repo.resonance_dir().display()
+    );
+    if dry_run {
+        return ctx.emit(&json!({"dryRun": true, "export": path}), |_| plan);
+    }
+    let n = write_export(&engine, &path)?;
+    drop(engine);
+    ctx.note(&format!("Exported {n} operations to {}", path.display()));
+    let go = yes
+        || confirm(&format!(
+            "Remove {} and its exclusion line? The export above is the only copy of your graph.",
+            repo.resonance_dir().display()
+        ))
+        .unwrap_or(false);
+    if !go {
+        ctx.note("Nothing was removed. Run `resonance eject --yes` to remove .resonance/.");
+        return Err(Error::Invalid("not confirmed".into()));
+    }
+    let removal = lifecycle::remove(&repo)?;
+    ctx.emit(
+        &json!({"export": path, "operations": n, "removal": removal}),
+        |_| {
+            format!(
+                "Removed .resonance/ and its exclusion. Your graph is saved in {}.\n",
+                path.display()
+            )
+        },
+    )
+}

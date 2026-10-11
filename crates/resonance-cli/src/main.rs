@@ -4,7 +4,12 @@ mod cli;
 mod commands;
 mod render;
 
+use clap::Parser;
+
 fn main() {
-    eprintln!("resonance: not implemented yet (see spec/mvp.md)");
-    std::process::exit(1);
+    let cli = cli::Cli::parse();
+    if let Err(e) = commands::run(cli) {
+        eprintln!("resonance: {e}");
+        std::process::exit(e.exit_code());
+    }
 }
