@@ -542,6 +542,7 @@ dependencies = [
  "clap",
  "resonance-core",
  "resonance-store-sqlite",
+ "serde",
  "serde_json",
  "tempfile",
 ]
