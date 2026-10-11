@@ -10,6 +10,7 @@ pub mod export;
 pub mod ingest;
 pub mod intent;
 pub mod lifecycle;
+pub mod links;
 pub mod mcp;
 pub mod model;
 pub mod ops;

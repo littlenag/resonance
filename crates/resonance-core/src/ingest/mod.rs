@@ -3,3 +3,5 @@
 pub mod blobs;
 pub mod reconcile;
 pub mod walk;
+
+pub use reconcile::{ReconcileOptions, ReconcileReport, reconcile};

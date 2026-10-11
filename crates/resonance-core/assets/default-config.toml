@@ -1,11 +1,14 @@
 # Resonance repository configuration (.resonance/config.toml). Written by `resonance init`.
+# Settings can be overridden by RESONANCE_* environment variables (for example
+# RESONANCE_TEST_TIMEOUT_SECONDS=60), and those by command-line flags.
 
 [intent]
 # Requirement documents imported with `resonance import` (MVP-011).
 sources = []
 
 [ingest]
-# Extra ignore patterns, on top of .gitignore and the built-in defaults (FR-046).
+# Extra ignore patterns (globs over repository-relative paths), on top of .gitignore and
+# the built-in defaults (FR-046).
 ignore = []
 # Files larger than this are recorded by hash and size only (MVP-016).
 maxBlobBytes = 5242880
@@ -15,3 +18,5 @@ maxBlobBytes = 5242880
 command = ""
 # Output that means no test actually ran; such a run is recorded as `error`, never `pass`.
 zeroTestsPattern = "running 0 tests"
+# A test that runs longer than this is stopped and recorded as `error`.
+timeoutSeconds = 600
