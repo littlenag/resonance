@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::trace::DecisionLink;
 use super::{
@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::model::{EdgeType, Node, NodeType};
 use crate::store::{EdgeQuery, GraphRead, NodeQuery};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackUnit {
     #[serde(flatten)]
@@ -27,7 +27,7 @@ pub struct PackUnit {
     pub links: Vec<PackLink>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackLink {
     pub requirement: String,
@@ -36,7 +36,7 @@ pub struct PackLink {
     pub status: LinkStatus,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackTest {
     #[serde(flatten)]
@@ -45,7 +45,7 @@ pub struct PackTest {
     pub latest_evidence: Option<EvidenceView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextPack {
     pub task: Option<String>,

@@ -39,7 +39,7 @@ pub struct KeyConflict {
 }
 
 /// What an import changed.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IntentReport {
     /// Whether the sources were read at all (they are skipped when nothing changed).

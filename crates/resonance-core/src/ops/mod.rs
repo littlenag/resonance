@@ -259,6 +259,27 @@ pub fn apply(w: &mut dyn GraphWrite, op: &Op) -> Result<()> {
                 w.put_node(&node)
             }
         }
+        kind::IDENTITY_SPLIT => {
+            // One node became several (§9.4). The old node is retired; links are moved by
+            // separate edge operations in the same change set.
+            let mut node = node_or_err(w, str_field(p, "id")?)?;
+            node.retired = true;
+            node.props
+                .insert("splitInto".into(), field(p, "into")?.clone());
+            w.put_node(&node)
+        }
+        kind::IDENTITY_MERGE => {
+            // Several nodes became one (§9.4).
+            let into = field(p, "into")?.clone();
+            let ids: Vec<String> = parse(p, "ids")?;
+            for id in ids {
+                let mut node = node_or_err(w, &id)?;
+                node.retired = true;
+                node.props.insert("mergedInto".into(), into.clone());
+                w.put_node(&node)?;
+            }
+            Ok(())
+        }
         kind::EVIDENCE_RECORD => {
             let id = str_field(p, "id")?;
             let node = Node::new(id, NodeType::Evidence, Layer::Authored, parse(p, "props")?);
@@ -294,6 +315,17 @@ pub fn apply(w: &mut dyn GraphWrite, op: &Op) -> Result<()> {
             node.props
                 .insert("stored".into(), field(p, "stored")?.clone());
             w.put_node(&node)
+        }
+        kind::FILE_MOVE => {
+            // A real file move (FR-036): the old path is retired, the new one exists already
+            // through `file.put`; links on the file are re-targeted by `identity.retarget`.
+            let id = ids::file_id(str_field(p, "from")?);
+            if let Some(mut node) = w.get_node(&id)? {
+                node.retired = true;
+                node.props.insert("movedTo".into(), field(p, "to")?.clone());
+                w.put_node(&node)?;
+            }
+            Ok(())
         }
         kind::FILE_DELETE => {
             let id = ids::file_id(str_field(p, "path")?);

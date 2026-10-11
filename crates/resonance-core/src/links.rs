@@ -113,7 +113,7 @@ pub fn links_of(r: &dyn GraphRead, node: &str) -> Result<Vec<Edge>> {
 }
 
 /// Counts of status changes, for reports.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusChanges {
     pub stale: usize,

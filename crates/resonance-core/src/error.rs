@@ -62,6 +62,18 @@ pub enum Error {
     /// Configuration could not be read.
     #[error("configuration: {0}")]
     Config(String),
+
+    /// An error reported by the daemon on behalf of a request, with the exit code it maps to.
+    #[error("{message}")]
+    Remote { message: String, code: i32 },
+
+    /// The daemon could not be reached, started or kept running.
+    #[error("daemon: {0}")]
+    Daemon(String),
+
+    /// Another daemon already serves this repository (FR-082).
+    #[error("a daemon is already running for this repository (pid {0})")]
+    AlreadyRunning(String),
 }
 
 impl Error {
@@ -77,6 +89,7 @@ impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
             Error::Usage(_) => 2,
+            Error::Remote { code, .. } => *code,
             _ => 1,
         }
     }

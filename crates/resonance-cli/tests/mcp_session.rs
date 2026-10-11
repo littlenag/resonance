@@ -145,6 +145,8 @@ fn initialize_list_tools_and_trace() {
         "resonance_annotate",
         "resonance_reattach",
         "resonance_test",
+        "resonance_split_unit",
+        "resonance_merge_unit",
     ];
     assert_eq!(names, expected);
     for t in tools["result"]["tools"].as_array().unwrap() {

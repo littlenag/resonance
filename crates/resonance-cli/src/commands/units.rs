@@ -1,24 +1,21 @@
-//! Code units and tests: unit add|edit|remove|list, test add.
+//! Code units and tests: unit add|edit|remove|list|split|merge, test add.
 
-use resonance_core::api::{UnitEdit, UnitInput};
+use resonance_core::api::IdentityChange;
 use resonance_core::error::Result;
+use resonance_core::query::UnitView;
+use serde_json::json;
 
-use super::{Ctx, reconciled};
+use super::Ctx;
 use crate::cli::{TestCommand, UnitCommand};
 use crate::render;
 
 pub fn unit(ctx: &Ctx, cmd: UnitCommand) -> Result<()> {
-    let (mut engine, _) = reconciled(ctx)?;
     match cmd {
         UnitCommand::Add(r) => {
-            let view = engine.unit_add(UnitInput {
-                region: r.region,
-                match_text: r.match_text,
-                name: r.name,
-                kind: r.kind,
-                run: None,
-                test: false,
-            })?;
+            let view: UnitView = ctx.run(
+                "unit_add",
+                json!({"region": r.region, "match": r.match_text, "name": r.name, "kind": r.kind, "test": false}),
+            )?;
             ctx.emit(&view, render::unit)
         }
         UnitCommand::Edit {
@@ -34,15 +31,9 @@ pub fn unit(ctx: &Ctx, cmd: UnitCommand) -> Result<()> {
                 && name.is_none()
                 && kind.is_none()
                 && run.is_none();
-            let view = engine.unit_edit(
-                &unit,
-                UnitEdit {
-                    region,
-                    match_text,
-                    name,
-                    kind,
-                    run,
-                },
+            let view: UnitView = ctx.run(
+                "unit_edit",
+                json!({"ref": unit, "region": region, "match": match_text, "name": name, "kind": kind, "run": run}),
             )?;
             ctx.emit(&view, |u| {
                 let head = if confirming {
@@ -54,7 +45,7 @@ pub fn unit(ctx: &Ctx, cmd: UnitCommand) -> Result<()> {
             })
         }
         UnitCommand::Remove { unit } => {
-            let view = engine.unit_remove(&unit)?;
+            let view: UnitView = ctx.run("unit_remove", json!({"ref": unit}))?;
             ctx.emit(&view, |u| {
                 format!(
                     "Removed {} (kept for history; its links are now orphaned).\n",
@@ -63,22 +54,30 @@ pub fn unit(ctx: &Ctx, cmd: UnitCommand) -> Result<()> {
             })
         }
         UnitCommand::List { path } => {
-            let list = engine.unit_list(path.as_deref())?;
+            let list: Vec<UnitView> = ctx.run("unit_list", json!({"path": path}))?;
             ctx.emit(&list, |l| render::units(l))
+        }
+        UnitCommand::Split { unit, into } => {
+            let change: IdentityChange =
+                ctx.run("unit_split", json!({"ref": unit, "into": into}))?;
+            ctx.emit(&change, |c| render::identity_change("Split", c))
+        }
+        UnitCommand::Merge { units, into } => {
+            let change: IdentityChange =
+                ctx.run("unit_merge", json!({"refs": units, "into": into}))?;
+            ctx.emit(&change, |c| render::identity_change("Merged", c))
         }
     }
 }
 
 pub fn test_add(ctx: &Ctx, cmd: TestCommand) -> Result<()> {
     let TestCommand::Add { region, run } = cmd;
-    let (mut engine, _) = reconciled(ctx)?;
-    let view = engine.unit_add(UnitInput {
-        region: region.region,
-        match_text: region.match_text,
-        name: region.name,
-        kind: region.kind,
-        run,
-        test: true,
-    })?;
+    let view: UnitView = ctx.run(
+        "unit_add",
+        json!({
+            "region": region.region, "match": region.match_text, "name": region.name,
+            "kind": region.kind, "run": run, "test": true,
+        }),
+    )?;
     ctx.emit(&view, render::unit)
 }

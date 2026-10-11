@@ -1,6 +1,6 @@
 //! Code to requirements, decisions, tests and annotations (S3).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::trace::DecisionLink;
 use super::{
@@ -11,21 +11,21 @@ use crate::error::{Error, Result};
 use crate::model::{EdgeType, Node, NodeType};
 use crate::store::{EdgeQuery, GraphRead};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequirementLink {
     pub link: LinkView,
     pub requirement: RequirementView,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestLink {
     pub link: LinkView,
     pub test: UnitView,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InheritedDecision {
     #[serde(flatten)]
@@ -34,7 +34,7 @@ pub struct InheritedDecision {
     pub via: Option<NodeRef>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WhyView {
     pub node: NodeRef,

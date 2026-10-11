@@ -11,7 +11,7 @@ pub mod show;
 pub mod trace;
 pub mod why;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::anchors::{Anchor, AnchorState};
@@ -21,7 +21,7 @@ use crate::model::{Edge, EdgeType, LinkStatus, Node, NodeType};
 use crate::store::{EdgeQuery, GraphRead, NodeQuery};
 
 /// A short description of any node.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeRef {
     pub id: String,
@@ -33,7 +33,7 @@ pub struct NodeRef {
 }
 
 /// Where a code unit or test is.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Location {
     pub path: String,
@@ -66,7 +66,7 @@ impl std::fmt::Display for Location {
 }
 
 /// A code unit or test.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnitView {
     pub id: String,
@@ -82,7 +82,7 @@ pub struct UnitView {
 }
 
 /// The outcome of a check, in brief.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EvidenceView {
     pub id: String,
@@ -93,7 +93,7 @@ pub struct EvidenceView {
 }
 
 /// A link seen from one of its endpoints.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkView {
     pub id: String,
@@ -112,7 +112,7 @@ pub struct LinkView {
 }
 
 /// An annotation.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnotationView {
     pub id: String,
@@ -131,7 +131,7 @@ pub struct AnnotationView {
 }
 
 /// A requirement.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RequirementView {
     pub id: String,
@@ -146,7 +146,7 @@ pub struct RequirementView {
 }
 
 /// A decision.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecisionView {
     pub id: String,

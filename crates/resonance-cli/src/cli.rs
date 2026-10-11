@@ -21,6 +21,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Run in this process instead of through the daemon (for debugging): reconcile, then answer.
+    #[arg(long, global = true, env = "RESONANCE_NO_DAEMON", value_parser = clap::builder::FalseyValueParser::new())]
+    pub no_daemon: bool,
+
+    /// Answer from the graph as it is, without waiting for changes still being applied.
+    #[arg(long, global = true)]
+    pub cached: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -72,6 +80,20 @@ pub enum Command {
     },
     /// Version of the binary, store schema and MCP protocol.
     Version,
+    /// The per-repository daemon. Started on demand by every command; rarely needed by hand.
+    Daemon {
+        /// Run in this process until idle or stopped (this is what clients start).
+        #[arg(long, conflicts_with = "stop")]
+        foreground: bool,
+        /// Stop the running daemon.
+        #[arg(long)]
+        stop: bool,
+    },
+    /// The system-wide registry: discovery and health of daemons.
+    #[command(subcommand)]
+    Registry(RegistryCommand),
+    /// Health of this repository and of every known daemon.
+    Doctor,
 
     // Intent
     /// Import requirements from Markdown files and keep them in sync.
@@ -280,6 +302,43 @@ pub enum UnitCommand {
     Remove { unit: String },
     /// List code units and tests, optionally under a file or directory.
     List { path: Option<String> },
+    /// Declare that a unit became several (declare the new units first).
+    Split {
+        unit: String,
+        /// The units it became.
+        #[arg(long, required = true, num_args = 1..)]
+        into: Vec<String>,
+    },
+    /// Declare that several units became one.
+    Merge {
+        #[arg(required = true)]
+        units: Vec<String>,
+        /// The unit they became.
+        #[arg(long)]
+        into: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RegistryCommand {
+    /// Run the registry in this process.
+    Run,
+    /// Install the registry as a user service (launchd or systemd --user) and start it.
+    Install {
+        /// Show the service definition and commands, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Stop and remove the registry's user service.
+    Uninstall {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Args)]

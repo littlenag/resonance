@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{NodeRef, RequirementView, label_of, node_ref, requirement_view, status_of};
 use crate::error::{Error, Result};
@@ -10,7 +10,7 @@ use crate::links::{LINK_TYPES, links_of};
 use crate::model::{EdgeType, LinkStatus, Node, NodeType};
 use crate::store::{EdgeQuery, GraphRead, NodeQuery};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchHit {
     #[serde(flatten)]
@@ -139,7 +139,7 @@ pub fn cmp_keys(a: &str, b: &str) -> Ordering {
     key_order(a).cmp(&key_order(b))
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnverifiedTest {
     pub test: NodeRef,
@@ -147,7 +147,7 @@ pub struct UnverifiedTest {
     pub status: LinkStatus,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Unverified {
     pub requirement: RequirementView,

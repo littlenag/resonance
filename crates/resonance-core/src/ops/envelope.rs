@@ -83,7 +83,10 @@ pub mod kind {
     pub const EDGE_SET: &str = "edge.set";
     pub const IDENTITY_MOVE: &str = "identity.move";
     pub const IDENTITY_RETARGET: &str = "identity.retarget";
+    pub const IDENTITY_SPLIT: &str = "identity.split";
+    pub const IDENTITY_MERGE: &str = "identity.merge";
     pub const EVIDENCE_RECORD: &str = "evidence.record";
     pub const FILE_PUT: &str = "file.put";
     pub const FILE_DELETE: &str = "file.delete";
+    pub const FILE_MOVE: &str = "file.move";
 }

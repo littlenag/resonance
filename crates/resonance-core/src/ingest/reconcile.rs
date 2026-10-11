@@ -11,14 +11,16 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::anchors::locate::{Step, relocate, restore};
 use crate::anchors::{Anchor, AnchorState};
 use crate::error::{Error, Result};
 use crate::ingest::blobs::should_store;
-use crate::ingest::walk::walk;
+use crate::ingest::walk::{
+    compile_ignores, git_ignored, in_nested_repository, is_ignored_path, mtime_ns, walk,
+};
 use crate::intent::{self, IntentReport};
 use crate::links::{self, StatusChanges, anchor_of};
 use crate::model::{Edge, EdgeType, Layer, LinkStatus, Node, NodeType, content_hash, ids};
@@ -42,7 +44,7 @@ pub struct ReconcileOptions {
 }
 
 /// What anchors did during a reconcile.
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnchorReport {
     /// Followed a change in their own file (MVP-013 steps 1 and 2).
@@ -57,7 +59,7 @@ pub struct AnchorReport {
     pub restored: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReconcileReport {
     pub files_scanned: usize,
@@ -95,8 +97,70 @@ pub fn reconcile(
     opts: ReconcileOptions,
 ) -> Result<ReconcileReport> {
     let started = Instant::now();
+    let (hashed, removed, scanned) = scan_all(&*store, root, config, opts.full)?;
+    commit(store, root, config, opts, hashed, removed, scanned, started)
+}
 
-    // Phase 1: find and hash what changed, without holding the write lock.
+/// Reconcile only the given repository-relative paths, as reported by the watcher (FR-049).
+/// Event contents are hints: each path is re-examined by size, time and hash (FR-042). When
+/// one of them is a directory, this falls back to a full reconcile.
+pub fn reconcile_paths(
+    store: &mut dyn GraphStore,
+    root: &Path,
+    config: &Config,
+    paths: &[String],
+) -> Result<ReconcileReport> {
+    let started = Instant::now();
+    match scan_paths(&*store, root, config, paths)? {
+        Some((hashed, removed, scanned)) => commit(
+            store,
+            root,
+            config,
+            ReconcileOptions::default(),
+            hashed,
+            removed,
+            scanned,
+            started,
+        ),
+        None => reconcile(store, root, config, ReconcileOptions::default()),
+    }
+}
+
+/// Read and hash a file unless its size and modification time show it unchanged.
+fn hash_if_changed(
+    root: &Path,
+    path: &str,
+    size: u64,
+    mtime_ns: i64,
+    record: Option<&FileRecord>,
+    full: bool,
+) -> Result<Option<Hashed>> {
+    if !full
+        && let Some(r) = record
+        && r.size == size
+        && r.mtime_ns == mtime_ns
+        && mtime_ns.saturating_add(RACY_NS) <= r.recorded_ns
+    {
+        return Ok(None);
+    }
+    let bytes = match fs::read(abs_path(root, path)) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Error::io(format!("reading {path}"), e)),
+    };
+    Ok(Some(Hashed {
+        path: path.to_string(),
+        size: bytes.len() as u64,
+        mtime_ns,
+        hash: content_hash(&bytes),
+        bytes,
+    }))
+}
+
+type Scan = (Vec<Hashed>, Vec<String>, usize);
+
+/// Phase 1 for the whole tree: find and hash what changed, without holding the write lock.
+fn scan_all(store: &dyn GraphStore, root: &Path, config: &Config, full: bool) -> Result<Scan> {
     let walked = walk(root, &config.ingest.ignore)?;
     let records: HashMap<String, FileRecord> = store
         .list_files()?
@@ -105,26 +169,16 @@ pub fn reconcile(
         .collect();
     let mut hashed = Vec::new();
     for f in &walked {
-        if !opts.full
-            && let Some(r) = records.get(&f.path)
-            && r.size == f.size
-            && r.mtime_ns == f.mtime_ns
-            && f.mtime_ns.saturating_add(RACY_NS) <= r.recorded_ns
-        {
-            continue;
+        if let Some(h) = hash_if_changed(
+            root,
+            &f.path,
+            f.size,
+            f.mtime_ns,
+            records.get(&f.path),
+            full,
+        )? {
+            hashed.push(h);
         }
-        let bytes = match fs::read(abs_path(root, &f.path)) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(Error::io(format!("reading {}", f.path), e)),
-        };
-        hashed.push(Hashed {
-            path: f.path.clone(),
-            size: bytes.len() as u64,
-            mtime_ns: f.mtime_ns,
-            hash: content_hash(&bytes),
-            bytes,
-        });
     }
     let on_disk: BTreeSet<&str> = walked.iter().map(|f| f.path.as_str()).collect();
     let removed: Vec<String> = records
@@ -132,10 +186,92 @@ pub fn reconcile(
         .filter(|p| !on_disk.contains(p.as_str()))
         .cloned()
         .collect();
+    Ok((hashed, removed, walked.len()))
+}
 
-    // Phase 2: apply everything in one transaction.
+/// Phase 1 for some paths. `None` means a directory changed and the whole tree must be scanned.
+fn scan_paths(
+    store: &dyn GraphStore,
+    root: &Path,
+    config: &Config,
+    paths: &[String],
+) -> Result<Option<Scan>> {
+    let extra = compile_ignores(&config.ingest.ignore)?;
+    let mut candidates: Vec<(String, u64, i64)> = Vec::new();
+    let mut removed: BTreeSet<String> = BTreeSet::new();
+    let mut all_records: Option<Vec<FileRecord>> = None;
+    for path in paths {
+        let abs = abs_path(root, path);
+        match fs::symlink_metadata(&abs) {
+            Ok(md) if md.is_dir() => return Ok(None),
+            Ok(md) if md.is_file() => candidates.push((path.clone(), md.len(), mtime_ns(&md))),
+            Ok(_) => {
+                // A symbolic link or something else that is not ingested.
+                if store.get_file(path)?.is_some() {
+                    removed.insert(path.clone());
+                }
+            }
+            Err(_) => {
+                if store.get_file(path)?.is_some() {
+                    removed.insert(path.clone());
+                } else {
+                    // Perhaps a directory that was removed: everything under it is gone.
+                    let records = match &all_records {
+                        Some(r) => r,
+                        None => all_records.insert(store.list_files()?),
+                    };
+                    let prefix = format!("{path}/");
+                    for r in records.iter().filter(|r| r.path.starts_with(&prefix)) {
+                        if !abs_path(root, &r.path).exists() {
+                            removed.insert(r.path.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Apply the same ignore rules as the full walk.
+    let maybe: Vec<String> = candidates
+        .iter()
+        .map(|c| c.0.clone())
+        .filter(|p| !is_ignored_path(p, &extra) && !in_nested_repository(root, p))
+        .collect();
+    let git_ignored = git_ignored(root, &maybe)?;
+    let mut hashed = Vec::new();
+    let mut scanned = 0;
+    for (path, size, mtime) in candidates {
+        let ignored = is_ignored_path(&path, &extra)
+            || in_nested_repository(root, &path)
+            || git_ignored.contains(&path);
+        let record = store.get_file(&path)?;
+        if ignored {
+            if record.is_some() {
+                removed.insert(path);
+            }
+            continue;
+        }
+        scanned += 1;
+        if let Some(h) = hash_if_changed(root, &path, size, mtime, record.as_ref(), false)? {
+            hashed.push(h);
+        }
+    }
+    Ok(Some((hashed, removed.into_iter().collect(), scanned)))
+}
+
+/// Phase 2: apply everything in one transaction.
+#[allow(clippy::too_many_arguments)]
+fn commit(
+    store: &mut dyn GraphStore,
+    root: &Path,
+    config: &Config,
+    opts: ReconcileOptions,
+    hashed: Vec<Hashed>,
+    removed: Vec<String>,
+    scanned: usize,
+    started: Instant,
+) -> Result<ReconcileReport> {
     let mut report = ReconcileReport {
-        files_scanned: walked.len(),
+        files_scanned: scanned,
         files_hashed: hashed.len(),
         ..Default::default()
     };

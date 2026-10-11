@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::ops::hlc;
@@ -19,7 +19,7 @@ use crate::store::{GraphScope, GraphStore, meta};
 pub type StoreFactory<'a> = &'a dyn Fn(&Path) -> Result<Box<dyn GraphStore>>;
 
 /// What `init` set up.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitSetup {
     pub already_initialized: bool,
@@ -82,7 +82,7 @@ pub fn default_export_path(repo: &Repo, home: &Path) -> PathBuf {
         .join(format!("{}-{stamp}.jsonl", repo.name()))
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Removal {
     pub removed_directory: bool,

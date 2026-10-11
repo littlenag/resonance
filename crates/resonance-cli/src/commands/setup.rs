@@ -5,26 +5,23 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use resonance_core::agent::{self, AgentInstall};
-use resonance_core::api::{Engine, version_info};
+use resonance_core::api::{StatusView, version_info};
+use resonance_core::daemon::client;
 use resonance_core::error::{Error, Result};
-use resonance_core::ingest::ReconcileOptions;
+use resonance_core::ingest::ReconcileReport;
 use resonance_core::lifecycle::{self, OFFLINE_EXPLANATION};
 use resonance_core::repo::Repo;
-use serde_json::json;
+use serde_json::{Value, json};
 
-use super::{Ctx, confirm, engine, human_actor, open_store, reconciled};
+use super::{Ctx, confirm, exe, open_store};
 use crate::cli::AgentCommand;
 use crate::render;
 
 pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool) -> Result<()> {
     let repo = Repo::discover(&ctx.cwd)?;
     let setup = lifecycle::init(&repo, &open_store)?;
-    let store = open_store(&repo.store_path())?;
-    let actor = human_actor(&repo);
-    let mut engine = Engine::open(repo.clone(), store, actor, ctx.cwd.clone())?;
-    let report = engine.reconcile(ReconcileOptions::default())?;
-    let status = engine.status()?;
-    drop(engine);
+    // The first reconcile reads every file: in the daemon as it starts, or here.
+    let status: StatusView = ctx.run("status", json!({}))?;
 
     let agent = if with_agent {
         Some(agent::install(&repo.root, &exe()?, true)?)
@@ -41,7 +38,7 @@ pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool) -> Result<()> {
 
     if ctx.json {
         return ctx.emit(
-            &json!({"setup": setup, "reconcile": report, "counts": status.counts, "agent": agent}),
+            &json!({"setup": setup, "counts": status.counts, "agent": agent}),
             |_| String::new(),
         );
     }
@@ -72,12 +69,6 @@ pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool) -> Result<()> {
         ),
     }
     ctx.emit(&(), |_| out)
-}
-
-fn exe() -> Result<PathBuf> {
-    let p =
-        std::env::current_exe().map_err(|e| Error::io("finding the resonance executable", e))?;
-    Ok(p.canonicalize().unwrap_or(p))
 }
 
 fn agent_text(a: &AgentInstall) -> String {
@@ -146,22 +137,17 @@ pub fn agent(ctx: &Ctx, cmd: AgentCommand) -> Result<()> {
 }
 
 pub fn status(ctx: &Ctx) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    ctx.emit(&engine.status()?, render::status)
+    let view: StatusView = ctx.run("status", json!({}))?;
+    ctx.emit(&view, render::status)
 }
 
 pub fn reconcile(ctx: &Ctx, full: bool) -> Result<()> {
-    let mut engine = engine(ctx)?;
-    let report = engine.reconcile(ReconcileOptions {
-        full,
-        ..Default::default()
-    })?;
+    let report: ReconcileReport = ctx.run("reconcile", json!({"full": full}))?;
     ctx.emit(&report, render::reconcile)
 }
 
 pub fn rebuild_derived(ctx: &Ctx) -> Result<()> {
-    let mut engine = engine(ctx)?;
-    let report = engine.rebuild_derived()?;
+    let report: ReconcileReport = ctx.run("rebuild_derived", json!({}))?;
     ctx.emit(&report, |r| {
         format!("Rebuilt derived data.\n{}", render::reconcile(r))
     })
@@ -171,16 +157,32 @@ pub fn version(ctx: &Ctx) -> Result<()> {
     ctx.emit(&version_info(), render::version)
 }
 
+/// The export as JSON Lines, and its number of operations (FR-166).
+fn export_text(ctx: &Ctx) -> Result<(String, usize)> {
+    let v: Value = ctx.run("export", json!({}))?;
+    Ok((
+        v["jsonl"].as_str().unwrap_or_default().to_string(),
+        v["operations"].as_u64().unwrap_or(0) as usize,
+    ))
+}
+
 pub fn export(ctx: &Ctx, out: Option<PathBuf>) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
+    let (text, n) = export_text(ctx)?;
     match out {
         None => {
             let mut stdout = std::io::stdout().lock();
-            engine.export(&mut stdout)?;
-            stdout.flush().map_err(|e| Error::io("writing output", e))
+            stdout
+                .write_all(text.as_bytes())
+                .and_then(|_| stdout.flush())
+                .map_err(|e| Error::io("writing output", e))
         }
         Some(path) => {
-            let n = write_export(&engine, &path)?;
+            let path = if path.is_relative() {
+                ctx.cwd.join(path)
+            } else {
+                path
+            };
+            write_file(&path, &text)?;
             ctx.emit(&json!({"path": path, "operations": n}), |_| {
                 format!("Exported {n} operations to {}\n", path.display())
             })
@@ -188,21 +190,22 @@ pub fn export(ctx: &Ctx, out: Option<PathBuf>) -> Result<()> {
     }
 }
 
-fn write_export(engine: &Engine, path: &PathBuf) -> Result<usize> {
+fn write_file(path: &PathBuf, text: &str) -> Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         fs::create_dir_all(dir).map_err(|e| Error::io(format!("creating {}", dir.display()), e))?;
     }
     let mut file =
         fs::File::create(path).map_err(|e| Error::io(format!("creating {}", path.display()), e))?;
-    let n = engine.export(&mut file)?;
-    file.sync_all()
-        .map_err(|e| Error::io(format!("writing {}", path.display()), e))?;
-    Ok(n)
+    file.write_all(text.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|e| Error::io(format!("writing {}", path.display()), e))
 }
 
 pub fn eject(ctx: &Ctx, dry_run: bool, yes: bool, out: Option<PathBuf>) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    let repo = engine.repo.clone();
+    let repo = ctx.repo()?;
+    if !repo.is_initialized() {
+        return Err(Error::NotInitialized);
+    }
     let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| {
         Error::Invalid("HOME is not set; give the export location with --out".into())
     })?;
@@ -211,27 +214,27 @@ pub fn eject(ctx: &Ctx, dry_run: bool, yes: bool, out: Option<PathBuf>) -> Resul
         Some(p) => p,
         None => lifecycle::default_export_path(&repo, &home),
     };
-    if path.starts_with(&repo.root) && !path.starts_with(repo.resonance_dir()) {
-        ctx.note(&format!(
-            "Note: {} is inside the repository; git will see it.",
-            path.display()
-        ));
-    }
     if path.starts_with(repo.resonance_dir()) {
         return Err(Error::Usage(
             "the export cannot go inside .resonance/, which eject removes".into(),
         ));
     }
+    if path.starts_with(&repo.root) {
+        ctx.note(&format!(
+            "Note: {} is inside the repository; git will see it.",
+            path.display()
+        ));
+    }
     let plan = format!(
-        "resonance eject will:\n  1. export the graph to {}\n  2. remove {}\n  3. remove the /.resonance/ line from .git/info/exclude\nNo other file is touched.\n",
+        "resonance eject will:\n  1. export the graph to {}\n  2. stop the daemon, if one is running\n  3. remove {}\n  4. remove the /.resonance/ line from .git/info/exclude\nNo other file is touched.\n",
         path.display(),
         repo.resonance_dir().display()
     );
     if dry_run {
         return ctx.emit(&json!({"dryRun": true, "export": path}), |_| plan);
     }
-    let n = write_export(&engine, &path)?;
-    drop(engine);
+    let (text, n) = export_text(ctx)?;
+    write_file(&path, &text)?;
     ctx.note(&format!("Exported {n} operations to {}", path.display()));
     let go = yes
         || confirm(&format!(
@@ -243,6 +246,7 @@ pub fn eject(ctx: &Ctx, dry_run: bool, yes: bool, out: Option<PathBuf>) -> Resul
         ctx.note("Nothing was removed. Run `resonance eject --yes` to remove .resonance/.");
         return Err(Error::Invalid("not confirmed".into()));
     }
+    client::stop(&repo)?;
     let removal = lifecycle::remove(&repo)?;
     ctx.emit(
         &json!({"export": path, "operations": n, "removal": removal}),

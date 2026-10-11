@@ -12,7 +12,21 @@ use tempfile::TempDir;
 pub struct TestRepo {
     dir: TempDir,
     home: TempDir,
+    /// A short directory for daemon sockets (socket paths are limited to about 100 bytes).
+    runtime: TempDir,
     extra_path: Option<PathBuf>,
+}
+
+impl Drop for TestRepo {
+    fn drop(&mut self) {
+        // Stop this repository's daemon, if one was started.
+        let _ = self.command(&["daemon", "--stop"]).output();
+    }
+}
+
+/// Whether the tests run in direct mode (`RESONANCE_TEST_DIRECT=1`) instead of through daemons.
+pub fn direct_mode() -> bool {
+    std::env::var("RESONANCE_TEST_DIRECT").is_ok_and(|v| v == "1")
 }
 
 pub fn bin() -> &'static str {
@@ -25,6 +39,10 @@ impl TestRepo {
         let repo = TestRepo {
             dir: tempfile::tempdir().expect("tempdir"),
             home: tempfile::tempdir().expect("home"),
+            runtime: tempfile::Builder::new()
+                .prefix("rr")
+                .tempdir_in("/tmp")
+                .expect("runtime dir"),
             extra_path: None,
         };
         repo.git(&["init", "-q", "-b", "main"]);
@@ -129,6 +147,11 @@ impl TestRepo {
             if k.starts_with("RESONANCE_") {
                 cmd.env_remove(k);
             }
+        }
+        cmd.env("RESONANCE_RUNTIME_DIR", self.runtime.path())
+            .env("RESONANCE_DAEMON_IDLE_SECONDS", "120");
+        if direct_mode() {
+            cmd.env("RESONANCE_NO_DAEMON", "1");
         }
         if let Some(extra) = &self.extra_path {
             let path = std::env::var("PATH").unwrap_or_default();

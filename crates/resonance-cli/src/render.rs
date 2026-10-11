@@ -766,3 +766,151 @@ pub fn test_report(t: &TestReport) -> String {
 pub fn counts_line(c: &Counts) -> String {
     counts(c)
 }
+
+pub fn identity_change(verb: &str, c: &resonance_core::api::IdentityChange) -> String {
+    let from: Vec<&str> = c.retired.iter().map(|u| u.address.as_str()).collect();
+    let into: Vec<&str> = c.into.iter().map(|u| u.address.as_str()).collect();
+    format!(
+        "{verb} {} into {}; {} moved. The old unit{} {} retired and kept for history.\n",
+        from.join(", "),
+        into.join(", "),
+        plural(c.links_moved, "link or annotation", "links and annotations"),
+        if from.len() == 1 { "" } else { "s" },
+        if from.len() == 1 { "is" } else { "are" },
+    )
+}
+
+pub fn health(h: &resonance_core::daemon::Health) -> String {
+    let mut out = format!(
+        "Daemon for {} (pid {}): {}{}\n  endpoint: {}\n  started: {}; version {}\n  watermark: {} of {} events applied; {} pending",
+        h.root,
+        h.pid,
+        h.state,
+        if h.ready { "" } else { " (not ready)" },
+        h.endpoint,
+        h.started_at,
+        h.version,
+        h.ingest_watermark,
+        h.events_received,
+        h.pending_events
+    );
+    if h.lag_ms > 0 {
+        let _ = write!(out, " ({} ms behind)", h.lag_ms);
+    }
+    out.push('\n');
+    if let Some(t) = &h.last_ingest {
+        let _ = writeln!(out, "  last ingest: {t}");
+    }
+    if let Some(e) = &h.last_error {
+        let _ = writeln!(out, "  last error: {e}");
+    }
+    let _ = writeln!(
+        out,
+        "  {} connected, {} subscribed, {} requests served",
+        h.connections, h.subscribers, h.requests_served
+    );
+    out
+}
+
+pub fn service_plan(verb: &str, p: &resonance_core::registry::ServicePlan) -> String {
+    let commands = if verb == "install" {
+        &p.load
+    } else {
+        &p.unload
+    };
+    let mut out = if verb == "install" {
+        format!(
+            "resonance registry install will write {}:\n\n{}\n",
+            p.path.display(),
+            indent(&p.contents, "    ")
+        )
+    } else {
+        format!(
+            "resonance registry uninstall will remove {}\n",
+            p.path.display()
+        )
+    };
+    out.push_str("and run:\n");
+    for c in commands {
+        let _ = writeln!(out, "    {}", c.join(" "));
+    }
+    out
+}
+
+pub fn doctor(d: &crate::commands::services::DoctorReport) -> String {
+    let mut out = format!(
+        "resonance {} (runtime directory {})\n",
+        d.version, d.runtime_dir
+    );
+    if let Some(r) = &d.repository {
+        if r.initialized {
+            let _ = writeln!(
+                out,
+                "This repository: {} (schema {}, {}, daemon {})",
+                r.root,
+                r.schema_version
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "?".into()),
+                if r.excluded {
+                    "excluded from git"
+                } else {
+                    "NOT excluded from git"
+                },
+                if r.daemon_running {
+                    "running"
+                } else {
+                    "not running"
+                }
+            );
+        } else {
+            let _ = writeln!(out, "This repository: {} (Resonance is not set up)", r.root);
+        }
+    }
+    let _ = writeln!(
+        out,
+        "Registry: {}",
+        if d.registry_running {
+            "running"
+        } else {
+            "not running (daemons are found through daemon.json)"
+        }
+    );
+    if d.daemons.is_empty() {
+        out.push_str("Daemons: none running\n");
+    } else {
+        out.push_str("Daemons:\n");
+        for dc in &d.daemons {
+            match &dc.health {
+                Some(h) => {
+                    let _ = writeln!(
+                        out,
+                        "  {} (pid {}): {}{}, {} pending, {} ms behind{}",
+                        dc.root,
+                        dc.pid,
+                        h.state,
+                        if h.ready { ", ready" } else { "" },
+                        h.pending_events,
+                        h.lag_ms,
+                        if dc.version_skew {
+                            ", different build"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+                None => {
+                    let _ = writeln!(out, "  {} (pid {}): not answering", dc.root, dc.pid);
+                }
+            }
+        }
+    }
+    if d.problems.is_empty() {
+        out.push_str("No problems found.\n");
+    } else {
+        let _ = writeln!(out, "Problems ({}):", d.problems.len());
+        for p in &d.problems {
+            let _ = writeln!(out, "  - {p}");
+        }
+    }
+    out
+}

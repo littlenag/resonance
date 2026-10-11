@@ -1,10 +1,11 @@
-//! Command dispatch. Every command except `init`, `version` and `mcp` reconciles first
-//! (MVP-002), so answers always reflect the files on disk.
+//! Command dispatch. Operations are served by the repository's daemon, started on demand
+//! (FR-252), or run in this process with `--no-daemon` (direct mode, MVP-002). Either way the
+//! graph is brought up to date with the disk before the answer.
 
 mod intent;
 mod links;
 mod read;
-mod services;
+pub mod services;
 mod setup;
 mod units;
 mod verify;
@@ -13,13 +14,16 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use resonance_core::api::Engine;
+use resonance_core::daemon::client::Remote;
 use resonance_core::error::{Error, Result};
-use resonance_core::ingest::{ReconcileOptions, ReconcileReport};
 use resonance_core::ops::Actor;
 use resonance_core::repo::Repo;
+use resonance_core::service::{Backend, Call, Direct};
 use resonance_core::store::GraphStore;
 use resonance_store_sqlite::SqliteStore;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 use crate::cli::{Cli, Command};
 
@@ -28,6 +32,8 @@ pub struct Ctx {
     pub json: bool,
     /// Where relative paths are resolved from.
     pub cwd: PathBuf,
+    pub no_daemon: bool,
+    pub cached: bool,
 }
 
 impl Ctx {
@@ -52,11 +58,78 @@ impl Ctx {
             eprintln!("{}", text.trim_end());
         }
     }
+
+    pub fn repo(&self) -> Result<Repo> {
+        Repo::discover(&self.cwd)
+    }
+
+    /// The backend for an initialized repository: the daemon, or this process.
+    pub fn backend(&self) -> Result<Box<dyn Backend>> {
+        let repo = self.repo()?;
+        if !repo.is_initialized() {
+            return Err(Error::NotInitialized);
+        }
+        let actor = human_actor(&repo);
+        if self.no_daemon {
+            let store = open_store(&repo.store_path())?;
+            let engine = Engine::open(repo, store, actor, self.cwd.clone())?;
+            return Ok(Box::new(DirectCached {
+                inner: Direct { engine },
+                cached: self.cached,
+            }));
+        }
+        let mut remote = Remote::connect(&repo, &exe()?, actor, self.cwd.clone())?;
+        remote.cached = self.cached;
+        Ok(Box::new(remote))
+    }
+
+    /// Run one operation and decode its view.
+    pub fn call<T: DeserializeOwned>(
+        &self,
+        backend: &mut dyn Backend,
+        method: &str,
+        args: Value,
+    ) -> Result<T> {
+        let v = backend.call(Call::new(method, args))?;
+        serde_json::from_value(v)
+            .map_err(|e| Error::Daemon(format!("unexpected answer to {method}: {e}")))
+    }
+
+    /// Open a backend, run one operation and decode its view.
+    pub fn run<T: DeserializeOwned>(&self, method: &str, args: Value) -> Result<T> {
+        let mut b = self.backend()?;
+        self.call(&mut *b, method, args)
+    }
+}
+
+/// Direct mode, honoring `--cached` by skipping the reconcile.
+struct DirectCached {
+    inner: Direct,
+    cached: bool,
+}
+
+impl Backend for DirectCached {
+    fn call(&mut self, mut call: Call) -> Result<Value> {
+        if call.cwd.is_none() {
+            call.cwd = Some(self.inner.engine.cwd().to_path_buf());
+        }
+        if self.cached || call.cached {
+            return resonance_core::service::dispatch(&mut self.inner.engine, &call);
+        }
+        self.inner.call(call)
+    }
 }
 
 /// Open the SQLite store; the binary is where the engine is chosen (FR-161).
 pub fn open_store(path: &Path) -> Result<Box<dyn GraphStore>> {
     Ok(Box::new(SqliteStore::open(path)?))
+}
+
+/// This executable, for starting the daemon.
+pub fn exe() -> Result<PathBuf> {
+    let p =
+        std::env::current_exe().map_err(|e| Error::io("finding the resonance executable", e))?;
+    Ok(p.canonicalize().unwrap_or(p))
 }
 
 /// The person running the CLI, from git's configuration.
@@ -68,24 +141,6 @@ pub fn human_actor(repo: &Repo) -> Actor {
         .or_else(|| std::env::var("USER").ok())
         .unwrap_or_else(|| "unknown".into());
     Actor::human(id)
-}
-
-/// Open the engine for an initialized repository.
-pub fn engine(ctx: &Ctx) -> Result<Engine> {
-    let repo = Repo::discover(&ctx.cwd)?;
-    if !repo.is_initialized() {
-        return Err(Error::NotInitialized);
-    }
-    let store = open_store(&repo.store_path())?;
-    let actor = human_actor(&repo);
-    Engine::open(repo, store, actor, ctx.cwd.clone())
-}
-
-/// Open the engine and reconcile (MVP-002).
-pub fn reconciled(ctx: &Ctx) -> Result<(Engine, ReconcileReport)> {
-    let mut engine = engine(ctx)?;
-    let report = engine.reconcile(ReconcileOptions::default())?;
-    Ok((engine, report))
 }
 
 /// Ask a yes/no question on the terminal. Returns `None` when there is no terminal.
@@ -119,6 +174,8 @@ pub fn run(cli: Cli) -> Result<()> {
     let ctx = Ctx {
         json: cli.json,
         cwd,
+        no_daemon: cli.no_daemon,
+        cached: cli.cached,
     };
     match cli.command {
         Command::Init { agent, no_agent } => setup::init(&ctx, agent, no_agent),
@@ -126,6 +183,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Reconcile { full } => setup::reconcile(&ctx, full),
         Command::RebuildDerived => setup::rebuild_derived(&ctx),
         Command::Mcp => services::mcp(&ctx),
+        Command::Daemon { foreground, stop } => services::daemon(&ctx, foreground, stop),
+        Command::Registry(cmd) => services::registry(&ctx, cmd),
+        Command::Doctor => services::doctor(&ctx),
         Command::Agent(cmd) => setup::agent(&ctx, cmd),
         Command::Export { out } => setup::export(&ctx, out),
         Command::Eject { dry_run, yes, out } => setup::eject(&ctx, dry_run, yes, out),

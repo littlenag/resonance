@@ -1,10 +1,9 @@
 //! MCP tool definitions, mirroring CLI commands as `resonance_<command>` (FR-130, FR-254).
 
-use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use crate::api::{DecisionInput, Engine, UnitEdit, UnitInput};
 use crate::error::{Error, Result};
+use crate::service::Call;
 
 /// Tool names, descriptions and input schemas.
 pub fn definitions() -> Vec<Value> {
@@ -204,6 +203,24 @@ pub fn definitions() -> Vec<Value> {
             json!({"ref": s(reference)}),
             &["ref"],
         ),
+        tool(
+            "resonance_split_unit",
+            "Declare that a code unit became several (for example a function split in two). Declare the new units first; their links and annotations are copied from the old unit, which is retired.",
+            json!({
+                "ref": s(reference),
+                "into": {"type": "array", "items": {"type": "string"}, "description": "The new units."},
+            }),
+            &["ref", "into"],
+        ),
+        tool(
+            "resonance_merge_unit",
+            "Declare that several code units became one. Their links and annotations move to the remaining unit, and they are retired.",
+            json!({
+                "refs": {"type": "array", "items": {"type": "string"}, "description": "The units that were merged away."},
+                "into": s(reference),
+            }),
+            &["refs", "into"],
+        ),
     ]
 }
 
@@ -236,97 +253,117 @@ fn region(args: &Value) -> Result<Option<String>> {
     }))
 }
 
-fn data<T: Serialize>(v: T) -> Result<Value> {
-    Ok(serde_json::to_value(v)?)
+fn strings(args: &Value, key: &str) -> Vec<String> {
+    match args.get(key) {
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+        Some(Value::String(s)) => vec![s.clone()],
+        _ => Vec::new(),
+    }
 }
 
-/// Run one tool. The caller reconciles first.
-pub fn call(engine: &mut Engine, name: &str, args: &Value) -> Result<Value> {
-    match name {
-        "resonance_status" => data(engine.status()?),
-        "resonance_search" => {
-            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize;
-            data(engine.search(
-                arg(args, "text").unwrap_or(""),
-                arg(args, "type"),
-                arg(args, "status"),
-                limit,
-            )?)
-        }
-        "resonance_show" => data(engine.show(req(args, "ref")?)?),
-        "resonance_trace" => data(engine.trace(req(args, "requirement")?)?),
-        "resonance_why" => data(engine.why(req(args, "ref")?)?),
-        "resonance_context" => {
-            let refs: Vec<String> = match args.get("requirements") {
-                Some(Value::Array(a)) => a
-                    .iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect(),
-                Some(Value::String(s)) => vec![s.clone()],
-                _ => Vec::new(),
-            };
-            data(engine.context(&refs, arg(args, "task"))?)
-        }
-        "resonance_unverified" => data(engine.unverified()?),
-        "resonance_repair_list" => data(engine.repair_list()?),
-        "resonance_create_requirement" => {
-            data(engine.req_add(req(args, "key")?, req(args, "text")?, arg(args, "kind"))?)
-        }
-        "resonance_create_decision" => data(engine.decision_add(DecisionInput {
-            title: owned(args, "title"),
-            decision: owned(args, "decision"),
-            context: owned(args, "context"),
-            consequences: owned(args, "consequences"),
-            status: None,
-        })?),
+/// Translate a tool call into the operation it mirrors (FR-254).
+pub fn to_call(name: &str, args: &Value) -> Result<Call> {
+    let (method, a) = match name {
+        "resonance_status" => ("status", json!({})),
+        "resonance_search" => (
+            "search",
+            json!({
+                "text": arg(args, "text").unwrap_or(""),
+                "type": arg(args, "type"),
+                "status": arg(args, "status"),
+                "limit": args.get("limit").and_then(Value::as_u64),
+            }),
+        ),
+        "resonance_show" => ("show", json!({"ref": req(args, "ref")?})),
+        "resonance_trace" => ("trace", json!({"ref": req(args, "requirement")?})),
+        "resonance_why" => ("why", json!({"ref": req(args, "ref")?})),
+        "resonance_context" => (
+            "context",
+            json!({"refs": strings(args, "requirements"), "task": arg(args, "task")}),
+        ),
+        "resonance_unverified" => ("unverified", json!({})),
+        "resonance_repair_list" => ("repair_list", json!({})),
+        "resonance_create_requirement" => (
+            "req_add",
+            json!({"key": req(args, "key")?, "text": req(args, "text")?, "kind": arg(args, "kind")}),
+        ),
+        "resonance_create_decision" => (
+            "decision_add",
+            json!({
+                "title": owned(args, "title"),
+                "decision": owned(args, "decision"),
+                "context": owned(args, "context"),
+                "consequences": owned(args, "consequences"),
+            }),
+        ),
         "resonance_declare_unit" | "resonance_declare_test" => {
             let test = name == "resonance_declare_test";
             if test {
                 req(args, "run")?;
             }
-            data(engine.unit_add(
-                UnitInput {
-                    region:
-                        region(args)?.ok_or_else(|| {
-                            Error::Usage("missing required argument `path`".into())
-                        })?,
-                    match_text: owned(args, "match"),
-                    name: req(args, "name")?.to_string(),
-                    kind: owned(args, "kind"),
-                    run: owned(args, "run"),
-                    test,
-                },
-            )?)
+            (
+                "unit_add",
+                json!({
+                    "region": region(args)?.ok_or_else(|| Error::Usage("missing required argument `path`".into()))?,
+                    "match": owned(args, "match"),
+                    "name": req(args, "name")?,
+                    "kind": owned(args, "kind"),
+                    "run": owned(args, "run"),
+                    "test": test,
+                }),
+            )
         }
-        "resonance_list_units" => data(engine.unit_list(arg(args, "path"))?),
-        "resonance_edit_unit" => data(engine.unit_edit(
-            req(args, "ref")?,
-            UnitEdit {
-                region: region(args)?,
-                match_text: owned(args, "match"),
-                name: owned(args, "name"),
-                kind: owned(args, "kind"),
-                run: owned(args, "run"),
-            },
-        )?),
-        "resonance_link" => data(engine.link(
-            req(args, "source")?,
-            req(args, "type")?,
-            req(args, "target")?,
-            args.get("confidence").and_then(Value::as_f64),
-        )?),
-        "resonance_unlink" => data(engine.unlink(req(args, "link")?)?),
-        "resonance_confirm" => data(engine.confirm(req(args, "link")?)?),
-        "resonance_annotate" => data(engine.annotate(
-            req(args, "target")?,
-            req(args, "kind")?,
-            req(args, "text")?,
-            arg(args, "task"),
-        )?),
-        "resonance_reattach" => data(engine.reattach(req(args, "ref")?, req(args, "target")?)?),
-        "resonance_test" => data(engine.run_tests(req(args, "ref")?)?),
-        other => Err(Error::NotFound(format!("the tool `{other}`"))),
-    }
+        "resonance_list_units" => ("unit_list", json!({"path": arg(args, "path")})),
+        "resonance_edit_unit" => (
+            "unit_edit",
+            json!({
+                "ref": req(args, "ref")?,
+                "region": region(args)?,
+                "match": owned(args, "match"),
+                "name": owned(args, "name"),
+                "kind": owned(args, "kind"),
+                "run": owned(args, "run"),
+            }),
+        ),
+        "resonance_link" => (
+            "link",
+            json!({
+                "src": req(args, "source")?,
+                "type": req(args, "type")?,
+                "dst": req(args, "target")?,
+                "confidence": args.get("confidence").and_then(Value::as_f64),
+            }),
+        ),
+        "resonance_unlink" => ("unlink", json!({"ref": req(args, "link")?})),
+        "resonance_confirm" => ("confirm", json!({"ref": req(args, "link")?})),
+        "resonance_annotate" => (
+            "annotate",
+            json!({
+                "target": req(args, "target")?,
+                "kind": req(args, "kind")?,
+                "text": req(args, "text")?,
+                "task": arg(args, "task"),
+            }),
+        ),
+        "resonance_reattach" => (
+            "reattach",
+            json!({"ref": req(args, "ref")?, "target": req(args, "target")?}),
+        ),
+        "resonance_test" => ("test", json!({"ref": req(args, "ref")?})),
+        "resonance_split_unit" => (
+            "unit_split",
+            json!({"ref": req(args, "ref")?, "into": strings(args, "into")}),
+        ),
+        "resonance_merge_unit" => (
+            "unit_merge",
+            json!({"refs": strings(args, "refs"), "into": req(args, "into")?}),
+        ),
+        other => return Err(Error::NotFound(format!("the tool `{other}`"))),
+    };
+    Ok(Call::new(method, a))
 }
 
 /// Whether a tool name exists.

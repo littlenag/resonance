@@ -2,7 +2,7 @@
 //! (FR-238, FR-038). It is derived from the graph's state, so computing it after the
 //! reconcile that precedes every answer is the same as computing it after every reconcile.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{Location, NodeRef, label_of, link_view, node_ref, node_ref_by_id};
 use crate::anchors::AnchorState;
@@ -13,7 +13,7 @@ use crate::links::{LINK_TYPES, anchor_of};
 use crate::model::{EdgeType, LinkStatus, NodeType};
 use crate::store::{EdgeQuery, GraphRead, NodeQuery};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RepairKind {
     /// A code unit or test whose text could not be found (FR-034).
@@ -48,7 +48,7 @@ impl RepairKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepairItem {
     pub kind: RepairKind,

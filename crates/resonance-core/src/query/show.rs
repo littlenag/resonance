@@ -1,6 +1,6 @@
 //! One node with its edges.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::address::Resolved;
@@ -13,7 +13,7 @@ use crate::links::{LINK_TYPES, anchor_of};
 use crate::model::{Edge, EdgeType};
 use crate::store::{EdgeQuery, GraphRead};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeShow {
     pub node: NodeRef,
@@ -26,7 +26,7 @@ pub struct NodeShow {
     pub contained_by: Vec<NodeRef>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkShow {
     pub link: LinkView,
@@ -37,7 +37,7 @@ pub struct LinkShow {
     pub evidence: Vec<EvidenceView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum ShowView {
     Node(Box<NodeShow>),

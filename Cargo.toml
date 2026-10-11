@@ -19,8 +19,9 @@ resonance-store-sqlite = { path = "crates/resonance-store-sqlite" }
 
 # Third-party dependencies (MVP-006), pinned here and inherited by the crates.
 anyhow = "1.0.104"
-clap = { version = "4.6.7", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
 globset = "0.4.20"
+notify = "8.2.0"
 ignore = "0.4.33"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }

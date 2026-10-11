@@ -17,6 +17,20 @@ pub struct Config {
     pub intent: IntentConfig,
     pub ingest: IngestConfig,
     pub test: TestConfig,
+    pub daemon: DaemonConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DaemonConfig {
+    /// Seconds without requests after which the daemon exits (FR-084).
+    pub idle_seconds: u64,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        DaemonConfig { idle_seconds: 1800 }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -99,6 +113,9 @@ impl Config {
         }
         if let Some(v) = get("RESONANCE_TEST_TIMEOUT_SECONDS") {
             self.test.timeout_seconds = num("RESONANCE_TEST_TIMEOUT_SECONDS", v)?;
+        }
+        if let Some(v) = get("RESONANCE_DAEMON_IDLE_SECONDS") {
+            self.daemon.idle_seconds = num("RESONANCE_DAEMON_IDLE_SECONDS", v)?;
         }
         Ok(())
     }

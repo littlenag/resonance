@@ -9,8 +9,8 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list --unsorted
 
-# Everything CI should run: formatting, lints, tests, store boundary, spec checks.
-check: fmt-check lint test boundary spec-check
+# Everything CI should run: formatting, lints, tests (through daemons and in direct mode), store boundary, spec checks.
+check: fmt-check lint test test-direct boundary spec-check
 
 # Build every crate and target.
 build:
@@ -19,6 +19,10 @@ build:
 # Run all tests, including the store conformance suite.
 test:
     cargo test --workspace --all-features --locked
+
+# Run the CLI acceptance tests in direct mode (--no-daemon), as well as through daemons.
+test-direct:
+    RESONANCE_TEST_DIRECT=1 cargo test -p resonance-cli --locked
 
 # Format all Rust code in place.
 fmt:

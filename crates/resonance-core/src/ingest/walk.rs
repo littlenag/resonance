@@ -148,6 +148,80 @@ pub fn walk(root: &Path, extra_ignores: &[String]) -> Result<Vec<WalkedFile>> {
     Ok(files)
 }
 
+/// Whether `path` lies inside a nested repository (a directory with its own `.git`), which
+/// the walk skips as a separate project.
+pub fn in_nested_repository(root: &Path, path: &str) -> bool {
+    let parts: Vec<&str> = path.split('/').collect();
+    let mut dir = root.to_path_buf();
+    for part in &parts[..parts.len().saturating_sub(1)] {
+        dir.push(part);
+        if dir.join(".git").exists() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Which of `paths` git's ignore rules exclude (`.gitignore` files, `.git/info/exclude` and
+/// the global excludes file), whether or not they are tracked, as the full walk does.
+pub fn git_ignored(root: &Path, paths: &[String]) -> Result<std::collections::HashSet<String>> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut out = std::collections::HashSet::new();
+    if paths.is_empty() {
+        return Ok(out);
+    }
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["check-ignore", "--no-index", "--stdin", "-z"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| Error::Git(format!("could not run git check-ignore: {e}")))?;
+    let mut input = Vec::new();
+    for p in paths {
+        input.extend_from_slice(p.as_bytes());
+        input.push(0);
+    }
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let output = child
+        .wait_with_output()
+        .map_err(|e| Error::Git(format!("git check-ignore: {e}")))?;
+    let _ = writer.join();
+    // Exit status 1 means that nothing is ignored.
+    if !matches!(output.status.code(), Some(0) | Some(1)) {
+        return Err(Error::Git("git check-ignore failed".into()));
+    }
+    for p in output.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        out.insert(String::from_utf8_lossy(p).into_owned());
+    }
+    Ok(out)
+}
+
+/// Every directory the walk would enter, sorted (for per-directory watches on Linux).
+pub fn walk_dirs(root: &Path, extra_ignores: &[String]) -> Result<Vec<String>> {
+    let mut dirs: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::from([String::new()]);
+    for f in walk(root, extra_ignores)? {
+        let mut parts: Vec<&str> = f.path.split('/').collect();
+        parts.pop();
+        let mut cur = String::new();
+        for p in parts {
+            if !cur.is_empty() {
+                cur.push('/');
+            }
+            cur.push_str(p);
+            dirs.insert(cur.clone());
+        }
+    }
+    Ok(dirs.into_iter().collect())
+}
+
 /// Modification time in nanoseconds since the epoch.
 pub fn mtime_ns(md: &std::fs::Metadata) -> i64 {
     md.modified()

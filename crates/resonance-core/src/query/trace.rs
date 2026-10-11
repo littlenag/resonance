@@ -1,6 +1,6 @@
 //! Requirement to code to tests, with statuses and latest evidence (S2).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{
     AnnotationView, DecisionView, LinkView, RequirementView, UnitView, annotations_on,
@@ -11,7 +11,7 @@ use crate::model::{EdgeType, Node, NodeType};
 use crate::store::{EdgeQuery, GraphRead};
 
 /// One linked unit, test or file.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TraceEntry {
     pub link: LinkView,
@@ -19,14 +19,14 @@ pub struct TraceEntry {
     pub unit: Option<UnitView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecisionLink {
     pub link: LinkView,
     pub decision: DecisionView,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TraceView {
     pub requirement: RequirementView,

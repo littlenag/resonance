@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::anchors::{self, Anchor, AnchorState, Method};
@@ -55,7 +55,7 @@ pub struct Engine {
 }
 
 /// Counts for `status`.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Counts {
     pub files: usize,
@@ -69,7 +69,7 @@ pub struct Counts {
     pub links: std::collections::BTreeMap<String, usize>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusView {
     pub root: String,
@@ -83,7 +83,7 @@ pub struct StatusView {
     pub repair: Vec<RepairItem>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportView {
     pub sources: Vec<String>,
@@ -92,7 +92,7 @@ pub struct ImportView {
 }
 
 /// A link that was created or already existed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkResult {
     /// The node the link starts from; `link.other` is where it goes.
@@ -134,8 +134,49 @@ pub struct DecisionInput {
     pub status: Option<String>,
 }
 
+/// The result of a split or merge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentityChange {
+    /// The units that were retired.
+    pub retired: Vec<UnitView>,
+    /// The units that carry their identity on.
+    pub into: Vec<UnitView>,
+    /// Links and annotations copied or moved.
+    pub links_moved: usize,
+}
+
+/// Copy link `e` with endpoint `from` replaced by `to`, unless an equal link exists. Returns 1
+/// when a link was created.
+fn copy_link(
+    tx: &mut Tx<'_>,
+    e: &Edge,
+    from: &str,
+    to: &str,
+    provenance: &str,
+    author: &str,
+) -> Result<usize> {
+    let (src, dst) = if e.src == from {
+        (to.to_string(), e.dst.clone())
+    } else {
+        (e.src.clone(), to.to_string())
+    };
+    let exists = tx
+        .r()
+        .find_edges(&EdgeQuery::from(&src).of_type(e.etype))?
+        .iter()
+        .any(|x| x.dst == dst);
+    if exists {
+        return Ok(0);
+    }
+    let mut props = new_link_props(tx.r(), &src, &dst, provenance, author, None)?;
+    props.insert("derivedFrom".into(), json!(e.id));
+    tx.add_edge(&new_link(e.etype, &src, &dst, props))?;
+    Ok(1)
+}
+
 /// One test run.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestRun {
     pub test: UnitView,
@@ -147,7 +188,7 @@ pub struct TestRun {
     pub links: Vec<LinkView>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestReport {
     pub target: String,
@@ -157,7 +198,7 @@ pub struct TestReport {
     pub errors: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
     pub version: String,
@@ -278,6 +319,17 @@ impl Engine {
     pub fn reconcile(&mut self, opts: ReconcileOptions) -> Result<ReconcileReport> {
         self.config = Config::load(&self.repo.config_path())?;
         reconcile(&mut *self.store, &self.repo.root, &self.config, opts)
+    }
+
+    /// Reconcile only the given paths, as reported by the watcher (FR-049).
+    pub fn reconcile_paths(&mut self, paths: &[String]) -> Result<ReconcileReport> {
+        crate::ingest::reconcile_paths(&mut *self.store, &self.repo.root, &self.config, paths)
+    }
+
+    /// Re-read the configuration file (after it changes).
+    pub fn reload_config(&mut self) -> Result<()> {
+        self.config = Config::load(&self.repo.config_path())?;
+        Ok(())
     }
 
     fn resolve(&self, reference: &str) -> Result<Resolved> {
@@ -754,6 +806,112 @@ impl Engine {
             recompute_containment(tx, &path)
         })?;
         self.unit(&id)
+    }
+
+    /// Declare that one unit became several (FR-033, MVP-024). Its links and annotations are
+    /// copied to each new unit as `asserted`, and it is retired.
+    pub fn unit_split(&mut self, reference: &str, into: &[String]) -> Result<IdentityChange> {
+        if into.is_empty() {
+            return Err(Error::Usage(
+                "give the units it was split into with --into".into(),
+            ));
+        }
+        let old = self.anchored(reference)?;
+        let mut parts = Vec::new();
+        for r in into {
+            let n = self.anchored(r)?;
+            require_live(&n, r)?;
+            if n.id == old.id || parts.iter().any(|p: &Node| p.id == n.id) {
+                return Err(Error::Usage(format!(
+                    "{r} is listed twice, or is the unit being split"
+                )));
+            }
+            parts.push(n);
+        }
+        let provenance = self.provenance();
+        let author = self.actor.id.clone();
+        let from = anchor_of(&old).map(|a| a.location());
+        let moved = self.mutate(|tx| {
+            let ids: Vec<&str> = parts.iter().map(|p| p.id.as_str()).collect();
+            tx.apply(
+                kind::IDENTITY_SPLIT,
+                json!({"id": old.id, "into": ids, "from": from}),
+            )?;
+            let mut moved = 0;
+            for e in links::links_of(tx.r(), &old.id)? {
+                for part in &parts {
+                    moved += copy_link(tx, &e, &old.id, &part.id, provenance, &author)?;
+                }
+                tx.remove_edge(&e.id)?;
+            }
+            let mut paths: BTreeSet<String> = parts
+                .iter()
+                .filter_map(|p| p.str_prop("path").map(String::from))
+                .collect();
+            paths.extend(old.str_prop("path").map(String::from));
+            for p in paths {
+                recompute_containment(tx, &p)?;
+            }
+            Ok(moved)
+        })?;
+        let r = self.reader();
+        Ok(IdentityChange {
+            retired: vec![unit_view(r, &r.get_node(&old.id)?.expect("exists"))?],
+            into: parts
+                .iter()
+                .map(|p| unit_view(r, p))
+                .collect::<Result<Vec<_>>>()?,
+            links_moved: moved,
+        })
+    }
+
+    /// Declare that several units became one (FR-033, MVP-024). Their links and annotations
+    /// move to the remaining unit, and they are retired.
+    pub fn unit_merge(&mut self, references: &[String], into: &str) -> Result<IdentityChange> {
+        if references.is_empty() {
+            return Err(Error::Usage("give the units to merge".into()));
+        }
+        let target = self.anchored(into)?;
+        require_live(&target, into)?;
+        let mut sources = Vec::new();
+        for r in references {
+            let n = self.anchored(r)?;
+            if n.id == target.id || sources.iter().any(|p: &Node| p.id == n.id) {
+                return Err(Error::Usage(format!(
+                    "{r} is listed twice, or is the unit merged into"
+                )));
+            }
+            sources.push(n);
+        }
+        let provenance = self.provenance();
+        let author = self.actor.id.clone();
+        let moved = self.mutate(|tx| {
+            let ids: Vec<&str> = sources.iter().map(|p| p.id.as_str()).collect();
+            tx.apply(kind::IDENTITY_MERGE, json!({"ids": ids, "into": target.id}))?;
+            let mut moved = 0;
+            let mut paths = BTreeSet::new();
+            for source in &sources {
+                for e in links::links_of(tx.r(), &source.id)? {
+                    moved += copy_link(tx, &e, &source.id, &target.id, provenance, &author)?;
+                    tx.remove_edge(&e.id)?;
+                }
+                paths.extend(source.str_prop("path").map(String::from));
+            }
+            paths.extend(target.str_prop("path").map(String::from));
+            for p in paths {
+                recompute_containment(tx, &p)?;
+            }
+            Ok(moved)
+        })?;
+        let r = self.reader();
+        Ok(IdentityChange {
+            retired: sources
+                .iter()
+                .map(|s| unit_view(r, &r.get_node(&s.id)?.expect("exists")))
+                .collect::<Result<Vec<_>>>()?,
+            into: vec![unit_view(r, &target)?],
+            links_moved: moved,
+        })
     }
 
     /// Code units and tests, optionally under a path (a file or a directory).

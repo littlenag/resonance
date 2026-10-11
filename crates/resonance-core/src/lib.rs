@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod anchors;
 pub mod api;
+pub mod daemon;
 pub mod error;
 pub mod export;
 pub mod ingest;
@@ -15,6 +16,8 @@ pub mod mcp;
 pub mod model;
 pub mod ops;
 pub mod query;
+pub mod registry;
 pub mod repo;
+pub mod service;
 pub mod store;
 pub mod verify;

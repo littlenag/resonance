@@ -1,23 +1,29 @@
 //! Reading: show, trace, why, search, unverified, context.
 
 use resonance_core::error::Result;
+use resonance_core::query::context::ContextPack;
+use resonance_core::query::search::{SearchHit, Unverified};
+use resonance_core::query::show::ShowView;
+use resonance_core::query::trace::TraceView;
+use resonance_core::query::why::WhyView;
+use serde_json::json;
 
-use super::{Ctx, reconciled};
+use super::Ctx;
 use crate::render;
 
 pub fn show(ctx: &Ctx, reference: &str) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    ctx.emit(&engine.show(reference)?, render::show)
+    let view: ShowView = ctx.run("show", json!({"ref": reference}))?;
+    ctx.emit(&view, render::show)
 }
 
 pub fn trace(ctx: &Ctx, requirement: &str) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    ctx.emit(&engine.trace(requirement)?, render::trace)
+    let view: TraceView = ctx.run("trace", json!({"ref": requirement}))?;
+    ctx.emit(&view, render::trace)
 }
 
 pub fn why(ctx: &Ctx, unit: &str) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    ctx.emit(&engine.why(unit)?, render::why)
+    let view: WhyView = ctx.run("why", json!({"ref": unit}))?;
+    ctx.emit(&view, render::why)
 }
 
 pub fn search(
@@ -27,18 +33,19 @@ pub fn search(
     status: Option<&str>,
     limit: usize,
 ) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    let hits = engine.search(text, ntype, status, limit)?;
+    let hits: Vec<SearchHit> = ctx.run(
+        "search",
+        json!({"text": text, "type": ntype, "status": status, "limit": limit}),
+    )?;
     ctx.emit(&hits, |h| render::search(h))
 }
 
 pub fn unverified(ctx: &Ctx) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    let list = engine.unverified()?;
+    let list: Vec<Unverified> = ctx.run("unverified", json!({}))?;
     ctx.emit(&list, |l| render::unverified(l))
 }
 
 pub fn context(ctx: &Ctx, requirements: &[String], task: Option<&str>) -> Result<()> {
-    let (engine, _) = reconciled(ctx)?;
-    ctx.emit(&engine.context(requirements, task)?, render::context)
+    let pack: ContextPack = ctx.run("context", json!({"refs": requirements, "task": task}))?;
+    ctx.emit(&pack, render::context)
 }

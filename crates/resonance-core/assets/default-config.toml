@@ -20,3 +20,7 @@ command = ""
 zeroTestsPattern = "running 0 tests"
 # A test that runs longer than this is stopped and recorded as `error`.
 timeoutSeconds = 600
+
+[daemon]
+# The daemon exits after this many seconds without requests (FR-084).
+idleSeconds = 1800

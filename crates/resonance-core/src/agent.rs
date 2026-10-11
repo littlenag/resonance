@@ -8,7 +8,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -56,7 +56,7 @@ pub fn render_command(program: &str, args: &[String]) -> String {
         .join(" ")
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentInstall {
     /// The command that registers (or would register) the server.
