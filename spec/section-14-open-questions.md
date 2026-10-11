@@ -7,12 +7,12 @@
 | **OQ-03** | Which graph engine replaces SQLite, and when? Build, fork, or build on an existing one (G11)? | Mark expects to move to a real graph engine after research. SQLite stays behind the store API until then (§8.2.1); candidates are judged against the conformance suite and NFR-030–035. |
 | **OQ-04** | API transport: JSON-RPC or gRPC over Unix sockets? | §8.8 |
 | **OQ-05** | Is a general query language needed, and which one? | Start with fixed operations and a read-only SQL escape hatch. |
-| **OQ-06** | Which languages are supported first? | Likely Scala plus the evaluation codebase's language. |
+| **OQ-06** | Which languages are supported first? | Rust first, for dogfooding (FR-114, `spec/mvp.md`); then likely Scala plus the evaluation codebase's language. |
 | **OQ-07** | Windows support: when, and with which file-event API? | Not in the first release. |
 | **OQ-08** | Do git worktrees share a derived-data cache? | §8.6 FR-070 |
 | **OQ-09** | Is verification evidence committed, summarized, or kept local? | Proposed: full records local, latest summary committed. |
 | **OQ-10** | How do code-fluent developers annotate code: graph-only, tagged comments, or both? | Proposed: both, graph-only by default. |
-| **OQ-11** | Implementation language: Scala (deep expertise, JVM cost for daemons), Rust (small, fast daemons), Go, or a mix (for example a Rust daemon with Scala tooling)? | Affects FR-085. |
+| **OQ-11** | Implementation language: Scala (deep expertise, JVM cost for daemons), Rust (small, fast daemons), Go, or a mix (for example a Rust daemon with Scala tooling)? | **Resolved** by Mark: Rust (§7.1). |
 | **OQ-12** | Where do projected intent documents live, and in what Markdown conventions? | FR-121 |
 | **OQ-13** | Should the registry ever supervise (restart) daemons? | FR-094 |
 | **OQ-14** | Is there eventually a shared, multi-user graph service, or does collaboration stay git-only? | NG3 |

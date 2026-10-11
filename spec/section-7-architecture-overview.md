@@ -68,6 +68,8 @@ flowchart LR
 | **Clients** | CLI, MCP adapter for agents, IDE plugin later. | [Proposed] |
 | **Agent kit** | Instructions, a skill and harness hooks installed into each developer's agent during onboarding, plus conventions served live by the MCP adapter. Makes the agent the first line of enforcement (§8.20). | [Decided] in substance; [Proposed] shape |
 
+**Implementation language** [Decided]: Rust, for every component (daemon, CLI, MCP adapter, store adapters, extractors), organized as a Cargo workspace. Resolves OQ-11. Rust gives small, fast, single-binary daemons and CLIs with no runtime to install; this matters for per-repository daemons (FR-085) and for the locally fetched quiet CLI (FR-231).
+
 ### 7.2 Principles
 
 - **P1 — Single writer per repository.** Exactly one daemon owns a repository's graph and serializes every change, whether it comes from disk or from the API. [Proposed]

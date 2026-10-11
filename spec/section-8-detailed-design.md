@@ -194,7 +194,7 @@ The feature branch accumulates its own deltas (d2, d3, d5). Meanwhile `main` com
 - **FR-082** A daemon MUST take an exclusive lock on `.resonance/daemon.lock` at start. The lock, not the registry, guarantees one daemon per repository. [Proposed]
 - **FR-083** A daemon MUST write `.resonance/daemon.json` with its endpoint, process ID, Resonance version, schema version and start time, so clients can find it without the registry. [Proposed]
 - **FR-084** Clients MUST start a daemon on demand when none is running. Daemons SHOULD exit after a configurable idle period. [Proposed]
-- **FR-085** The process layout MUST allow the per-repository component to run either as its own process or hosted alongside others in a shared process later, without design changes. (Relevant if the implementation runs on the JVM, where one process per repository costs memory and start-up time.) [Proposed]
+- **FR-085** The process layout MUST allow the per-repository component to run either as its own process or hosted alongside others in a shared process later, without design changes. (Originally motivated by a possible JVM implementation. Resonance is implemented in Rust (OQ-11), so per-process cost is small, but shared hosting stays possible.) [Proposed]
 
 **Transport**
 
@@ -249,7 +249,7 @@ Consistent with §2.5, this layer is deliberately minimal until Phase 0 says oth
 - **FR-111** The minimum extracted structure is: files, modules or packages, types, functions and methods, and tests, with their spans. This is enough to anchor links and annotations. [Proposed]
 - **FR-112** Reference edges (calls, uses, implements) are OPTIONAL and SHOULD come from compiler-grade semantic data where available (for example SemanticDB for Scala, or SCIP / language-server data), because questions such as "who calls this through an interface" or "what breaks if this signature changes" need name and type resolution, which syntax-only parsing cannot provide reliably. Tree-sitter MAY be used as a syntax-only fallback. [Proposed]
 - **FR-113** Further investment in structural queries MUST be justified by Phase 0 results (§11). [Decided in substance]
-- **FR-114** The first supported languages are [Open] (OQ-06): likely Scala, plus the main language of the codebase used for evaluation.
+- **FR-114** The first supported languages are [Open] (OQ-06). Rust comes first, because Resonance is written in Rust and dogfoods on its own code (`spec/mvp.md`); then likely Scala, plus the main language of the codebase used for evaluation. [Proposed]
 
 ### 8.10 Intent layer authoring and import
 

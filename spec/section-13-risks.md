@@ -10,7 +10,7 @@
 | Agents ignore the graph API and just grep | Graph unused | Agent kit installed at onboarding (FR-132, FR-210); context packs that are clearly better than grepping; Phase 0 measures this |
 | Hypothesis is false | Wasted effort | Phase 0 before building |
 | Sensitive text committed via annotations or intent | Information exposure | Review tooling, local-only annotation class (NFR-012) |
-| JVM daemon cost per repository (if built in Scala) | Memory and start-up overhead | FR-085: design for hosting several repositories in one process |
+| Per-repository daemon cost (memory, start-up) | Overhead on machines with many repositories | Rust implementation (OQ-11) keeps daemons small; FR-085 still allows hosting several repositories in one process |
 | Performance at large scale | Slow queries or ingest | Measure early against NFR-030–035 |
 | One silent data loss during adoption | Trust is lost and adoption stops, possibly for good | Non-destructive automatic actions only, recovery journal, one-command undo, local journal independent of the working tree (FR-192–FR-194, NFR-040) |
 | Mixed authority confuses people ("which copy is right?") | Wrong recoveries; people revert to plain git | Explicit authority per path (P6, FR-171); classification from git evidence (§8.18); explanations that cite git operations (FR-200) |
