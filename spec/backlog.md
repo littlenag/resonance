@@ -233,7 +233,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **OQ-09** [verification] Commit evidence summaries vs keep them local.
 
 ## B13 — Parallel graphs and a code-structure graph
-*Parallel graphs are never part of the primary graph (§6.7, P10). The facility (FR-115–FR-119) can come before any particular producer. A code-structure producer such as Mache is not yet committed to; integrate one only if Phase 0 (B17) justifies it. Write-back (FR-241) is gated on a tool that does not exist yet.*
+*Parallel graphs are never part of the primary graph (§6.7, P10). The facility (FR-115–FR-119) can come before any particular producer, and disconnected graphs (FR-242–FR-244) are the cheapest first step: load an existing tool's output, link later. A code-structure producer such as Mache is not yet committed to; integrate one only if Phase 0 (B17) justifies it. Write-back (FR-241) is gated on a tool that does not exist yet.*
 
 - **FR-115** [parallel] Primary graph versus named parallel graphs; every result labeled with its graph.
 - **FR-116** [parallel] Operations on parallel graphs never modify the primary graph; enforced by per-graph write capabilities (MVP-018 is the seam).
@@ -243,6 +243,9 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **FR-112** [parallel] A code-structure parallel graph (Mache or compiler-grade data).
 - **FR-113** [parallel] Investment in structural queries justified by Phase 0.
 - **OQ-06** [parallel] Which languages a code-structure graph would cover.
+- **FR-242** [parallel] Disconnected graphs: loaded stand-alone, modeled as parallel graphs.
+- **FR-243** [parallel] A published import format; `resonance graph load|list|drop`; producer and source recorded; local only (decided).
+- **FR-244** [parallel] Connecting a disconnected graph: authored links, proposed matches, or the tool climbing the ladder.
 - **FR-241** [parallel] *Gated.* Write-back only when parallel nodes carry enough information for exact edits of primary nodes (OQ-24).
 
 ## B14 — IDE

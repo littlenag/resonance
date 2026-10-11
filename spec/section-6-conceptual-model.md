@@ -102,6 +102,16 @@ flowchart LR
 - **Operations on a parallel graph cannot modify the primary graph.** Building, updating or editing a parallel graph never changes primary nodes, edges or file content. A person or agent who *reads* a parallel graph may still change the primary graph through the primary API, as themselves.
 - **The one possible exception.** The restriction may be relaxed for a parallel graph only if its nodes carry enough information to make *exact* edits of primary nodes, so that an edit to a parallel node is guaranteed to translate soundly into a primary edit. Until a sufficiently powerful and well-integrated tool exists, every parallel graph is read-only with respect to the primary graph (FR-241).
 
+**Disconnected graphs.** A parallel graph may also be **disconnected**: a stand-alone graph of useful semantic information, produced by an existing tool adapted to emit it, and loaded into Resonance with no links to any primary node. It needs no machinery beyond that of a parallel graph. The same read-only rule applies, and it can be queried on its own and alongside the primary graph. Disconnected graphs are the expected starting point for adapting existing tooling, before that tooling grows Resonance-native support. A tool climbs a ladder:
+
+| Rung | The tool's graph… | What it must provide |
+| --- | --- | --- |
+| **Disconnected** | is loaded as a stand-alone parallel graph | Nodes and edges in Resonance's import format |
+| **Connected** | links to primary nodes and is kept in step with the primary graph | References to primary nodes (files, code units), stable node IDs, the primary version it was built from |
+| **Write-capable** | can translate its edits into primary edits | Enough information for exact edits of primary nodes (FR-241) |
+
+People and agents can connect a disconnected graph themselves before its tool climbs. Authoring primary links to its nodes is ordinary primary work (FR-117).
+
 Requirements are in §8.9.
 
 ### 6.6 Ontology governance  [Proposed]

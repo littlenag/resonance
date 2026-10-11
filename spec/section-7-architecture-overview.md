@@ -62,7 +62,7 @@ flowchart LR
 | **Per-repo daemon** | Single owner of the repo's graph: watcher, ingest, projection writer, git monitor and API in one process. | [Decided] persistent watcher; [Proposed] co-location |
 | **Watcher** | Receives OS file events for the working tree. | [Decided] |
 | **Ingest and reconcile** | Turns file changes into graph updates; maintains identity across edits. | [Proposed] |
-| **Parallel graphs** | Graphs derived from the primary graph by separate tools (for example a code-structure graph from Mache). Linked both ways; queried freely; never able to modify the primary graph (§6.7, §8.9). | [Decided] in substance; [Open] storage (OQ-23) |
+| **Parallel graphs** | Graphs derived from the primary graph by separate tools (for example a code-structure graph from Mache), or loaded stand-alone from existing tools as *disconnected* graphs. Linked both ways; queried freely; never able to modify the primary graph (§6.7, §8.9). | [Decided] in substance; [Open] storage (OQ-23) |
 | **Anchor tracker** | Keeps code-unit anchors attached to the right text as files change, by diffing and text matching; no parsing (§8.3). | [Proposed] |
 | **Projection writer** | Writes graph-originated changes to the working tree. | [Proposed] |
 | **Git monitor** | Detects checkouts, rebases, merges and pulls; switches the daemon into bulk-reconcile mode. | [Proposed] |
