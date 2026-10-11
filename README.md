@@ -7,6 +7,8 @@ The MVP is single-developer and offline: the graph lives in `.resonance/`, exclu
 
 ## Using it
 
+The [user guide](docs/README.md) covers everything Resonance does, starting with a [quick start](docs/quick-start.md). In short:
+
 ```
 cargo install --locked --path crates/resonance-cli   # or: just install
 
