@@ -192,6 +192,19 @@ pub fn context(r: &dyn GraphRead, targets: &[Node], task: Option<&str>) -> Resul
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let by_location = |u: &UnitView| {
+        let l = u.location.as_ref();
+        (
+            l.map(|l| l.path.clone()).unwrap_or_default(),
+            l.map(|l| l.start_line).unwrap_or(0),
+            u.address.clone(),
+        )
+    };
+    let mut code_units = code_units;
+    code_units.sort_by_key(|u| by_location(&u.unit));
+    let mut tests = tests;
+    tests.sort_by_key(|t| by_location(&t.unit));
+
     Ok(ContextPack {
         task: task.map(String::from),
         requirements,
