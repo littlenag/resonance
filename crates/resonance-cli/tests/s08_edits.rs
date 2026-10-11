@@ -40,11 +40,12 @@ fn a_save_is_reflected_by_the_next_command() {
 
     let open = repo.json(&["show", "open"]);
     assert_eq!(open["location"]["startLine"], 4);
-    let quote_has = |needle: &str| {
-        let ops = repo.json(&["why", "open"]);
-        ops["unit"]["location"]["state"] == "attached" && repo.read("src/store.rs").contains(needle)
-    };
-    assert!(quote_has("conn.check2();"));
+    // The graph's own copy of the unit's text follows the latest save.
+    let id = open["node"]["id"].as_str().unwrap();
+    let store = SqliteStore::open(&repo.path().join(".resonance/graph.db")).unwrap();
+    let node = store.get_node(id).unwrap().unwrap();
+    let quote = node.props["anchor"]["quote"].as_str().unwrap();
+    assert!(quote.contains("conn.check2();"), "{quote}");
 }
 
 #[test]

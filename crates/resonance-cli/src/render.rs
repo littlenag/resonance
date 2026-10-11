@@ -344,17 +344,25 @@ fn link_line(l: &LinkView) -> String {
     out
 }
 
-pub fn link(l: &LinkView) -> String {
-    format!("{}\n  link id: {}\n", link_line(l), l.id)
+/// `source relation target [status]` and the link ID.
+pub fn link_change(verb: &str, r: &LinkResult) -> String {
+    format!(
+        "{verb}: {} {}\n  link id: {}\n",
+        r.source.label,
+        link_line(&r.link),
+        r.link.id
+    )
 }
 
 pub fn link_result(r: &LinkResult) -> String {
-    let verb = if r.created {
-        "Linked"
-    } else {
-        "Already linked"
-    };
-    format!("{verb}: {}\n  link id: {}\n", link_line(&r.link), r.link.id)
+    link_change(
+        if r.created {
+            "Linked"
+        } else {
+            "Already linked"
+        },
+        r,
+    )
 }
 
 pub fn annotation(a: &AnnotationView) -> String {

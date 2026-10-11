@@ -70,7 +70,10 @@ fn editing_requirement_text_makes_every_link_stale() {
         .as_str()
         .unwrap()
         .to_string();
-    assert_eq!(repo.json(&["confirm", &satisfies])["status"], "asserted");
+    assert_eq!(
+        repo.json(&["confirm", &satisfies])["link"]["status"],
+        "asserted"
+    );
     repo.ok(&["test", "FR-001"]);
     assert_eq!(
         statuses(&repo, "FR-001"),

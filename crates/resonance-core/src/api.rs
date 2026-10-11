@@ -29,8 +29,8 @@ use crate::query::show::ShowView;
 use crate::query::trace::TraceView;
 use crate::query::why::WhyView;
 use crate::query::{
-    AnnotationView, DecisionView, LinkView, RequirementView, UnitView, annotation_view,
-    decision_view, link_view, requirement_view, unit_view,
+    AnnotationView, DecisionView, LinkView, NodeRef, RequirementView, UnitView, annotation_view,
+    decision_view, link_view, node_ref_by_id, requirement_view, unit_view,
 };
 use crate::repo::config::{Config, write_intent_sources};
 use crate::repo::{Repo, abs_path};
@@ -95,7 +95,10 @@ pub struct ImportView {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkResult {
+    /// The node the link starts from; `link.other` is where it goes.
+    pub source: NodeRef,
     pub link: LinkView,
+    /// False when the link already existed, or when an existing link was changed.
     pub created: bool,
 }
 
@@ -834,10 +837,7 @@ impl Engine {
             .into_iter()
             .find(|e| e.dst == d.id)
         {
-            return Ok(LinkResult {
-                link: link_view(self.reader(), &existing, &s.id)?,
-                created: false,
-            });
+            return self.link_result(&existing, false);
         }
         let provenance = self.provenance();
         let author = self.actor.id.clone();
@@ -847,9 +847,15 @@ impl Engine {
             tx.add_edge(&edge)?;
             Ok(edge)
         })?;
+        self.link_result(&edge, true)
+    }
+
+    fn link_result(&self, edge: &Edge, created: bool) -> Result<LinkResult> {
+        let r = self.reader();
         Ok(LinkResult {
-            link: link_view(self.reader(), &edge, &edge.src)?,
-            created: true,
+            source: node_ref_by_id(r, &edge.src)?,
+            link: link_view(r, edge, &edge.src)?,
+            created,
         })
     }
 
@@ -868,16 +874,16 @@ impl Engine {
     }
 
     /// Remove a link. It is kept for history.
-    pub fn unlink(&mut self, reference: &str) -> Result<LinkView> {
+    pub fn unlink(&mut self, reference: &str) -> Result<LinkResult> {
         let e = self.authored_link(reference)?;
         let id = e.id.clone();
         self.mutate(|tx| tx.remove_edge(&id))?;
         let e = self.reader().get_edge(&id)?.expect("exists");
-        link_view(self.reader(), &e, &e.src)
+        self.link_result(&e, false)
     }
 
     /// Return a stale link to `asserted`, refreshing its endpoint hashes (MVP-012).
-    pub fn confirm(&mut self, reference: &str) -> Result<LinkView> {
+    pub fn confirm(&mut self, reference: &str) -> Result<LinkResult> {
         let e = self.authored_link(reference)?;
         match e.status {
             LinkStatus::Orphaned => {
@@ -896,7 +902,7 @@ impl Engine {
             LinkStatus::Asserted | LinkStatus::Verified => {}
         }
         let e = self.reader().get_edge(&e.id)?.expect("exists");
-        link_view(self.reader(), &e, &e.src)
+        self.link_result(&e, false)
     }
 
     /// Annotate a node (S4). A call-out can name a task.
@@ -956,7 +962,7 @@ impl Engine {
     }
 
     /// Re-attach an orphaned (or wrongly attached) link or annotation (FR-037).
-    pub fn reattach(&mut self, reference: &str, target: &str) -> Result<LinkView> {
+    pub fn reattach(&mut self, reference: &str, target: &str) -> Result<LinkResult> {
         let edge = match self.resolve(reference)? {
             Resolved::Edge(_) => self.authored_link(reference)?,
             Resolved::Node(n) if n.ntype == NodeType::Annotation => self
@@ -987,15 +993,16 @@ impl Engine {
                 _ => "dst",
             },
         };
-        let (src, dst) = if end == "src" {
-            (to.clone(), r.get_node(&edge.dst)?)
-        } else {
-            (
-                r.get_node(&edge.src)?.unwrap_or_else(|| to.clone()),
-                Some(to.clone()),
-            )
+        let existing = |id: &str| -> Result<Node> {
+            r.get_node(id)?.ok_or_else(|| {
+                Error::Store(format!("link {} refers to unknown node {id}", edge.id))
+            })
         };
-        let (src, dst) = (src, dst.ok_or_else(|| Error::NotFound(edge.dst.clone()))?);
+        let (src, dst) = if end == "src" {
+            (to.clone(), existing(&edge.dst)?)
+        } else {
+            (existing(&edge.src)?, to.clone())
+        };
         check_link_types(edge.etype, &src, &dst)?;
         let from = if end == "src" {
             edge.src.clone()
@@ -1016,7 +1023,7 @@ impl Engine {
             )
         })?;
         let e = self.reader().get_edge(&edge.id)?.expect("exists");
-        link_view(self.reader(), &e, &e.src)
+        self.link_result(&e, false)
     }
 
     // ----- Reading --------------------------------------------------------------------------

@@ -252,7 +252,8 @@ fn orphaned_annotations_can_be_reattached() {
     let a = annotation_on_open_by_search(&repo);
     let id = a["id"].as_str().unwrap().to_string();
     let reattached = repo.json(&["reattach", &id, "close"]);
-    assert_eq!(reattached["status"], "asserted");
+    assert_eq!(reattached["link"]["status"], "asserted");
+    assert_eq!(reattached["link"]["other"]["label"], "src/store.rs::close");
     let why = repo.json(&["why", "close"]);
     assert_eq!(
         why["annotations"][0]["text"],

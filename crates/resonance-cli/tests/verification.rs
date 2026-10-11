@@ -167,3 +167,31 @@ fn declaring_a_test_needs_a_command() {
     let err = repo.fails(&["test"], 2);
     assert!(err.contains("test add"), "{err}");
 }
+
+#[test]
+fn a_verified_link_goes_stale_when_the_test_changes() {
+    let repo = TestRepo::with_project();
+    repo.declare_sample();
+    repo.ok(&["test", "FR-001"]);
+    assert_eq!(verifies_status(&repo, "FR-001"), "verified");
+    // An edit inside the test's region changes its content hash (FR-002, MVP-012).
+    repo.replace(
+        "tests/store_test.sh",
+        "echo \"open ok\"",
+        "echo \"open ok!\"",
+    );
+    assert_eq!(verifies_status(&repo, "FR-001"), "stale");
+    // An asserted link whose code changes stays asserted (MVP-012).
+    assert_eq!(
+        repo.json(&["trace", "FR-001"])["satisfiedBy"][0]["link"]["status"],
+        "asserted"
+    );
+    repo.replace("src/store.rs", "conn.check();", "conn.check(); // checked");
+    assert_eq!(
+        repo.json(&["trace", "FR-001"])["satisfiedBy"][0]["link"]["status"],
+        "asserted"
+    );
+    // Re-running the test verifies it again.
+    repo.ok(&["test", "FR-001"]);
+    assert_eq!(verifies_status(&repo, "FR-001"), "verified");
+}

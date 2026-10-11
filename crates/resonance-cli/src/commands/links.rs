@@ -15,14 +15,14 @@ pub fn unlink(ctx: &Ctx, edge: &str) -> Result<()> {
     let (mut engine, _) = reconciled(ctx)?;
     let view = engine.unlink(edge)?;
     ctx.emit(&view, |l| {
-        format!("Removed (kept for history): {}", render::link(l))
+        render::link_change("Removed (kept for history)", l)
     })
 }
 
 pub fn confirm(ctx: &Ctx, edge: &str) -> Result<()> {
     let (mut engine, _) = reconciled(ctx)?;
     let view = engine.confirm(edge)?;
-    ctx.emit(&view, render::link)
+    ctx.emit(&view, |l| render::link_change("Confirmed", l))
 }
 
 pub fn annotate(ctx: &Ctx, target: &str, kind: &str, text: &str, task: Option<&str>) -> Result<()> {
@@ -34,5 +34,5 @@ pub fn annotate(ctx: &Ctx, target: &str, kind: &str, text: &str, task: Option<&s
 pub fn reattach(ctx: &Ctx, reference: &str, target: &str) -> Result<()> {
     let (mut engine, _) = reconciled(ctx)?;
     let view = engine.reattach(reference, target)?;
-    ctx.emit(&view, |l| format!("Re-attached: {}", render::link(l)))
+    ctx.emit(&view, |l| render::link_change("Re-attached", l))
 }
