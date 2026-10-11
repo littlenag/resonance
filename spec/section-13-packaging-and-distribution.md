@@ -55,6 +55,8 @@ These come after the MVP has matured. Each depends on the binary and adds no loc
 ```
 Cargo.toml                       # workspace
 rust-toolchain.toml              # pinned stable toolchain
+justfile                         # deterministic, repeatable tasks: build, test, lint, boundary and spec checks
+scripts/                         # helpers called by the justfile (for example spec_check.py)
 crates/
   resonance-core/                # library: model, store trait, queries, anchors, import, MCP/CLI logic
     assets/                      # embedded templates: agent kit, default config (later: hooks, README, service units, schemas)
@@ -64,6 +66,8 @@ crates/
   resonance-store-memory/        # library: in-memory adapter for tests (B5)
 .github/workflows/release.yml    # reproducible release builds, checksums, signatures (first releases)
 ```
+
+Repeated project tasks are `just` recipes, so that people, agents and CI run them identically; `just check` is the gate CI runs. [Decided: `just`. Proposed: recipes]
 
 Embedded assets live inside the crate that embeds them, not at the repository root, so that every crate stays publishable (`cargo publish` packages only files inside a crate's directory). [Proposed]
 
