@@ -51,7 +51,7 @@ The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both
 | --- | --- | --- | --- |
 | `init` | Offline: create `.resonance/`, exclude it locally, run the first reconcile, and offer agent onboarding. In a shared repository: join the committed graph as a Resonance user. | FR-172, FR-180 | MVP (offline); B6 (join) |
 | `status` | Counts, repair list, and later the stage, participation, unresolved divergences and governed paths. | FR-171, FR-238 | MVP; B6 |
-| `doctor` | Health of daemons and the registry, adoption health, integrity checks, version skew. | FR-096, FR-207 | B1, B8 |
+| `doctor` | Health of daemons and the registry, adoption health, integrity checks, version skew. | FR-096, FR-207 | MVP; B8 |
 | `reconcile [--full]` | Bring the graph in step with the disk now. | FR-047 | MVP |
 | `rebuild-derived` | Drop and rebuild derived data. | FR-023 | MVP |
 | `rebuild` | Rebuild authored state by folding the operation log. | FR-150 | B5 |
@@ -83,7 +83,7 @@ The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both
 | --- | --- | --- | --- |
 | `unit add\|edit\|remove\|list` | Declare, re-anchor, remove and list code units (textual anchors). | FR-110, MVP-013 | MVP |
 | `test add … --run CMD` | Declare a test and how to run it alone. | MVP-017 | MVP |
-| `unit split\|merge` | Declare splits and merges. | FR-033 | B2 |
+| `unit split\|merge` | Declare splits and merges. | FR-033 | MVP |
 
 **Links and annotations**
 
@@ -141,9 +141,9 @@ The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
 | `mcp` | MCP server over stdio. | FR-130, MVP-003 | MVP |
-| `daemon [--foreground]` | Per-repository daemon. | §8.7 | B1 |
-| `registry run\|install\|uninstall` | Run the registry, or install and remove its launchd or systemd user service. | FR-088–FR-094 | B1 |
-| `uninstall --user` | Remove user-level installs: registry service, agent registrations, caches. | FR-266 | B1 |
+| `daemon [--foreground]` | Per-repository daemon. | §8.7 | MVP |
+| `registry run\|install\|uninstall` | Run the registry, or install and remove its launchd or systemd user service. | FR-088–FR-094 | MVP |
+| `uninstall --user` | Remove user-level installs: registry service, agent registrations, caches. | FR-266 | B18 |
 
 **Plumbing** (called by git and agent harnesses, not by people)
 

@@ -13,13 +13,14 @@ This file is the **working spec**: the part of the full specification (`spec/sec
 
 ## 1. What the MVP is
 
-**A single-developer, offline Resonance.** It is one Rust binary, `resonance`, providing a CLI and an MCP server over stdio. Both work against a local SQLite graph in `.resonance/` that is invisible to git. The binary:
+**A single-developer, offline Resonance.** It is one Rust binary, `resonance`, providing a CLI, an MCP server over stdio, a per-repository daemon that watches the working tree, and a system-wide registry for discovery and health. All of them work through one local SQLite graph in `.resonance/` that is invisible to git, owned by the daemon. The binary:
 
 - imports requirements from Markdown;
 - lets people and agents declare **code units** and **tests** as named regions of any text file, and keeps them attached as files change, without parsing code;
 - lets people and agents link code and tests to requirements and annotate code;
 - verifies `verifies` links by running the linked tests;
-- answers `trace`, `why` and context-pack queries.
+- answers `trace`, `why` and context-pack queries;
+- keeps the graph current in the background, so that answers are fast and always reflect the files on disk.
 
 **Why this cut.**
 
@@ -27,7 +28,7 @@ This file is the **working spec**: the part of the full specification (`spec/sec
 2. It can be dogfooded on day one: Resonance imports its own spec, and its own code is linked to its own requirements.
 3. It builds the seams that later features depend on: the store API boundary, an operation log, textual anchors, and stage and participation metadata.
 4. It is language-agnostic from day one. Resonance parses no source code (NG4); meaning comes from the agent, and Resonance remembers it.
-5. It leaves out the riskiest and most expensive parts: the persistent daemon and watcher, git integration (snapshots, deltas, merges), graph-to-disk writes, and multi-user adoption. Each of those can be added later without rework.
+5. It leaves out the riskiest and most expensive parts: git integration (snapshots, deltas, merges), graph-to-disk writes, and multi-user adoption. Each of those can be added later without rework. (The persistent daemon and watcher were added with increment B1, and stronger identity reconciliation with B2.)
 
 **Typical session**
 
@@ -47,7 +48,7 @@ resonance annotate SqliteStore --kind instruction --text "do not change the open
 resonance status                       # counts plus the repair list
 ```
 
-Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 (via MVP-002), P8.
+Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P1, P2, P3, P4, P5, P8.
 
 ---
 
@@ -59,11 +60,11 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
   - `crates/resonance-cli`: the `resonance` binary.
 
   `resonance-core` MUST NOT depend on `resonance-store-sqlite` or `rusqlite` (FR-161). Rust is the project's implementation language (OQ-11, decided). `resonance-core` also depends on no source-code parser such as tree-sitter (FR-110).
-- **MVP-002 No daemon: reconcile on demand.** There is no persistent watcher, daemon, registry or socket. Every CLI command, and every MCP tool call, first reconciles the graph with the disk (§3.3), then answers. This gives read-your-writes (FR-102) and "delay, never wrong answers" (P4) without a background process. It replaces FR-040–FR-044, FR-048 and FR-080–FR-096 for now. Concurrent CLI and MCP processes are serialized by SQLite (WAL mode, busy timeout of 5 s).
+- **MVP-002 The daemon serves; direct mode reconciles on demand.** A per-repository daemon owns the graph and serves every CLI command and MCP tool call (§3.15, FR-252). Clients start it when none is running and wait (P4). Before it answers, the daemon brings the graph up to date with the disk through the watcher and the sync protocol of MVP-020. *Direct mode* (`--no-daemon`, or `RESONANCE_NO_DAEMON=1`) keeps the original behavior for debugging and for environments where the daemon cannot run: the command reconciles the graph with the disk itself (§3.3), then answers. Both modes run the same operations (FR-251). Concurrent processes are serialized by SQLite (WAL mode, busy timeout of 5 s).
 - **MVP-003 MCP transport.** `resonance mcp` speaks MCP over stdio, JSON-RPC 2.0 with newline-delimited messages. It handles `initialize` (returning `instructions`, MVP-014), `notifications/initialized`, `ping`, `tools/list` and `tools/call`. A minimal hand-rolled implementation is preferred over an SDK dependency unless a stable SDK crate is clearly simpler at implementation time. Resolves OQ-04 for the MVP.
 - **MVP-004 One local graph.** The graph does not track branches; this is the Phase 1 fallback from OQ-18. Branch switches, pulls and rebases are simply reconciled like any other change to the file tree.
 - **MVP-005 Orphaning is reversible.** A code unit that disappears is *retired*, not deleted, and its authored edges become `orphaned` with the last known location (FR-034). If the orphaned anchor's quoted text reappears exactly, with matching context (for example after switching back to a branch), the anchor is restored and its edges return to the status they had before. This makes MVP-004 tolerable.
-- **MVP-006 Dependencies** (versions pinned at implementation time): `rusqlite` (bundled), `similar` (text diffs for anchor tracking), `ignore`, `serde`, `serde_json`, `toml`, `clap`, `ulid`, `sha2`, `globset`, `anyhow`/`thiserror`. Git is used through the `git` executable (`rev-parse`, `--git-path`); there is no libgit2.
+- **MVP-006 Dependencies** (versions pinned at implementation time): `rusqlite` (bundled), `similar` (text diffs for anchor tracking), `ignore`, `serde`, `serde_json`, `toml`, `clap`, `ulid`, `sha2`, `globset`, `anyhow`/`thiserror`, and `notify` (native file events, B1). Git is used through the `git` executable (`rev-parse`, `--git-path`); there is no libgit2.
 - **MVP-007 Inputs.** Intent comes from Markdown in this spec's conventions (MVP-011). Code units and tests are declared by people and agents on any text file, in any language (MVP-013). Resonance parses no source code (NG4, FR-110). Every non-ignored file is a `File` node, and links and annotations may also target whole files.
 - **MVP-008 Hashing and IDs.** Content hashes are SHA-256 in lowercase hex. Authored node and edge IDs are ULIDs (FR-030). A requirement's node ID is deterministic, `req:<KEY>` (for example `req:FR-042`), so re-import and future clones agree (FR-031, FR-186). Code units and tests are authored nodes with ULIDs; their addresses are defined in MVP-013.
 - **MVP-009 Repository requirement.** Resonance runs inside a git repository and uses `git rev-parse --show-toplevel` to find the root. It refuses to run elsewhere, with a clear message (G9).
@@ -108,6 +109,22 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 - **MVP-017 Tests are declared, not discovered.** Resonance does not find tests by parsing. The person or agent who declares a test supplies the exact command that runs it alone. Exit code 0 is a pass; see §3.8 for errors.
 - **MVP-018 Graph scope seam.** The `GraphStore` trait exposes writes through a handle scoped to one graph. In the MVP only the primary graph exists. This lets parallel graphs (backlog B13) later receive handles that can write only their own graph (FR-116), without changing existing callers.
 
+- **MVP-019 Daemon process model.** One daemon per repository root, run as `resonance daemon` (FR-080, FR-082). It is a library component (`resonance_core::daemon`) that any process can host (FR-085); the binary runs one per process.
+  - One owner thread applies every change, whether from the watcher or from a request, so changes are serialized (P1). Connection threads parse requests and hand them to the owner.
+  - The API is JSON-RPC 2.0 with newline-delimited messages over a Unix domain socket (FR-086, FR-101, resolving OQ-04 for the MVP). Methods mirror the operations of the CLI (FR-251); `health`, `sync`, `subscribe` and `shutdown` are added.
+  - The socket lives in a short per-user runtime directory: `$RESONANCE_RUNTIME_DIR` if set, else `$XDG_RUNTIME_DIR/resonance`, else `~/.resonance/run`, else `/tmp/resonance-<uid>` when that path would be too long for a socket (about 104 bytes on macOS). Its name is a hash of the canonical repository root. The directory is user-only (`0700`) and so is the socket.
+  - `.resonance/daemon.lock` is held with an exclusive lock for the daemon's lifetime (FR-082); `.resonance/daemon.json` records the endpoint, process ID, versions and start time (FR-083); `.resonance/daemon.log` receives its diagnostics.
+  - Clients start the daemon on demand as a detached process and wait until it is ready (FR-084). It exits after `daemon.idleSeconds` (default 1800) without requests. `resonance daemon --stop` stops it.
+- **MVP-020 Read-your-writes by sync cookies.** To answer a request (FR-102), the daemon writes a uniquely named *cookie* file into `.resonance/cookies/` and waits until the watcher reports it. File events for one watch are delivered in order, so every change made before the request has then been seen; the daemon applies them before answering. The *ingest watermark* (FR-043) is the sequence number of the last applied event batch. A request with `consistency: cached` (`--cached` on the command line) skips the sync and answers from the graph as it is. If the watcher fails or loses events, the daemon falls back to a full reconcile before answering (P4).
+- **MVP-021 Watching.** On macOS the daemon watches the root with one recursive FSEvents stream. On Linux it adds an inotify watch for each directory it ingests, skipping ignored and build-output directories (FR-046), and watches new directories as they appear. Event contents are hints only: affected paths are re-examined by size, time and hash (FR-042). A dropped-events or rescan signal triggers a full reconcile. A change to a `.gitignore` file, to `.git/info/exclude` or to `.resonance/config.toml` also triggers one.
+- **MVP-022 Registry.** `resonance registry run` serves discovery and health only, on `registry.sock` in the runtime directory (FR-088, FR-089). Daemons register when they start, renew a 30-second lease every 10 seconds, and unregister when they stop (FR-090, FR-091). A daemon that finds no registry carries on without it (P5). Daemons also append their root to `~/.resonance/known-roots`, from which a restarted registry rebuilds its view by reading each `daemon.json` and checking whether its lock is held (FR-092). `resonance registry install` writes and loads a launchd user agent (macOS) or a `systemd --user` unit (Linux); `registry uninstall` removes it. Both preview by default and need `--yes` (FR-093, FR-263). The registry polls each daemon's `health` and never restarts one (FR-094).
+- **MVP-023 Git operations in progress.** While `.git/index.lock` exists, a git command is changing the working tree. The daemon reports the state `git-operation`, holds the events it receives, and applies them as one batch when the lock disappears (narrowing FR-048; the git monitor of B3 classifies operations later). Requests wait for the batch, for at most 10 seconds; a lock older than that is treated as stale and the daemon reports `degraded`.
+- **MVP-024 Identity reconciliation (B2).** Re-anchoring stays purely textual (NG4):
+  - In diff mapping (MVP-013 step 1), a line counts as surviving when it is unchanged or is paired with a changed line whose character similarity is at least 0.6. Boundaries inside changed lines are mapped through a character-level diff, so snippet anchors keep their exact columns.
+  - Approximate matches (step 4) of snippet anchors are refined to the best-aligned substring rather than whole lines.
+  - After step 3, the exact quote is searched in every unchanged text file too, through an in-memory index of line hashes (step 3b, recorded as `identity.move`).
+  - When a file disappears and another appears in the same reconcile with content at least 50% similar, the change is a file move (FR-036). It is recorded as a `file.move` operation; links and annotations on the old file follow it, and anchors are mapped through the diff between the old and new content.
+  - `resonance unit split <unit> --into <unit>…` and `resonance unit merge <unit>… --into <unit>` declare splits and merges (FR-033). They record `identity.split` / `identity.merge`, copy the links and annotations of the old units to the new ones as `asserted`, and retire the old units. Splitting into units that do not cover the old unit's region is refused.
 ---
 
 ## 3. Requirements in the MVP
@@ -135,7 +152,7 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 
 ### 3.3 Ingest and reconcile  `[ingest]`
 
-- **FR-047 (adapted by MVP-002)** Before serving any command or tool call, reconcile the graph against the disk. The fast path skips files whose `(size, mtime)` are unchanged; changed files are re-hashed, and only real content changes are processed. A full re-hash is available as `resonance reconcile --full`.
+- **FR-047** On startup, the daemon reconciles the graph against the disk before serving queries, using content hashes. The fast path skips files whose `(size, mtime)` are unchanged; changed files are re-hashed, and only real content changes are processed. FSEvents' replay-since-event-ID optimization is not used; the stat scan is always the fallback it would need. In direct mode (MVP-002) every command reconciles this way first. A full re-hash is available as `resonance reconcile --full`.
 - **FR-049** Ingesting a changed file is incremental: re-hash, update the blob, re-locate the anchors in that file (MVP-013), update link statuses (MVP-012).
 - **FR-045** Always ignore `.git/`, `.resonance/` and editor scratch files (`*.swp`, `*~`, `.#*`, `4913`).
 - **FR-046** Respect `.gitignore` (and `.git/info/exclude` and global excludes, through the `ignore` crate), and also ignore the default build and output directories listed in FR-046. Extra patterns can be set in `config.toml` (`ingest.ignore`).
@@ -144,11 +161,14 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 ### 3.4 Identity  `[identity]`
 
 - **FR-030** Authored nodes, including code units and tests, get permanent ULIDs; requirements get deterministic IDs (MVP-008).
-- **FR-032 (partial)** After each file change, re-locate every anchor in it per MVP-013, carrying IDs, links and annotations across.
-- **FR-033 (partial)** Moves and approximate re-anchors are recorded as `identity.move` and `identity.retarget` operations, with their confidence.
+- **FR-031 (partial)** Code units are authored nodes with permanent IDs, and every re-anchoring decision is recorded as an operation, so that clones can agree once operations are committed (B6).
+- **FR-032** After each file change, re-locate every anchor in it per MVP-013, as strengthened by MVP-024 (character-level boundaries, similarity-aware line survival, substring refinement of approximate matches, and a search of unchanged files for moved regions), carrying IDs, links and annotations across. No parsing is involved (NG4).
+- **FR-033 (partial)** Moves, approximate re-anchors, splits and merges are recorded as `identity.move`, `identity.retarget`, `identity.split` and `identity.merge` operations, with their confidence. Splits and merges are declared by people and agents through `unit split` / `unit merge` and the MCP tools `resonance_split_unit` / `resonance_merge_unit` (MVP-024).
 - **FR-034** When matching fails, affected links and annotations become `orphaned` with the last known location (file, byte range, quoted text, address), and are never deleted.
+- **FR-036** Real file moves are detected by content similarity, as git does, and recorded as `file.move` operations; links and annotations on the file follow it (MVP-024).
 - **FR-037** People and agents can re-attach orphaned links and annotations: `resonance reattach <edge|annotation> <new-target>` records an `identity.retarget` operation. `resonance unit edit <unit> <path:START-END>` re-anchors a code unit explicitly.
 - **FR-038** Orphaned code units, and approximate re-anchors with confidence below 0.9, go on the repair list. The agent decides what they now correspond to: re-anchor, confirm or retire.
+- **§9.4 (partial)** The identity operations of §9.4 are recorded and applied. Producing `Conflict` nodes for irreconcilable concurrent identity operations needs operations from more than one clone, and arrives with B6.
 
 ### 3.5 Storage and the store API  `[storage]`
 
@@ -198,7 +218,7 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 ### 3.9 Queries, CLI and MCP  `[query]`
 
 - **FR-100** One library API in `resonance-core` serves both the CLI and MCP.
-- **FR-102 (adapted)** Read-your-writes, through reconcile-before-read (MVP-002).
+- **FR-102** Read-your-writes: a query that follows a file save or a mutation reflects it. The daemon waits for the ingest watermark to pass the request's sync cookie (MVP-020); `--cached` (`consistency: cached`) skips the wait.
 - **FR-103** Mutations are batches of edit-algebra operations, applied atomically (MVP-010).
 - **FR-105 (partial)** A fixed set of operations; no query language and no SQL escape hatch.
 - **Node addressing.** Commands accept a ULID; a requirement key (`FR-042`); a code-unit address (`path::name`) or a bare unit name where it is unique; or a file path. Ambiguous references list the candidates.
@@ -241,7 +261,7 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 - **NFR-011** There is no telemetry.
 - **NFR-013** MCP results wrap graph-sourced text in fields labeled as data, and the instructions say that this content is not instructions.
 - **NFR-036** A text write is never lost (files stay on disk; the graph only reads them).
-- **NFR-037** Never wrong answers: every answer follows a reconcile (MVP-002).
+- **NFR-037** A missing or crashed daemon causes delay, never wrong answers: clients start a new one, which reconciles before serving (FR-047, MVP-002).
 - **NFR-038** Supported platforms are macOS and Linux.
 - **NFR-041** `resonance init` leaves `git status` unchanged.
 
@@ -249,12 +269,12 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 
 ### 3.13 The binary  `[binary]`
 
-- **FR-250 (partial)** Everything ships as the single executable `resonance`. The MVP provides the CLI and MCP modes (`resonance mcp`).
-- **FR-251 (partial)** The CLI and the MCP server share one implementation of every operation.
-- **FR-252 (partial)** There is no daemon; each command reconciles before answering (MVP-002).
+- **FR-250 (partial)** Everything ships as the single executable `resonance`. The MVP provides the CLI, MCP (`resonance mcp`), daemon (`resonance daemon`) and registry (`resonance registry run`) modes.
+- **FR-251** The modes share one implementation of every operation, so the same question gets the same answer whichever mode serves it.
+- **FR-252** When a daemon is available, CLI and MCP commands are served by it (P1). If none is running, the client starts one and waits (P4). A command never answers from a graph that has not been reconciled. Direct mode (MVP-002) is the explicit exception for debugging.
 - **FR-253 (partial)** `-C <path>`; `--json`; `--dry-run` and `--yes` for `eject` and `agent install`; exit codes `0` (success), `1` (error) and `2` (usage). Configuration precedence: flags, then `RESONANCE_*` environment variables, then `.resonance/config.toml`, then defaults.
 - **FR-254 (partial)** MCP tool names mirror CLI commands (`resonance_<command>`).
-- **FR-255 (partial)** The agent instructions (MVP-014) and schema migrations are embedded in the binary. Nothing is downloaded at run time.
+- **FR-255 (partial)** The agent instructions (MVP-014), schema migrations and the registry's service definitions are embedded in the binary. Nothing is downloaded at run time.
 - **FR-256 (partial)** `resonance version [--json]` reports the binary version, the store schema version and the MCP protocol version.
 - **FR-258** The binary refuses to write a store with a newer schema than it understands, and says which version is needed.
 
@@ -262,7 +282,38 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 
 - **FR-260 (partial)** The binary builds and runs on macOS and Linux, with SQLite bundled.
 - **FR-261 (partial)** The MVP channel is build from source: `cargo install --path crates/resonance-cli`, or `cargo install --git <repo>`.
-- **FR-263 (partial)** Installing the binary changes nothing anywhere. `resonance agent install` is the only user-level install, and it is explicit and previewed.
+- **FR-263 (partial)** Installing the binary changes nothing anywhere. `resonance agent install` and `resonance registry install` are the only user-level installs, and both are explicit and previewed.
+
+
+### 3.15 Daemon, watcher and registry  `[daemon]`
+
+- **FR-040** Each repository has a persistent watcher process for its working tree: the daemon, started on demand (MVP-019).
+- **FR-041** The watcher uses native file-event APIs: FSEvents on macOS and inotify on Linux (MVP-021).
+- **FR-042** The watcher tolerates batched, coalesced, delayed and out-of-order events. It re-examines affected paths by hash rather than trusting event contents.
+- **FR-043** The daemon maintains an ingest watermark: the point up to which disk changes have been applied to the graph (MVP-020).
+- **FR-044 (partial)** The daemon writes no project files in the MVP (graph-to-disk writes arrive with B10), and its own writes under `.resonance/` are never ingested. Recording the path, hash and generation of its writes, to suppress the events they cause, arrives with B10.
+- **FR-048 (partial)** A burst of changes made while a git command holds `.git/index.lock` is applied as one batch, not as individual edits (MVP-023).
+- **FR-080 (partial)** The watcher, ingest and query API for a repository run under one owner (P1). The projection writer (B10) and the git monitor (B3) will join it.
+- **FR-081 (partial)** Queries are served by the same owner, so they honor read-your-writes. No direct access to the store file is offered to other tools.
+- **FR-082** A daemon takes an exclusive lock on `.resonance/daemon.lock` at start. The lock, not the registry, guarantees one daemon per repository.
+- **FR-083** A daemon writes `.resonance/daemon.json` with its endpoint, process ID, Resonance version, schema version and start time, so clients can find it without the registry.
+- **FR-084** Clients start a daemon on demand when none is running. Daemons exit after a configurable idle period (`daemon.idleSeconds`).
+- **FR-085** The per-repository component is a library that can run in its own process or be hosted alongside others in a shared process later, without design changes.
+- **FR-086** Daemons listen on Unix domain sockets in a short per-user runtime directory with user-only permissions (MVP-019).
+- **FR-087** No TCP listener is offered (NFR-010). If one is ever added, it binds to loopback only and requires a per-daemon token.
+- **FR-088** A system-wide registry provides only service discovery and health monitoring of per-repository daemons (MVP-022).
+- **FR-089** The registry never sits between a client and a repository daemon on any request (P5).
+- **FR-090** Daemons register with a lease and renew it by heartbeat; entries that miss renewal expire.
+- **FR-091** Registry entries record the canonical repository root, process ID, endpoint, Resonance version, schema version and start time, so version skew is detectable.
+- **FR-092** After a restart, the registry rebuilds its view by scanning known endpoint files and checking which locks are held.
+- **FR-093** The registry can run under launchd (macOS) or `systemd --user` (Linux), installed explicitly with `resonance registry install`.
+- **FR-094** The registry monitors only; it does not restart daemons.
+- **FR-095** Daemons distinguish liveness from readiness, and report their state (`starting`, `reconciling`, `ready`, `git-operation`, `degraded`), ingest lag, pending event count, last successful ingest and last error.
+- **FR-096 (partial)** `resonance doctor` shows every known daemon with its health and flags version skew. It also checks this repository: the store's integrity and schema version, and the `.git/info/exclude` line. Adoption health (FR-207) arrives with B8.
+- **FR-101** The API transport is JSON-RPC 2.0 over the daemon's Unix socket (MVP-019).
+- **FR-104** The API supports subscriptions to change streams: `subscribe` sends a notification for every change set the daemon applies.
+- **S14** Discovery without the registry, through `daemon.json`; `resonance doctor` shows readiness and lag.
+- **Commands:** `daemon [--foreground] [--stop]`, `registry run|install|uninstall [--dry-run] [--yes]`, `doctor`, and the global `--no-daemon` and `--cached` flags.
 
 ---
 
@@ -271,7 +322,16 @@ Goals served: G1, G2, G3, G4, G8 (partial), G13. Principles honored: P2, P3, P4 
 ```
 .resonance/            # excluded through .git/info/exclude; nothing here is committed in the MVP
   graph.db             # SQLite (WAL); live store
-  config.toml          # intent.sources, ingest.ignore, ingest.maxBlobBytes, test.command, test.zeroTestsPattern
+  config.toml          # intent.sources, ingest.ignore, ingest.maxBlobBytes, test.*, daemon.idleSeconds
+  daemon.lock          # held by the running daemon (FR-082)
+  daemon.json          # endpoint, pid, versions, start time (FR-083)
+  daemon.log           # daemon diagnostics
+  cookies/             # sync cookies, short-lived (MVP-020)
+
+~/.resonance/          # per user, outside every repository
+  run/                 # sockets: <hash-of-root>.sock, registry.sock (or $RESONANCE_RUNTIME_DIR, MVP-019)
+  known-roots          # repositories that have run a daemon, for the registry and doctor (MVP-022)
+  exports/             # eject exports
 ```
 
 Illustrative tables (an internal detail of the adapter): `nodes`, `edges`, `blobs`, `files`, `anchors`, `ops`, `meta`. These follow §8.2, with edge endpoint hashes (MVP-012) and anchors (MVP-013).
@@ -288,7 +348,11 @@ The MVP is done when the following pass. Each is an automated integration test a
 - **S4** AC1 (anchored to a code unit), AC2 (survives edits elsewhere in the file, edits inside the region that keep at least half its lines, file renames, and moves of the region to another file; a region rewritten beyond recognition is orphaned and listed, never silently re-attached), AC3 (orphaned with last location when the anchor disappears, and restored when it reappears, MVP-005), AC4 (annotations appear in `why` and in context packs).
 - **S7** AC1 (editing a requirement's text in Markdown and re-running any command makes its links stale) and AC2 (`trace` lists everything affected).
 - **S8 (adapted)** A file save followed by any command reflects the new text and re-located anchors.
-- **S13 (adapted)** Edits made between commands are always reflected in the next answer.
+- **S10 (adapted)** AC1: a git command that changes many files (a branch switch) is applied as one batch, and the next answer reflects the new commit plus uncommitted changes (AC2).
+- **S13** AC1: a daemon started after edits were made reconciles before answering any query. AC2: a missing or crashed daemon causes delay, never wrong answers. (AC3, classification, arrives with B3.) Edits made between commands are always reflected in the next answer, in daemon mode and in direct mode.
+- **S14** AC1: a client finds a repository's daemon without the registry. AC2: `resonance doctor` shows every running daemon, whether it is ready, and how far behind the disk it is.
+- **Daemon.** One daemon per repository (a second exits); it starts on demand and exits when idle; `--stop` stops it; a subscription receives change notifications; a request with `--cached` does not wait. The registry registers, renews and expires daemons, rebuilds its view after a restart, and `registry install --dry-run` previews the service definition.
+- **Identity (B2).** A file renamed and edited in one step keeps its anchors and its file-level links (FR-036); a region moved into a file that did not change in that reconcile is found (MVP-024); a snippet anchor keeps its exact columns through edits on its own line; `unit split` and `unit merge` move links and annotations and record identity operations.
 - **S15** AC1, AC2 (for the MVP feature set), AC4, AC7.
 - **Verification.** `resonance test` marks passing `verifies` links `verified`, records failing evidence, and records `error` when the command cannot start or zero tests ran.
 - **Anchor tracking.** A table-driven test suite of edit scenarios (insert above, edit inside, delete half, reformat, move to another file, duplicate snippet, delete entirely, restore) checks every MVP-013 step and its recorded operations.

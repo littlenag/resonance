@@ -14,43 +14,20 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 ---
 
 ## B1 — Persistent daemon and watcher
-*Replaces MVP-002's reconcile-on-demand with a background owner. This is a prerequisite for low-latency queries on large repositories and for B10.*
+*Moved into the MVP (mvp.md, "3.15 Daemon, watcher and registry"). What remains depends on later increments.*
 
-- **FR-040** [daemon] Each repository has a persistent watcher process (§8.4).
-- **FR-041** [daemon] Native file events: FSEvents on macOS, inotify/fanotify on Linux.
-- **FR-042** [daemon] Tolerate batched, coalesced, delayed and out-of-order events; re-examine paths by hash.
-- **FR-043** [daemon] Maintain an ingest watermark.
-- **FR-044** [daemon] Suppress events caused by the daemon's own writes (path, hash, generation).
-- **FR-047** (remainder) [daemon] Startup reconcile inside the daemon, with an optional FSEvents replay-since-event-ID optimization, falling back to a full scan.
-- **FR-048** [daemon] Hand bursts that match a git operation to the git monitor instead of treating them as individual edits.
-- **FR-080** [daemon] Watcher, ingest, projection writer, git monitor and API under one owner (P1).
-- **FR-081** [daemon] Queries served by the same owner; optional engine-specific read-only file access (FR-168).
-- **FR-082** [daemon] An exclusive lock on `.resonance/daemon.lock` guarantees a single daemon.
-- **FR-083** [daemon] `daemon.json` holds the endpoint, pid, versions and start time.
-- **FR-084** [daemon] Clients start the daemon on demand; it exits after an idle period.
-- **FR-085** [daemon] The per-repository component can run in its own process or hosted in a shared process.
-- **FR-086** [daemon] Unix domain sockets in a short per-user runtime directory.
-- **FR-087** [daemon] If TCP is ever used: loopback only, plus a per-daemon token.
-- **FR-088** [daemon] A system-wide registry for discovery and health only.
-- **FR-089** [daemon] The registry is never on the request path (P5).
-- **FR-090** [daemon] Registry leases renewed by heartbeat.
-- **FR-091** [daemon] Registry entries record the canonical root, pid, endpoint, versions and start time.
-- **FR-092** [daemon] The registry rebuilds its view after a restart from endpoint files and locks.
-- **FR-093** [daemon] The registry runs under launchd or `systemd --user`.
-- **FR-094** [daemon] The registry monitors only; it does not supervise daemons (OQ-13).
-- **FR-095** [daemon] Separate liveness and readiness; report state, lag, pending events and the last error.
-- **FR-096** [daemon] `resonance doctor` lists all daemons, their health and any version skew; adoption health via FR-207.
-- **FR-101** [daemon] API transport: JSON-RPC (or gRPC) over the daemon socket (OQ-04).
-- **FR-102** (remainder) [daemon] Read-your-writes by waiting on the watermark; a `consistency: cached` option.
-- **FR-104** [daemon] Subscriptions to change streams.
-- **S14** [daemon] Discovery without the registry; `doctor` shows readiness and lag.
+- **FR-044** (remainder) [daemon] Record the path, hash and generation of every file the daemon writes, and ignore the matching events (with B10, when the daemon starts writing project files).
+- **FR-048** (remainder) [daemon] Hand bursts that match a git operation to the git monitor, which classifies them (with B3).
+- **FR-080** (remainder) [daemon] The projection writer (B10) and the git monitor (B3) run under the daemon's single owner.
+- **FR-081** (remainder) [daemon] Optional engine-specific read-only access to the store file for tools that accept stale answers (FR-168).
+- **FR-096** (remainder) [daemon] `doctor` checks adoption health (FR-207, with B8).
 
 ## B2 — Stronger identity reconciliation
-- **FR-031** [identity] Every clone agrees on IDs that authored data refers to, by committing code-unit creation and re-anchoring operations (with B6).
-- **FR-032** (remainder) [identity] Smarter textual re-anchoring: token- or character-level diffs, better approximate matching, searching unchanged files for moved regions. Still no parsing (NG4).
-- **FR-033** (remainder) [identity] Splits and merges declared through the API and recorded as identity operations; operations committed so that clones agree (with B6).
-- **FR-036** [identity] Real file moves detected by content similarity and recorded.
-- **§9.4** (remainder) [identity] `identity.split` and `identity.merge`, and producing a `Conflict` for irreconcilable concurrent identity operations.
+*Moved into the MVP (mvp.md, "3.4 Identity" and MVP-024). What remains needs operations from more than one clone.*
+
+- **FR-031** (remainder) [identity] Every clone agrees on IDs that authored data refers to, by committing code-unit creation and re-anchoring operations (with B6).
+- **FR-033** (remainder) [identity] Identity operations committed so that clones agree (with B6).
+- **§9.4** (remainder) [identity] A `Conflict` for irreconcilable concurrent identity operations (with B6).
 
 ## B3 — Git-aware offline mode and recovery
 *Makes offline mode follow branches and explain divergence. Builds on B1's git monitor if B1 is done first; otherwise it runs on demand.*
@@ -275,20 +252,18 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **OQ-15** [nfr] License.
 
 ## B18 — The binary's remaining modes, and packaging
-*Modes arrive with the increments that need them (the daemon and registry with B1, plumbing with B6 and B7, quiet mode with B9). Release packaging is needed before the first users outside the project.*
+*Modes arrive with the increments that need them (the daemon and registry arrived with B1; plumbing comes with B6 and B7, quiet mode with B9). Release packaging is needed before the first users outside the project.*
 
-- **FR-250** (remainder) [binary] Daemon, registry, quiet and plumbing modes in the same binary (with B1, B6, B7, B9).
-- **FR-251** (remainder) [binary] One implementation of every operation across all modes, including the daemon.
-- **FR-252** (remainder) [binary] CLI and MCP become clients of the daemon, starting it on demand (B1).
+- **FR-250** (remainder) [binary] Quiet and plumbing modes in the same binary (with B6, B7, B9).
 - **FR-253** (remainder) [binary] Exit codes `3` and `4`; user-level configuration; `--dry-run` everywhere.
 - **FR-254** (remainder) [binary] Versioned JSON output schemas; semantic-versioning policy for the command surface.
-- **FR-255** (remainder) [binary] Embedded hook shims, `.resonance/` templates, service units, quiet bootstrap and import-format schema.
+- **FR-255** (remainder) [binary] Embedded hook shims, `.resonance/` templates, quiet bootstrap and import-format schema.
 - **FR-256** (remainder) [binary] Delta, snapshot and import-format versions in `version --json`.
 - **FR-257** [binary] Quiet mode as a restricted capability set of the same binary (with B9).
 - **FR-260** (remainder) [packaging] Release targets (macOS arm64/x86_64, Linux x86_64/aarch64, musl static).
 - **FR-261** (remainder) [packaging] GitHub Releases, crates.io, Homebrew tap; later an official formula, distribution packages, a CI container image.
 - **FR-262** [packaging] Checksums and signatures; reproducible release builds in CI.
-- **FR-263** (remainder) [packaging] Registry service install and uninstall; `uninstall --user`.
+- **FR-263** (remainder) [packaging] `uninstall --user` (FR-266).
 - **FR-264** [packaging] Semantic versioning; minimum binary version recorded in committed configuration (stage 2+); exact pin for quiet mode.
 - **FR-265** [packaging] Upgrades through the install channel; daemons restart on new versions.
 - **FR-266** [packaging] `resonance uninstall --user`.
