@@ -1,0 +1,5 @@
+## 1. Summary
+
+Resonance is a per-repository system that keeps a **graph database as the source of truth** for a software project: its requirements, design decisions, code units, tests, annotations, and the typed relationships between them. It **projects a standard, fully tool-compatible working tree onto disk**, so build systems, IDEs, git and CI keep working on ordinary files without modification. Agents and developers reach the extra graph information through a **separate API**; the files on disk never show it.
+
+The system's primary purpose is **traceability between intent and implementation**: letting a developer move directly from a requirement to the code that satisfies it and the tests that verify it, and back again, and letting developers annotate and call out code for agents in a structured, durable way. Code structure (syntax and symbols) is a supporting, derived layer, not the product.  Of course traceability would not stop at code -- it would continue into the products and artifacts produced by mapping intent all the way through to behavior of the generated solution and back. 
