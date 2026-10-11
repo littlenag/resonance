@@ -1,0 +1,2 @@
+# Local overrides are never committed.
+*.local.ts

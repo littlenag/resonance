@@ -56,6 +56,10 @@ run *args:
 install:
     cargo install --locked --path crates/resonance-cli
 
+# Create a fresh test repository from the starter fixtures, for field tests (never this repo).
+fixture-repo dir="":
+    scripts/fixture_repo.sh {{dir}}
+
 # Remove build output.
 clean:
     cargo clean
