@@ -16,149 +16,46 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 ## B1 — Persistent daemon and watcher
 *Moved into the MVP (mvp.md, "3.15 Daemon, watcher and registry"). What remains depends on later increments.*
 
-- **FR-044** (remainder) [daemon] Record the path, hash and generation of every file the daemon writes, and ignore the matching events (with B10, when the daemon starts writing project files).
-- **FR-048** (remainder) [daemon] Hand bursts that match a git operation to the git monitor, which classifies them (with B3).
-- **FR-080** (remainder) [daemon] The projection writer (B10) and the git monitor (B3) run under the daemon's single owner.
+- **FR-044** (remainder) [daemon] Record the path, hash and generation of the projection writer's writes too, and ignore the matching events (with B10). Recovery restores and intent projection already do this (MVP-032).
+- **FR-080** (remainder) [daemon] The projection writer (B10) runs under the daemon's single owner.
 - **FR-081** (remainder) [daemon] Optional engine-specific read-only access to the store file for tools that accept stale answers (FR-168).
 - **FR-096** (remainder) [daemon] `doctor` checks adoption health (FR-207, with B8).
 
 ## B2 — Stronger identity reconciliation
-*Moved into the MVP (mvp.md, "3.4 Identity" and MVP-024). What remains needs operations from more than one clone.*
-
-- **FR-031** (remainder) [identity] Every clone agrees on IDs that authored data refers to, by committing code-unit creation and re-anchoring operations (with B6).
-- **FR-033** (remainder) [identity] Identity operations committed so that clones agree (with B6).
-- **§9.4** (remainder) [identity] A `Conflict` for irreconcilable concurrent identity operations (with B6).
+*Moved into the MVP (mvp.md, "3.4 Identity" and MVP-024), including the parts that needed committed operations (with B6).*
 
 ## B3 — Git-aware offline mode and recovery
-*Makes offline mode follow branches and explain divergence. Builds on B1's git monitor if B1 is done first; otherwise it runs on demand.*
-
-- **FR-067** [git] Git monitor: watch HEAD, refs, `index.lock`, `MERGE_HEAD` and rebase state; suspend ingest during a git operation.
-- **FR-068** [git] After a git operation, rebuild for the new commit: derived layer, deltas, then uncommitted changes.
-- **FR-183** [offline] Branch-aware offline deltas associated with commits; re-associate them after rebases via the reflog and patch IDs; keep a detached pool (resolves OQ-18).
-- **FR-184** (remainder) [offline] `resonance backup`; detect a missing `.resonance/` and offer to restore it.
-- **FR-238** (remainder) [offline] A repair list triggered by git operations that bring in outside changes; agent-driven repair recorded as identity operations.
-- **FR-239** [offline] Lazy, budgeted repair; visible repair cost.
-- **FR-240** [offline] `resonance value`: a local report of the value Resonance delivered, plus an upgrade path.
-- **FR-190** [recovery] Classify every divergence from git evidence before acting (C1–C9, §8.18).
-- **FR-191** [recovery] Resolutions follow authority (offline: git and the file tree; opted in: the graph).
-- **FR-192** [recovery] Automatic actions only when non-destructive; a recovery journal; `resonance recover undo <id>`.
-- **FR-193** [recovery] Operations idempotent by `opId`; re-apply when in doubt.
-- **FR-194** [recovery] A local journal of every operation, independent of the working tree.
-- **FR-195** [recovery] Catch-up order: git to HEAD, then classify, then serve; one summary.
-- **FR-196** [recovery] `resonance recover`, interactive and scriptable, also exposed over MCP.
-- **FR-198** [recovery] Log and count classifications; study C9 cases.
-- **S10** [git] Branch switch, rebase and pull recognized as git operations, not thousands of edits.
-- **S13** (remainder) [recovery] AC3: differences classified with git evidence, one summary.
-- **S18** [recovery] Git and the graph disagree: classify, act non-destructively, explain.
+*Moved into the MVP (mvp.md, "3.11 Offline mode and lifecycle", "3.16 Git integration", "3.17 Divergence and recovery"; MVP-028–MVP-032).*
 
 ## B4 — Breadth of intent and ontology
-- **§6.2** (remainder) [model] Node types `Design`, `Constraint` and `Conflict`; requirement `kind`, `priority`, and statuses `draft`/`superseded`.
-- **§6.3** (remainder) [model] Edge types `derivedFrom`, `supersedes` and `realizes`. (`references` lives only in a parallel code-structure graph, B13.)
-- **§6.4** [model] Stable identity anchored on intent; code units as the current realization.
-- **FR-007** [model] Namespaced extension types (`acme:Service`) that do not change core meaning.
-- **FR-008** [model] Unknown extension types preserved on read and write.
-- **FR-120** (remainder) [intent] Designs and constraints; supersede.
-- **FR-121** [intent] Opt-in projection of intent documents as Markdown with stable IDs (OQ-12).
-- **FR-122** (remainder) [intent] Importers for GitHub Spec Kit, Kiro, EARS-style statements and ADR directories.
-- **FR-123** (remainder) [intent] Tagged source comments (`// @satisfies FR-042`) ingested as edges; disabled in offline mode (FR-189); OQ-10.
-- **S5** [intent] An agent implements a feature from a requirement, end to end, with context pack, links and provenance.
-- **S6** [intent] An agent fixes a bug, finding related requirements and tests.
+*Moved into the MVP (mvp.md, "3.1 Model and link lifecycle" and "3.6 Intent").*
+
+- **FR-121** (remainder) [intent] Continuous, opt-in projection of intent documents, kept in step by the projection writer (with B10). The MVP has the one-shot `resonance intent project` (OQ-12).
 
 ## B5 — Storage maturity
-- **FR-024** [storage] Derived-data cache keyed by the content hash of inputs.
-- **FR-060** [storage] Internal representation optimized for access patterns; need not be textual.
-- **FR-061** [storage] Every change expressible in the edit algebra; git-carriable (§9).
-- **FR-150** [storage] The authored graph is a deterministic fold over its operations (`resonance rebuild` from the ops log).
-- **FR-151** [storage] Fold order: commit topology, then `hlc`, then `opId`.
-- **FR-152** [storage] Deterministic compaction.
-- **FR-153** [storage] Canonical serialization of committed operations (OQ-02).
-- **FR-162** (remainder) [storage] Change feed, snapshot export/import, delta application.
-- **FR-164** [storage] Engine-neutral delta format.
-- **FR-165** [storage] Snapshot format identifier; migration compaction between engines.
-- **FR-166** (remainder) [storage] Engine-neutral import (restore from export).
-- **FR-167** (remainder) [storage] A second, in-memory adapter that also passes the conformance suite.
-- **FR-169** [storage] The committed snapshot is never the live store.
-- **S21** [storage] Replace the storage engine with no code changes outside the adapter.
-- **OQ-03 / G11** [storage] Graph engine research track.
+*Moved into the MVP (mvp.md, "3.5 Storage and the store API"; MVP-026–MVP-028). What remains is research.*
+
+- **OQ-03 / G11** [storage] Graph engine research track: candidates judged against the conformance suite and NFR-030–NFR-035; adopting one is a new adapter plus a migration compaction (FR-165).
 
 ## B6 — Sharing the graph (stage 2) and opting in
-*The big one: committed snapshot plus deltas, joining, and consistency obligations for opted-in developers. Depends on B5 (fold, canonical serialization) and, ideally, B3.*
+*Moved into the MVP (mvp.md, "3.16 Git integration", "3.17 Divergence and recovery", "3.18 Adoption"; MVP-033–MVP-037). What remains needs later increments or is still open.*
 
-- **FR-010** (remainder) [truth] For opted-in developers the graph is authoritative for file bytes; large and binary blob policy (MVP-016) revisited.
-- **FR-012b** [truth] For opted-in developers, unexplained changes made while Resonance was not running become conflicts: restore from the graph, preserve the disk version, ask.
-- **FR-020** (remainder) [storage] The store is committed alongside regular files (stage 2+).
-- **FR-025** (remainder) [storage] `.resonance/.gitignore` for local files at stage 2+.
-- **FR-026** [git] Committed snapshot plus add-only deltas, compacted every N.
-- **FR-062** [git] The derived layer is never committed.
-- **FR-063** [git] Authored and identity layers versioned in git from stage 2.
-- **FR-064** [git] File content carried by git; deltas carry file manifests only.
-- **FR-065** [git] Authored changes merge without manual resolution; real conflicts become `Conflict` nodes.
-- **FR-066** [git] PR reviewability through tooling: textconv, `resonance review`, a CI comment.
-- **FR-069** [git] Git hooks for opted-in developers (`pre-commit`, `pre-push`, `post-*`), chained.
-- **FR-070** [git] Each worktree is its own root with its own open delta (OQ-08).
-- **FR-071** [git] Works within ordinary git workflows at every stage; dogfooded.
-- **FR-072** [git] The data model is not bent for git beyond snapshot plus deltas.
-- **FR-073** [git] Committed data is one snapshot plus delta files; graph = snapshot + deltas in fold order.
-- **FR-074** [git] Snapshot contents, canonical form and header.
-- **FR-075** [git] Delta contents: header, operations, file manifest (OQ-02).
-- **FR-076** [git] Unique, time-sortable delta names; sealed deltas are immutable.
-- **FR-077** [git] The open-delta lifecycle; sealing on commit.
-- **FR-078** [git] Deltas accumulate per branch; merge, rebase and cherry-pick are safe.
-- **FR-079** [git] `.resonance/.gitattributes` and `README.md` for hold-outs.
-- **FR-154** [git] Compaction every N deltas on trunk (OQ-17).
-- **FR-155** [git] Trunk-only compaction by default.
-- **FR-156** [git] Resonance never creates commits on its own; `compact --commit`.
-- **FR-157** [git] Snapshots keep folded operations; mechanical repair of colliding compactions.
-- **FR-158** [git] Pruning of folded operations (OQ-16).
-- **FR-159** [git] Detect reverts of compacted deltas and offer inverse operations.
-- **FR-170** [adoption] Every stage supported indefinitely.
-- **FR-171** [adoption] `status` shows the stage, participation and governed paths.
-- **FR-172** [adoption] Explicit commands: `share`, `unshare`, joining via `init`, `enforce`, `leave`, `eject`.
-- **FR-173** (remainder) [adoption] Reversibility for `leave`, `unshare` and stage changes; Markdown export option.
-- **FR-174** [adoption] Hold-outs work with plain git; taking either side of a `.resonance/` conflict is safe.
-- **FR-175** [adoption] Both data paths at every stage.
-- **FR-176** (stage 2 part) [adoption] Consistency checks: blocking for opted-in developers; CI reports at stage 2.
-- **FR-177** [adoption] Never overwrite existing hooks or hook managers.
-- **FR-178** [adoption] Path-scoped governance (OQ-20).
-- **FR-179** [adoption] No tracked file outside `.resonance/` modified without confirmation.
-- **FR-182** [offline] Offline uses the same snapshot-and-delta structure as committed stages, so sharing is a move (MVP-010's operation log is the seam).
-- **FR-185** [offline] `resonance share`: privacy review, fresh snapshot, exclusion moved.
-- **FR-186** [offline] Joining merges the offline graph in as a delta with no duplicates.
-- **FR-187** [offline] Offline in a shared repository: read the committed graph, never write back, private until consent.
-- **FR-197** [recovery] Rebuild the whole graph from git alone (stage 2+).
-- **FR-203** [adoption] Opted-in developers' operations must be consistent with the graph; others are never blocked.
-- **NFR-012** [nfr] Easy review of committed graph data; a local-only annotation class.
-- **NFR-042** [nfr] At most one new `graph.db` blob per compaction.
-- **S11** [git] Merge branches that both changed the graph.
-- **S12** [git] A fresh clone rebuilds a complete graph from git.
-- **S16** [offline] Share the graph (offline to stage 2).
-- **S17** [adoption] A hold-out teammate.
-- **S19** [git] Compaction with branches in flight.
-- **S20** [adoption] Step up and step back down.
-- **S24** [adoption] An opted-in developer's bypass is caught before push and repaired.
+- **FR-010** (remainder) [truth] Hold the bytes of large and binary files for opted-in developers, so that they can be restored from the graph too (MVP-016 revisited).
+- **FR-050** (remainder) [projection] The projection writer's atomic writes for graph-to-disk code mutations (with B10).
+- **FR-066** (remainder) [git] An optional CI step that posts the `resonance review` summary on the pull request (with the CI wrappers of §13.3).
+- **FR-071** (remainder) [git] Resonance's own repository developed this way, adopting Resonance through the same stages (with B17's self-dogfood).
+- **FR-158** [git] Pruning of folded operations from snapshots (OQ-16). The MVP never prunes.
+- **FR-170** (remainder) [adoption] Stage 3 (with B11).
+- **FR-172** (remainder) [adoption] `resonance enforce on|off` (B11) and quiet setup (B9).
+- **FR-174** (remainder) [adoption] At stage 3, bookkeeping for hold-outs' pull requests, by their quiet agent or a CI bot (with B9 and B11).
+- **FR-175** (remainder) [adoption] The graph → git path for graph-originated file content: projecting files to the working tree (with B10).
 
 ## B7 — Agent stewardship
-*FR-215 and FR-216 assume committed deltas (B6); FR-213 and the offline variant can come earlier.*
+*Moved into the MVP (mvp.md, "3.10 Agent integration"; MVP-038, MVP-039).*
 
-- **FR-130** (remainder) [agent] Stewardship tools over MCP: conventions, checks, review, recovery.
-- **FR-132** (remainder) [agent] A section in the shared instructions file from stage 2, with confirmation.
-- **FR-210** (remainder) [agent] Onboarding incomplete without the kit; `status` and `doctor` report un-onboarded or stale kits.
-- **FR-211** (remainder) [agent] Full kit contents: workflows and prohibitions.
-- **FR-212** (remainder) [agent] The static part (instructions-file section or skill), plus a `conventions` tool.
-- **FR-213** [agent] Placement by stage; offline variant; text safe for all participation types.
-- **FR-214** [agent] Harness support, kit versioning, `resonance agent update` (OQ-21).
-- **FR-215** [agent] Duties before commit (`resonance check --staged`).
-- **FR-216** [agent] Duties before a PR (`resonance check --range`, review summary).
-- **FR-217** [agent] Duties during pulls, merges and rebases.
-- **FR-218** [agent] Prohibitions (no `--no-verify`, no writes to `.resonance/`, and so on).
-- **FR-220** [agent] Communication and declining with alternatives.
-- **FR-221** [agent] Every convention backed by a deterministic check.
-- **FR-222** [agent] Agent-side harness hooks gating git commands.
-- **FR-223** [agent] Agents are the first line; hooks, CI and recovery back them up.
-- **FR-224** [agent] Measure kit effectiveness.
-- **FR-225** [agent] An orientation at the end of onboarding.
-- **NFR-046** [nfr] Over 95% of agent commits pass checks on the first attempt.
-- **S22** [agent] Onboard the agent and let it steward a change.
+- **FR-214** (remainder) [agent] First-class kits for harnesses beyond Claude Code (OQ-21).
+- **FR-224** (remainder) [agent] Aggregated reporting of the kit's effectiveness, with the metrics of B16 (NFR-021).
+- **NFR-046** (remainder) [nfr] The target: over 95% of agent commits pass checks on the first attempt, as an acceptance gate.
 
 ## B8 — Guardrails and user communication
 - **FR-013** (remainder) [guardrails] Parse git configuration; `doctor` reverts unparseable core files (git configs and similar) to known-good versions.
@@ -199,7 +96,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 ## B11 — Enforcement (stage 3)
 *Depends on B6, B7 and B9.*
 
-- **FR-176** (stage 3 part) [adoption] Stage 3 CI rejection, an exception path, absorbing what slips through (C8).
+- **FR-176** (remainder) [adoption] Stage 3 CI rejection, an exception path, absorbing what slips through (C8).
 - **Roadmap Phase 7** [adoption] `resonance enforce`, team-wide adoption-health reporting.
 
 ## B12 — Verification and impact
@@ -226,9 +123,18 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **FR-241** [parallel] *Gated.* Write-back only when parallel nodes carry enough information for exact edits of primary nodes (OQ-24).
 
 ## B14 — IDE
+*JetBrains is the intended primary interactive surface for Resonance (FR-141, decided); the TUI stays deliberately simple until then.*
+
 - **FR-140** [ide] Works fully without an IDE plugin (already true; kept as a constraint).
-- **FR-141** [ide] An IntelliJ plugin first.
-- **FR-142** [ide] Gutter markers, navigation, an annotation UI, stale and orphan warnings, unverified requirements.
+- **FR-141** [ide] A JetBrains (IntelliJ platform) plugin first; the intended primary interactive surface.
+- **FR-142** [ide] Gutter markers, navigation, an annotation UI, stale and orphan warnings, unverified requirements, spec-item editing and the change log, and architectural summaries (FR-280).
+
+## B19 — TUI iteration 2: architectural summaries
+*Builds on the MVP's TUI (mvp.md, "3.19"). Naive linking is the starting point; agent-written summaries make the code behind a spec item understandable at an architectural level.*
+
+- **FR-280** [tui] For the selected spec item, present an architectural-level summary of the code linked to it.
+- **FR-281** [tui] Realization summaries are `Annotation`s of kind `summary` on the spec item, recording the code and hashes they describe, and go stale when either changes.
+- **FR-282** [tui] The agent kit makes writing and refreshing summaries part of implementing a spec item, and agents can be asked for one.
 
 ## B15 — Regeneration workflows (roadmap Phase 6)
 - **S5 / S7 end to end** [model] A requirement change drives agent regeneration; `realizes` and `satisfies` links recomputed and re-verified.
@@ -252,19 +158,19 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **OQ-15** [nfr] License.
 
 ## B18 — The binary's remaining modes, and packaging
-*Modes arrive with the increments that need them (the daemon and registry arrived with B1; plumbing comes with B6 and B7, quiet mode with B9). Release packaging is needed before the first users outside the project.*
+*Modes arrive with the increments that need them (the daemon and registry arrived with B1, the TUI and plumbing with the move of B3–B7; quiet mode comes with B9). Release packaging is needed before the first users outside the project.*
 
-- **FR-250** (remainder) [binary] Quiet and plumbing modes in the same binary (with B6, B7, B9).
-- **FR-253** (remainder) [binary] Exit codes `3` and `4`; user-level configuration; `--dry-run` everywhere.
+- **FR-250** (remainder) [binary] Quiet mode in the same binary (with B9).
+- **FR-253** (remainder) [binary] User-level configuration (`~/.config/resonance/config.toml`) in the precedence order.
 - **FR-254** (remainder) [binary] Versioned JSON output schemas; semantic-versioning policy for the command surface.
-- **FR-255** (remainder) [binary] Embedded hook shims, `.resonance/` templates, quiet bootstrap and import-format schema.
-- **FR-256** (remainder) [binary] Delta, snapshot and import-format versions in `version --json`.
+- **FR-255** (remainder) [binary] Embedded quiet bootstrap and import-format schema.
+- **FR-256** (remainder) [binary] The parallel-graph import-format version in `version --json` (with B13).
 - **FR-257** [binary] Quiet mode as a restricted capability set of the same binary (with B9).
 - **FR-260** (remainder) [packaging] Release targets (macOS arm64/x86_64, Linux x86_64/aarch64, musl static).
 - **FR-261** (remainder) [packaging] GitHub Releases, crates.io, Homebrew tap; later an official formula, distribution packages, a CI container image.
 - **FR-262** [packaging] Checksums and signatures; reproducible release builds in CI.
 - **FR-263** (remainder) [packaging] `uninstall --user` (FR-266).
-- **FR-264** [packaging] Semantic versioning; minimum binary version recorded in committed configuration (stage 2+); exact pin for quiet mode.
+- **FR-264** (remainder) [packaging] Exact version pin for quiet mode (with B9).
 - **FR-265** [packaging] Upgrades through the install channel; daemons restart on new versions.
 - **FR-266** [packaging] `resonance uninstall --user`.
 - **§13.3** [packaging] Later deliverables outside the binary: CI wrappers, IntelliJ plugin, agent kit as a harness plugin, graph adapters.

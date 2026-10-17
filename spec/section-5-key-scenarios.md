@@ -117,3 +117,9 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 **S24 — An opted-in developer slips.** A Resonance user commits with `--no-verify` while their daemon is down.
 - AC1: Before the push leaves the machine, Resonance detects that the commit is inconsistent with the graph and explains how (C8).
 - AC2: The agent repairs it by amending or adding a follow-up delta, with the developer's confirmation, and nothing is lost (FR-192, FR-203).
+
+**S25 — A person edits the spec; the agent picks it up.** A developer changes requirements in `resonance tui` (or in an imported spec document), and later asks their agent to carry on.
+- AC1: Each change is an ordinary graph change attributed to the person, and appears in the change log as one concise entry per item (FR-274, FR-275).
+- AC2: The agent reads the entries after its remembered cursor, acts on each, and removes the handled ones (FR-276).
+- AC3: Before the agent commits, pushes or pulls, the change log is empty, or the developer has told the agent to proceed anyway (FR-277).
+- AC4: Retiring an item in the TUI never deletes it, and editing an imported item opens the source document at the right line (FR-271, FR-272).

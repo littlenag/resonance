@@ -43,30 +43,31 @@ This section is the reference for the binary: what it is responsible for, how it
 
 ### 11.3 Command reference
 
-The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both when the MVP provides a narrower form that a later increment completes.
+The **Available** column gives *MVP*, or a backlog increment (B8–B19), or both when the MVP provides a narrower form that a later increment completes.
 
 **Setup and lifecycle**
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `init` | Offline: create `.resonance/`, exclude it locally, run the first reconcile, and offer agent onboarding. In a shared repository: join the committed graph as a Resonance user. | FR-172, FR-180 | MVP (offline); B6 (join) |
-| `status` | Counts, repair list, and later the stage, participation, unresolved divergences and governed paths. | FR-171, FR-238 | MVP; B6 |
+| `init` | Offline: create `.resonance/`, exclude it locally, run the first reconcile, and offer agent onboarding. In a shared repository: join the committed graph as a Resonance user. | FR-172, FR-180 | MVP |
+| `status` | Counts, repair list, and later the stage, participation, unresolved divergences and governed paths. | FR-171, FR-238 | MVP |
 | `doctor` | Health of daemons and the registry, adoption health, integrity checks, version skew. | FR-096, FR-207 | MVP; B8 |
 | `reconcile [--full]` | Bring the graph in step with the disk now. | FR-047 | MVP |
 | `rebuild-derived` | Drop and rebuild derived data. | FR-023 | MVP |
-| `rebuild` | Rebuild authored state by folding the operation log. | FR-150 | B5 |
+| `rebuild` | Rebuild authored state by folding the operation log. | FR-150 | MVP |
 | `export [--out]` | Engine-neutral export of authored and identity data. | FR-166 | MVP |
-| `restore <file>` | Restore authored and identity data from an engine-neutral export. | FR-166 | B5 |
-| `backup` | Local backup outside the repository; restore when `.resonance/` has gone missing. | FR-184 | B3 |
-| `value` | Local report of what Resonance did for the developer, and the upgrade path. | FR-240 | B3 |
-| `share` / `unshare` | Move between offline (stage 1) and shared (stage 2). | FR-185, FR-172 | B6 |
-| `leave` | Stop being a Resonance user, without loss. | FR-172, FR-173 | B6 |
+| `restore <file>` | Restore authored and identity data from an engine-neutral export. | FR-166 | MVP |
+| `backup` | Local backup outside the repository; restore when `.resonance/` has gone missing. | FR-184 | MVP |
+| `value` | Local report of what Resonance did for the developer, and the upgrade path. | FR-240 | MVP |
+| `share` / `unshare` | Move between offline (stage 1) and shared (stage 2). | FR-185, FR-172 | MVP |
+| `leave` | Stop being a Resonance user, without loss. | FR-172, FR-173 | MVP |
 | `enforce on\|off` | Move between shared (stage 2) and enforced (stage 3). | FR-172 | B11 |
 | `eject` | Export, then remove Resonance from the repository. | FR-173 | MVP |
-| `agent install` | Install the agent kit for the developer's harness (local scope in offline mode). | FR-132, FR-210 | MVP (MCP only); B7 |
-| `agent update` / `agent status` | Refresh the kit; report a stale or missing kit. | FR-214 | B7 |
+| `agent install` | Install the agent kit for the developer's harness (local scope in offline mode). | FR-132, FR-210 | MVP |
+| `agent update` / `agent status` | Refresh the kit; report a stale or missing kit. | FR-214 | MVP |
 | `quiet setup` | Opt in to quiet participation locally. | FR-232 | B9 |
 | `version [--json]` | Binary version, supported schema and delta formats, MCP protocol version. | FR-256 | MVP |
+| `tui` | Terminal UI over spec items: list, view, edit, add, retire; the change log. | FR-270–FR-279 | MVP |
 
 **Intent**
 
@@ -75,7 +76,7 @@ The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both
 | `import <paths…>` | Import requirement documents and keep them in sync. | FR-122, MVP-011 | MVP |
 | `req add\|edit\|retire` | Author requirements. | FR-120 | MVP |
 | `decision add\|edit` | Author decisions. | FR-120 | MVP |
-| `design …`, `constraint …`, `req supersede` | Further intent types and lifecycle. | §6.2, FR-120 | B4 |
+| `design …`, `constraint …`, `req supersede` | Further intent types and lifecycle. | §6.2, FR-120 | MVP |
 
 **Code units and tests**
 
@@ -112,22 +113,30 @@ The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both
 | --- | --- | --- | --- |
 | `test <req\|test\|edge>` | Run linked tests; record evidence. | FR-135 | MVP |
 
+**Change log**
+
+| Command | Purpose | Spec | Available |
+| --- | --- | --- | --- |
+| `changes [--since <seq>]` | List pending change-log entries, optionally after a remembered sequence number. | FR-274–FR-276 | MVP |
+| `changes show <seq>` | The full before and after of one entry. | FR-275 | MVP |
+| `changes done <seq>… [--note TEXT]` | Remove handled entries. | FR-276 | MVP |
+
 **Recovery**
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `recover` | List unresolved divergences and apply resolutions. | FR-196 | B3 |
-| `recover undo <id>` | Undo an automatic resolution. | FR-192 | B3 |
+| `recover` | List unresolved divergences and apply resolutions. | FR-196 | MVP |
+| `recover undo <id>` | Undo an automatic resolution. | FR-192 | MVP |
 
 **Git, review and CI**
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `check --staged` | Pre-commit consistency check, with suggested fixes. | FR-215, FR-221 | B6, B7 |
-| `check --range <base>..HEAD` | Pre-PR and CI consistency check. | FR-176, FR-216 | B6, B7 |
-| `review <range>` | Readable summary of graph changes for a pull request. | FR-066 | B6 |
-| `compact [--commit]` | Fold sealed deltas into a new snapshot (trunk only by default). | FR-154–FR-156 | B6 |
-| `show-delta <file>` | Readable rendering of a delta file; also used as git's textconv driver. | FR-066 | B6 |
+| `check --staged` | Pre-commit consistency check, with suggested fixes. | FR-215, FR-221 | MVP |
+| `check --range <base>..HEAD` | Pre-PR and CI consistency check. | FR-176, FR-216 | MVP |
+| `review <range>` | Readable summary of graph changes for a pull request. | FR-066 | MVP |
+| `compact [--commit]` | Fold sealed deltas into a new snapshot (trunk only by default). | FR-154–FR-156 | MVP |
+| `show-delta <file>` | Readable rendering of a delta file; also used as git's textconv driver. | FR-066 | MVP |
 
 **Parallel graphs**
 
@@ -149,9 +158,9 @@ The **Available** column gives *MVP*, or a backlog increment (B1–B17), or both
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `hook <git-hook-name> [args…]` | Entry point for every git hook Resonance installs; chained after existing hooks. | FR-069, FR-177 | B6 |
-| `agent-hook <event>` | Entry point for agent-harness hooks that gate the agent's git commands. | FR-222 | B7 |
-| `git-driver merge <base> <ours> <theirs>` | Merge driver for `graph.db`: mechanical union-and-refold. | FR-157 | B6 |
+| `hook <git-hook-name> [args…]` | Entry point for every git hook Resonance installs; chained after existing hooks. | FR-069, FR-177 | MVP |
+| `agent-hook <event>` | Entry point for agent-harness hooks that gate the agent's git commands. | FR-222 | MVP |
+| `git-driver merge <base> <ours> <theirs>` | Merge driver for `graph.db`: mechanical union-and-refold. | FR-157 | MVP |
 
 ### 11.4 Conventions shared by all commands
 

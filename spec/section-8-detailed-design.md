@@ -199,8 +199,8 @@ The feature branch accumulates its own deltas (d2, d3, d5). Meanwhile `main` com
 
 - **FR-080** The watcher, ingest, projection writer, git monitor and query API for a repository MUST run under one owner (P1), because disk ingest and API mutations must be serialized against each other and self-write suppression requires knowing what the daemon wrote. [Proposed]
 - **FR-081** Queries SHOULD be served by the same owner, so that they can honor read-your-writes (§8.8). Direct read-only access to the store file MAY be offered for tools that accept stale answers, but only as an engine-specific, unstable capability (FR-168). [Proposed]
-- **FR-082** A daemon MUST take an exclusive lock on `.resonance/daemon.lock` at start. The lock, not the registry, guarantees one daemon per repository. [Proposed]
-- **FR-083** A daemon MUST write `.resonance/daemon.json` with its endpoint, process ID, Resonance version, schema version and start time, so clients can find it without the registry. [Proposed]
+- **FR-082** A daemon MUST take an exclusive lock on `.resonance/local/daemon.lock` at start. The lock, not the registry, guarantees one daemon per repository. [Proposed]
+- **FR-083** A daemon MUST write `.resonance/local/daemon.json` with its endpoint, process ID, Resonance version, schema version and start time, so clients can find it without the registry. [Proposed]
 - **FR-084** Clients MUST start a daemon on demand when none is running. Daemons SHOULD exit after a configurable idle period. [Proposed]
 - **FR-085** The process layout MUST allow the per-repository component to run either as its own process or hosted alongside others in a shared process later, without design changes. (Originally motivated by a possible JVM implementation. Resonance is implemented in Rust (OQ-11), so per-process cost is small, but shared hosting stays possible.) [Proposed]
 
@@ -301,8 +301,8 @@ Consistent with §2.5, Resonance core does not parse source code. Richer structu
 ### 8.12 IDE integration (later phase)
 
 - **FR-140** The system MUST work fully with no IDE plugin, because the working tree is ordinary files. [Decided in substance: G5]
-- **FR-141** The first IDE plugin SHOULD target IntelliJ. [Proposed]
-- **FR-142** The plugin SHOULD provide: gutter markers linking code to requirements and tests; navigation between requirement, code and test; an annotation and call-out UI; warnings for stale and orphaned links; and a view of requirements with no verified test. [Proposed]
+- **FR-141** The first IDE plugin MUST target JetBrains IDEs (IntelliJ platform). It is the intended primary interactive surface for Resonance: JetBrains offers a much better UX model for it than a terminal, so richer interaction is designed for the plugin, and the TUI (§8.22) stays deliberately simple. [Decided]
+- **FR-142** The plugin SHOULD provide: gutter markers linking code to requirements and tests; navigation between requirement, code and test; an annotation and call-out UI; warnings for stale and orphaned links; a view of requirements with no verified test; editing of spec items and the change log (§8.22); and the architectural summaries of FR-280. [Proposed]
 
 ### 8.13 Compatibility with build systems, IDEs and source control
 
@@ -462,7 +462,7 @@ Onboarding Resonance explicitly includes onboarding the developer's agent. Befor
   - **Concepts.** Graph as source of truth; the layers; link statuses; stage, participation and authority, including the developer's obligation to stay consistent with the graph once they have opted in (§8.16).
   - **Conventions.** What must be true of every commit and pull request (FR-215, FR-216).
   - **Operations.** The MCP tools and CLI commands, and when to prefer each over plain file and git tools.
-  - **Workflows.** Commit, branch, pull request, pull, merge, rebase, compaction and recovery, each step by step.
+  - **Workflows.** Commit, branch, pull request, pull, merge, rebase, compaction and recovery, each step by step, and consuming the change log of people's spec edits (FR-276, FR-277).
   - **Prohibitions.** FR-218.
 - **FR-212** The kit MUST be delivered in layers, so that the agent's knowledge cannot drift from the installed Resonance version or the repository's current stage. A short static part (an instructions-file section or skill) tells the agent that Resonance is present, lists the few rules that must hold even if the daemon is unreachable, and says where to get the rest. The detailed, stage-specific and version-matched conventions are served dynamically by the MCP adapter (as server instructions and a `conventions` tool). [Proposed]
 - **FR-213** Kit placement follows the stage. In offline mode the kit lives only in local configuration, and it is an *offline* variant: it carries the repair duties (FR-238, FR-239) and the invisibility rules (FR-189) in place of the commit and pull request duties of FR-215 and FR-216, which concern committed Resonance data. From stage 2 onward a short section MAY be added to the shared agent instructions file, with confirmation (FR-179). That shared text MUST tell the agent how to determine, from local configuration rather than by guessing, which case applies, and what to do in each: a Resonance user's agent has the full duties; a quiet participant's agent has the bookkeeping duties of §8.21; any other agent works normally and never edits anything under `.resonance/`. [Proposed]
@@ -527,3 +527,39 @@ Developers who are not using Resonance are allowed to commit outside it and to p
 - **FR-235** Quiet bookkeeping MUST fail safe. If fetching or running the CLI fails, the agent proceeds normally and mentions the failure once; the commit simply becomes an outside commit (C2). Resonance users' daemons MUST verify a quiet delta's manifest against its commit and treat a mismatch as C2. By default, quiet deltas carry only manifests and identity operations, never authored intent (OQ-22). [Proposed]
 - **FR-236** At stage 3, the same bookkeeping MAY be added to a non-Resonance developer's pull request by a CI bot running the quiet CLI, so that the pull request passes the consistency check without the developer opting in. [Proposed]
 - **FR-237** A quiet participant can become a Resonance user at any time with `resonance init`. From then on Resonance is their source of truth (FR-203), and the full agent kit replaces the quiet one. They can also drop back to being a hold-out by removing the local setting. [Proposed]
+
+### 8.22 The spec TUI and the change log
+
+People need a direct way to work with the spec held in the graph, and agents need to learn promptly what people changed. Resonance therefore offers a deliberately simple terminal UI over spec items, and records a concise **change log** of people's changes that agents consume and clear. The JetBrains plugin (FR-141) is the intended primary interactive surface; the TUI is a small, dependable tool until then. [Decided]
+
+**The TUI**
+
+- **FR-270** `resonance tui` MUST provide a terminal UI over **spec items** (requirements and decisions; designs and constraints as those types exist). It lists them, with filtering by type, status and text; shows one item's details, including its links with their statuses, its latest evidence and its source location; lets the user edit an item's fields; adds new items; and removes items. It uses the same API as the CLI and MCP (FR-251), served by the daemon, so its changes are ordinary edit-algebra operations attributed to the person using it (provenance `human`). [Decided: the TUI and its scope. Proposed: details]
+- **FR-271** Removing a spec item MUST retire it, never delete it (FR-003). Retiring asks for confirmation and says how many links the item has. [Proposed]
+- **FR-272** Items imported from a source document (FR-122) remain owned by that document. Editing or retiring an imported item from the TUI MUST open the developer's editor (`$VISUAL` or `$EDITOR`) at the item's source line, and the change reaches the graph through re-import. Graph-native items are edited in place. Resonance writes no project files for TUI edits (FR-014). Writing edits back into source documents is [Open] (OQ-26). [Proposed]
+- **FR-273** New graph-native items need a key. The TUI MUST suggest the next free key for the chosen prefix (for example, the next unused `FR-` number), accept a different one, and refuse a key that already exists. A key that later collides with an imported key goes on the repair list. [Proposed]
+- **FR-279** The TUI MUST stay deliberately simple: listing, viewing, editing, adding and retiring spec items, the change log, and (later) architectural summaries (FR-280). Richer interaction belongs in the JetBrains plugin (FR-141). [Decided]
+
+**The change log**
+
+- **FR-274** Resonance MUST keep a concise **change log** of changes to spec items made by people, stored in the graph store. A change is logged whatever the surface: the TUI, the CLI, or an edit to an imported source document. Changes to spec items that arrive from teammates through git (a pull or merge that brings in their deltas or source edits) are logged as well. Changes made by agents are not logged by default (`changes.includeAgents`, OQ-27). [Decided: a change log of people's changes. Proposed: scope]
+- **FR-275** Each entry MUST be concise: a sequence number, a time, the actor, the item (key and short title), the kind of change (`added`, `edited`, `retired`, `restored`, `status`), the fields changed, and a one-line summary. The full before and after is available on request (`resonance changes show <seq>`). Sequence numbers increase monotonically and are never reused. A newer change to an item that already has a pending entry replaces that entry with a new one, carrying a new sequence number and summarizing both, so the log holds at most one entry per item. [Proposed]
+- **FR-276** Agents consume the log. The agent kit (§8.20) MUST instruct agents to:
+  - keep, in their own memory, the sequence number of the last entry they read;
+  - read entries after it (`resonance changes --since <seq>`, MCP `resonance_changes`) at the start of work and before git operations;
+  - act on each entry (implement, re-link, re-verify, or judge that nothing is needed);
+  - remove handled entries (`resonance changes done <seq>…`, MCP `resonance_changes_done`), optionally with a one-line note of what was done.
+
+  Removing an entry deletes it from the log only. The operations it summarized stay in the operation log and history, and the removal is itself recorded with its actor and note. If an agent's remembered cursor is lost, reading the whole log is still correct, because handled entries are gone. [Decided: a cursor kept by agents, handled entries removed. Proposed: commands]
+- **FR-277** **Empty before git operations.** As a general rule the change log SHOULD be empty before commits, pushes and pulls. It is enforced at these levels: [Decided: the rule. Proposed: enforcement]
+  - The agent kit makes it an agent duty, alongside FR-215 and FR-217.
+  - `resonance check` reports pending entries as an *attention* finding.
+  - The agent-side hooks (FR-222) stop the agent's own `git commit`, `git push` and `git pull` while entries are pending, unless the developer tells the agent to proceed.
+  - Git hooks for people only warn, because a person may deliberately commit spec changes before an agent implements them.
+- **FR-278** The change log is local to a working tree and never committed. It should be empty at commit time anyway, and teammates' changes reach each working tree through git and are logged there (FR-274). [Proposed]
+
+**Architectural summaries (a later TUI iteration)**
+
+- **FR-280** For the selected spec item, a later iteration of the TUI (and the JetBrains plugin) MUST present a summary, at an architectural level, of the code linked to it. Naive linking (`satisfies`, `verifies`) is where this starts, but it will not be the most helpful view. Agents author **realization summaries**: how the linked code behaves, why and how it satisfies the item, what was inferred beyond the item's text, and open questions. [Decided: the goal. Proposed: mechanism]
+- **FR-281** A realization summary is an `Annotation` of kind `summary` on the spec item, with agent provenance, that records the code units and content hashes it was written against. When the item or any of that code changes, the summary becomes stale (as edges do) and goes on the repair list for the agent to refresh. No new core node type is needed (§6.6). [Proposed]
+- **FR-282** The agent kit SHOULD make writing or refreshing a summary part of implementing or changing the code linked to a spec item, and agents MAY be asked for one on demand. [Proposed]

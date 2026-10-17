@@ -21,3 +21,4 @@ These **[Proposed]** items shape the rest of the design most. Confirming or reje
 17. Quiet onboarding: the bootstrap and pinning mechanism, and what quiet bookkeeping may write (§8.21, OQ-22).
 18. Code units as declared, textual anchors re-located by diff and quote matching, with the agent repairing what text cannot (§8.3, FR-032, FR-038).
 19. Parallel-graph mechanics: structural enforcement of read-only access, dangling cross-graph links (orphaned versus unresolved), freshness labeling, and the minimum conditions for write-back (FR-116–FR-119, FR-241).
+20. The change log's scope and mechanics: people's changes only, one pending entry per item, local and never committed, and agent hooks that gate git commands on an empty log while people's hooks only warn (FR-274–FR-278, OQ-27).

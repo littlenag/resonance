@@ -69,7 +69,7 @@ flowchart LR
 | **Sync and recovery** | Classifies every disagreement between git, the working tree and the graph using git evidence; applies authority rules; keeps the recovery journal; produces user-facing explanations (§8.18, §8.19). | [Decided] in substance; [Proposed] shape |
 | **Query and mutation API** | The separate API through which all graph-only information is reached. | [Decided] separate API; [Proposed] shape |
 | **Registry daemon** | System-wide; answers "which endpoint serves this directory" and monitors daemon health. Nothing else. | [Decided] |
-| **Clients** | CLI, MCP adapter for agents, IDE plugin later. | [Proposed] |
+| **Clients** | CLI, MCP adapter for agents, the spec TUI (§8.22, deliberately simple), and the JetBrains plugin later, the intended primary interactive surface (FR-141). | [Decided] TUI and JetBrains; [Proposed] shape |
 | **Agent kit** | Instructions, a skill and harness hooks installed into each developer's agent during onboarding, plus conventions served live by the MCP adapter. Makes the agent the first line of enforcement (§8.20). | [Decided] in substance; [Proposed] shape |
 
 **One binary** [Decided]: every component above that runs on a developer's or CI machine ships in the single `resonance` executable, as subcommands (§11). Packaging and distribution are in §13.
