@@ -161,10 +161,12 @@ fn counts(c: &Counts) -> String {
 }
 
 pub fn status(s: &StatusView) -> String {
-    let mut out = format!(
-        "Resonance in {} (offline mode: stage {}, participation {})\n",
-        s.root, s.stage, s.participation
-    );
+    let mode = match (s.stage.as_str(), s.participation.as_str()) {
+        ("1", _) => "offline mode, stage 1".to_string(),
+        (st, "user") => format!("shared graph, stage {st}; you have opted in"),
+        (st, _) => format!("offline over a shared graph, stage {st}"),
+    };
+    let mut out = format!("Resonance in {} ({mode})\n", s.root);
     if let Some(t) = &s.last_reconcile {
         let _ = writeln!(out, "Last reconciled: {t}");
     }
@@ -178,7 +180,51 @@ pub fn status(s: &StatusView) -> String {
     out.push('\n');
     out.push_str(&counts(&s.counts));
     out.push('\n');
+    out.push_str(&history(&s.history));
     out.push_str(&repair(&s.repair));
+    out
+}
+
+pub fn history(h: &resonance_core::api::HistoryStatus) -> String {
+    let mut out = String::new();
+    match &h.open_delta {
+        Some(p) => {
+            let _ = writeln!(
+                out,
+                "Open delta: {p} ({} operation(s), {} file(s) changed)",
+                h.open_operations, h.open_files
+            );
+        }
+        None => out.push_str("Open delta: empty\n"),
+    }
+    let _ = writeln!(
+        out,
+        "Sealed deltas: {}{}",
+        h.sealed,
+        if h.snapshot { "; snapshot present" } else { "" }
+    );
+    if !h.detached.is_empty() {
+        let _ = writeln!(
+            out,
+            "Detached pool: {} delta(s) whose commits were rewritten; see `resonance recover`",
+            h.detached.len()
+        );
+    }
+    if let Some(held) = &h.held {
+        let _ = writeln!(
+            out,
+            "Action required: .resonance/ changed unexpectedly at {} ({} operation(s) would be lost). The graph was kept as it was; run `resonance rebuild` to accept the change, or `resonance recover`.",
+            held.at, held.missing
+        );
+    }
+    if h.skipped > 0 {
+        let _ = writeln!(
+            out,
+            "{} operation(s) could not be applied by the last fold (see `resonance doctor`)",
+            h.skipped
+        );
+    }
+    out.push('\n');
     out
 }
 

@@ -8,6 +8,7 @@ pub mod api;
 pub mod daemon;
 pub mod error;
 pub mod export;
+pub mod history;
 pub mod ingest;
 pub mod intent;
 pub mod lifecycle;

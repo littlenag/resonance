@@ -6,7 +6,7 @@
 //! that is busy reconciling still reports liveness (FR-095).
 //!
 //! Read-your-writes (FR-102, MVP-020): before answering a request, the owner writes a sync
-//! cookie into `.resonance/cookies/` and answers only once the watcher has reported it and
+//! cookie into `.resonance/local/cookies/` and answers only once the watcher has reported it and
 //! every earlier change has been applied.
 
 pub mod client;
@@ -115,7 +115,7 @@ pub fn run(
         .read(true)
         .write(true)
         .open(runtime::lock_path(&repo))
-        .map_err(|e| Error::io("opening .resonance/daemon.lock", e))?;
+        .map_err(|e| Error::io("opening .resonance/local/daemon.lock", e))?;
     if lock.try_lock().is_err() {
         let pid = runtime::read_info(&repo.root)
             .map(|i| i.pid.to_string())
@@ -150,7 +150,7 @@ pub fn run(
         runtime::info_path(&repo),
         serde_json::to_string_pretty(&info)?,
     )
-    .map_err(|e| Error::io("writing .resonance/daemon.json", e))?;
+    .map_err(|e| Error::io("writing .resonance/local/daemon.json", e))?;
     runtime::add_known_root(&repo.root);
     eprintln!(
         "[{}] resonance daemon {} started for {} on {}",
@@ -221,7 +221,7 @@ pub fn run(
         let _ = fs::remove_file(runtime::info_path(&repo));
     }
     let _ = fs::remove_file(&endpoint);
-    let _ = fs::remove_dir_all(repo.resonance_dir().join("cookies"));
+    let _ = fs::remove_dir_all(repo.local_dir().join("cookies"));
     eprintln!("[{}] daemon exited", rfc_now());
     drop(lock);
     result
@@ -362,6 +362,8 @@ struct Owner {
     watch: Option<watch::Watch>,
     pending: BTreeSet<String>,
     full: bool,
+    /// Git or the delta history changed: catch up before anything else (MVP-029).
+    git_dirty: bool,
     first_pending: Option<Instant>,
     last_event: Option<Instant>,
     events_received: u64,
@@ -391,9 +393,12 @@ impl Owner {
             .git(&["rev-parse", "--absolute-git-dir"])
             .map(PathBuf::from)
             .unwrap_or_else(|_| repo.root.join(".git"));
-        let cookie_dir = repo.resonance_dir().join("cookies");
+        // Watched directories must exist (inotify cannot watch a directory before it exists).
+        let _ = fs::create_dir_all(repo.deltas_dir());
+        let cookie_dir = repo.local_dir().join("cookies");
         let _ = fs::remove_dir_all(&cookie_dir);
-        fs::create_dir_all(&cookie_dir).map_err(|e| Error::io("creating .resonance/cookies", e))?;
+        fs::create_dir_all(&cookie_dir)
+            .map_err(|e| Error::io("creating .resonance/local/cookies", e))?;
         let idle = opts.idle.unwrap_or(Duration::from_secs(
             engine.config.daemon.idle_seconds.max(1),
         ));
@@ -405,6 +410,7 @@ impl Owner {
             watch: None,
             pending: BTreeSet::new(),
             full: false,
+            git_dirty: false,
             first_pending: None,
             last_event: None,
             events_received: 0,
@@ -424,6 +430,11 @@ impl Owner {
             owner.cookie_dir.clone(),
             owner.git_dir.clone(),
             owner.git_dir.join("info"),
+            owner.git_dir.join("logs"),
+            owner.git_dir.join("refs").join("heads"),
+            repo.resonance_dir(),
+            repo.deltas_dir(),
+            repo.private_dir(),
         ];
         let sink_tx = tx.clone();
         match watch::Watch::start(
@@ -452,7 +463,7 @@ impl Owner {
     }
 
     fn publish(&mut self) {
-        if self.pending.is_empty() && !self.full {
+        if self.pending.is_empty() && !self.full && !self.git_dirty {
             // Nothing outstanding: every event received so far is accounted for.
             self.watermark = self.events_received;
         } else if self.git_lock_age().is_some_and(|a| a < GIT_LOCK_TIMEOUT) {
@@ -462,7 +473,8 @@ impl Owner {
         let mut s = self.shared.lock().expect("shared");
         s.health.ingest_watermark = self.watermark;
         s.health.events_received = self.events_received;
-        s.health.pending_events = self.pending.len() + usize::from(self.full);
+        s.health.pending_events =
+            self.pending.len() + usize::from(self.full) + usize::from(self.git_dirty);
         s.health.lag_ms = self
             .first_pending
             .map(|t| t.elapsed().as_millis() as u64)
@@ -488,7 +500,8 @@ impl Owner {
         self.publish();
 
         loop {
-            let busy = !self.pending.is_empty() || self.full || !self.waiting.is_empty();
+            let busy =
+                !self.pending.is_empty() || self.full || self.git_dirty || !self.waiting.is_empty();
             let timeout = if busy {
                 Duration::from_millis(10)
             } else {
@@ -512,7 +525,13 @@ impl Owner {
                 }
                 break;
             }
-            if !self.root.join(".resonance").join("graph.db").exists() {
+            if !self
+                .root
+                .join(".resonance")
+                .join("local")
+                .join("state.db")
+                .exists()
+            {
                 // `.resonance/` was removed (for example by `git clean -fdx`): nothing to serve.
                 eprintln!("[{}] .resonance/ disappeared; exiting", rfc_now());
                 for w in self.waiting.drain(..) {
@@ -605,6 +624,12 @@ impl Owner {
         }
     }
 
+    fn mark_git(&mut self) {
+        self.git_dirty = true;
+        self.first_pending.get_or_insert_with(Instant::now);
+        self.last_event = Some(Instant::now());
+    }
+
     fn mark_full(&mut self) {
         self.full = true;
         self.first_pending.get_or_insert_with(Instant::now);
@@ -620,9 +645,20 @@ impl Owner {
             return;
         }
         if let Ok(rel) = path.strip_prefix(&self.git_dir) {
-            // Only the exclude file matters: it changes which files are ingested.
+            // The exclude file changes which files are ingested.
             if rel == Path::new("info/exclude") {
                 self.mark_full();
+                return;
+            }
+            // HEAD, branches and the reflog: a git operation moved something (MVP-029).
+            let r = rel.to_string_lossy();
+            let moves = matches!(
+                r.as_ref(),
+                "HEAD" | "ORIG_HEAD" | "packed-refs" | "logs/HEAD" | "MERGE_HEAD"
+            ) || r.starts_with("refs/heads/")
+                || r.starts_with("logs/refs/heads/");
+            if moves {
+                self.mark_git();
             }
             return;
         }
@@ -641,6 +677,18 @@ impl Owner {
         if rel == ".resonance/config.toml" {
             let _ = self.engine.reload_config();
             self.mark_full();
+            return;
+        }
+        let history_file = rel == ".resonance/graph.db"
+            || (rel.starts_with(".resonance/deltas/")
+                || rel.starts_with(".resonance/local/private/"))
+                && rel.ends_with(".delta");
+        if history_file {
+            // The delta history changed (a git operation, or by hand): catch up, unless it is
+            // the open delta exactly as the daemon wrote it (FR-044).
+            if !self.engine.is_own_write(path) {
+                self.mark_git();
+            }
             return;
         }
         if rel.starts_with(".resonance/")
@@ -678,7 +726,7 @@ impl Owner {
     /// Apply pending changes once they have settled, or right away when `now` (a request is
     /// waiting). Changes made under `.git/index.lock` wait for the git command to finish.
     fn maybe_apply(&mut self, now: bool) {
-        if self.pending.is_empty() && !self.full {
+        if self.pending.is_empty() && !self.full && !self.git_dirty {
             return;
         }
         let settled = self.last_event.is_none_or(|t| t.elapsed() >= DEBOUNCE);
@@ -694,6 +742,7 @@ impl Owner {
             self.set_state("degraded");
         }
         let full = std::mem::take(&mut self.full);
+        self.git_dirty = false;
         let paths: Vec<String> = std::mem::take(&mut self.pending).into_iter().collect();
         let through = self.events_received;
         let result = if full {
@@ -744,7 +793,7 @@ impl Owner {
                 self.mark_full();
             }
             // Everything that happened before the cookie must be applied first (MVP-020).
-            if !self.pending.is_empty() || self.full {
+            if !self.pending.is_empty() || self.full || self.git_dirty {
                 let git_wait = self.git_lock_age().is_some_and(|a| a < GIT_LOCK_TIMEOUT);
                 if git_wait && since.elapsed() < GIT_LOCK_TIMEOUT {
                     return;
@@ -759,7 +808,7 @@ impl Owner {
                 } else {
                     self.maybe_apply(true);
                 }
-                if !self.pending.is_empty() || self.full {
+                if !self.pending.is_empty() || self.full || self.git_dirty {
                     return;
                 }
             }
@@ -778,6 +827,7 @@ impl Owner {
     /// Apply pending changes now, regardless of `.git/index.lock`.
     fn apply_now(&mut self) {
         let full = std::mem::take(&mut self.full);
+        self.git_dirty = false;
         let paths: Vec<String> = std::mem::take(&mut self.pending).into_iter().collect();
         let through = self.events_received;
         let result = if full {

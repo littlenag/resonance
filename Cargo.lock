@@ -653,6 +653,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "resonance-store-memory"
+version = "0.1.0"
+dependencies = [
+ "resonance-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "resonance-store-sqlite"
 version = "0.1.0"
 dependencies = [

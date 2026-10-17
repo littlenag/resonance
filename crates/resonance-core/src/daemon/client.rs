@@ -1,7 +1,7 @@
 //! Clients of the daemon: find it, start it on demand, and send it calls (FR-083, FR-084,
 //! FR-252).
 //!
-//! A client finds the daemon through `.resonance/daemon.json` (no registry needed, S14), or
+//! A client finds the daemon through `.resonance/local/daemon.json` (no registry needed, S14), or
 //! at the socket path computed from the repository root. If none answers, it starts
 //! `resonance daemon --foreground` as a detached process and waits for it (P4). A daemon from
 //! a different build of `resonance` is asked to stop and replaced, so that an upgraded binary

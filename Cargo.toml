@@ -4,6 +4,7 @@ members = [
     "crates/resonance-core",
     "crates/resonance-store-sqlite",
     "crates/resonance-cli",
+    "crates/resonance-store-memory",
 ]
 
 [workspace.package]
@@ -16,6 +17,7 @@ publish = false   # license is still open (OQ-15); crates.io comes later (§13.1
 [workspace.dependencies]
 resonance-core = { path = "crates/resonance-core" }
 resonance-store-sqlite = { path = "crates/resonance-store-sqlite" }
+resonance-store-memory = { path = "crates/resonance-store-memory" }
 
 # Third-party dependencies (MVP-006), pinned here and inherited by the crates.
 anyhow = "1.0.104"

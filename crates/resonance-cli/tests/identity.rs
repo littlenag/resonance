@@ -10,7 +10,7 @@ use resonance_store_sqlite::SqliteStore;
 use serde_json::Value;
 
 fn op_kinds(repo: &TestRepo) -> Vec<String> {
-    let mut store = SqliteStore::open(&repo.path().join(".resonance/graph.db")).unwrap();
+    let mut store = SqliteStore::open(&repo.path().join(".resonance/local/state.db")).unwrap();
     store.migrate().unwrap();
     store
         .ops_after(0, 1_000_000)

@@ -153,6 +153,81 @@ pub fn rebuild_derived(ctx: &Ctx) -> Result<()> {
     })
 }
 
+pub fn rebuild(ctx: &Ctx) -> Result<()> {
+    let report: ReconcileReport = ctx.run("rebuild", json!({}))?;
+    ctx.emit(&report, |r| {
+        format!(
+            "Re-folded the graph from its snapshot and deltas.\n{}",
+            render::reconcile(r)
+        )
+    })
+}
+
+pub fn restore(ctx: &Ctx, file: &std::path::Path) -> Result<()> {
+    let path = if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        ctx.cwd.join(file)
+    };
+    let jsonl = fs::read_to_string(&path)
+        .map_err(|e| Error::io(format!("reading {}", path.display()), e))?;
+    let report: resonance_core::api::RestoreReport = ctx.run("restore", json!({"jsonl": jsonl}))?;
+    ctx.emit(&report, |r| {
+        format!(
+            "Restored {} operation(s) from {}; skipped {} for things that already exist.\n",
+            r.applied,
+            path.display(),
+            r.skipped
+        )
+    })
+}
+
+pub fn backup(ctx: &Ctx, restore: bool, from: Option<PathBuf>, list: bool) -> Result<()> {
+    let repo = Repo::discover(&ctx.cwd)?;
+    let home = super::home_dir();
+    if list {
+        let dir = lifecycle::backups_dir(&repo, &home);
+        let mut all: Vec<String> = fs::read_dir(&dir)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok().map(|e| e.path().display().to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        all.sort();
+        return ctx.emit(&all, |all| {
+            if all.is_empty() {
+                format!("No backups in {}.\n", dir.display())
+            } else {
+                all.iter().map(|p| format!("{p}\n")).collect()
+            }
+        });
+    }
+    if restore {
+        let from = match from {
+            Some(f) => f,
+            None => lifecycle::latest_backup(&repo, &home).ok_or_else(|| {
+                Error::NotFound(
+                    "a backup of this repository (see `resonance backup --list`)".into(),
+                )
+            })?,
+        };
+        lifecycle::restore_backup(&repo, &from)?;
+        return ctx.emit(&json!({"restoredFrom": from}), |_| {
+            format!(
+                "Restored .resonance/ from {}. The next command brings it up to date.\n",
+                from.display()
+            )
+        });
+    }
+    if !repo.is_initialized() {
+        return Err(Error::NotInitialized);
+    }
+    let dest = lifecycle::backup(&repo, &home, "")?;
+    ctx.emit(&json!({"backup": dest}), |_| {
+        format!("Backed up .resonance/ to {}.\n", dest.display())
+    })
+}
+
 pub fn version(ctx: &Ctx) -> Result<()> {
     ctx.emit(&version_info(), render::version)
 }

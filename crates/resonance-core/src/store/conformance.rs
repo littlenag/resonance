@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::{
     Direction, EdgeQuery, FileRecord, GraphScope, GraphStore, GraphWrite, NodeQuery,
-    SCHEMA_VERSION, Traversal, meta,
+    SCHEMA_VERSION, Snapshot, SnapshotMeta, Traversal, meta,
 };
 use crate::error::{Error, Result};
 use crate::model::{Edge, EdgeType, Layer, LinkStatus, Node, NodeType, Props};
@@ -34,6 +34,9 @@ pub const CHECKS: &[(&str, Check)] = &[
     ("traversal", check_traversal),
     ("clear_layer", check_clear_layer),
     ("integrity", check_integrity),
+    ("meta_prefix", check_meta_prefix),
+    ("clear_graph", check_clear_graph),
+    ("snapshots", check_snapshots),
 ];
 
 /// Run every check, each against a fresh, unmigrated store from `make`.
@@ -418,6 +421,142 @@ fn check_ops(store: &mut dyn GraphStore) {
     let rest = store.ops_after(all[0].seq, 100).unwrap();
     assert_eq!(rest.len(), 1);
     assert_eq!(store.ops_after(0, 1).unwrap().len(), 1, "limit is honored");
+    assert_eq!(store.last_op_seq().unwrap(), all[1].seq);
+}
+
+fn check_meta_prefix(store: &mut dyn GraphStore) {
+    migrated(store);
+    write(store, |w| {
+        w.set_meta("delta:b", "2")?;
+        w.set_meta("delta:a", "1")?;
+        w.set_meta("deltaz", "x")?;
+        w.set_meta("other", "y")
+    });
+    let found = store.meta_prefix("delta:").unwrap();
+    assert_eq!(
+        found,
+        vec![
+            ("delta:a".into(), "1".into()),
+            ("delta:b".into(), "2".into())
+        ],
+        "only matching keys, in key order"
+    );
+    write(store, |w| w.delete_meta("delta:a"));
+    assert_eq!(store.meta_prefix("delta:").unwrap().len(), 1);
+    assert_eq!(store.get_meta("delta:a").unwrap(), None);
+    write(store, |w| w.delete_meta("never-set"));
+}
+
+fn check_clear_graph(store: &mut dyn GraphStore) {
+    migrated(store);
+    let op = Op {
+        op_id: "o1".into(),
+        kind: "node.create".into(),
+        actor: Actor::human("someone"),
+        hlc: "0000000000001.00000".into(),
+        change_set: "cs".into(),
+        schema: SCHEMA_VERSION,
+        payload: json!({}),
+    };
+    write(store, |w| {
+        w.put_node(&node(
+            "a",
+            NodeType::Requirement,
+            Layer::Authored,
+            json!({}),
+        ))?;
+        w.put_node(&node("b", NodeType::File, Layer::Authored, json!({})))?;
+        w.put_edge(&edge(
+            "e",
+            EdgeType::Satisfies,
+            "b",
+            "a",
+            LinkStatus::Asserted,
+        ))?;
+        w.put_blob("h", 1, Some(b"x"))?;
+        w.put_file(&FileRecord {
+            path: "x".into(),
+            blob: "h".into(),
+            size: 1,
+            mtime_ns: 1,
+            recorded_ns: 2,
+        })?;
+        w.set_meta("k", "v")?;
+        w.append_op(&op)
+    });
+    let before = store.last_op_seq().unwrap();
+    write(store, |w| w.clear_graph());
+    assert!(store.get_node("a").unwrap().is_none());
+    assert!(store.get_edge("e").unwrap().is_none());
+    assert!(store.ops_after(0, 10).unwrap().is_empty());
+    assert!(store.has_blob("h").unwrap(), "blobs are kept");
+    assert!(
+        store.get_file("x").unwrap().is_some(),
+        "file records are kept"
+    );
+    assert_eq!(
+        store.get_meta("k").unwrap().as_deref(),
+        Some("v"),
+        "metadata is kept"
+    );
+    write(store, |w| {
+        w.append_op(&Op {
+            op_id: "o2".into(),
+            ..op.clone()
+        })
+    });
+    assert!(
+        store.last_op_seq().unwrap() > before,
+        "sequence numbers are never reused"
+    );
+}
+
+fn check_snapshots(store: &mut dyn GraphStore) {
+    migrated(store);
+    let dir = std::env::temp_dir().join(format!(
+        "resonance-conformance-{}-{}",
+        std::process::id(),
+        crate::model::new_id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let op = |id: &str, v: f64| Op {
+        op_id: id.into(),
+        kind: "node.set".into(),
+        actor: Actor::agent("claude"),
+        hlc: "0000000000001.00000".into(),
+        change_set: "cs".into(),
+        schema: SCHEMA_VERSION,
+        payload: json!({"id": "n", "key": "confidence", "value": v, "z": [1, {"b": 2, "a": 1}]}),
+    };
+    let snapshot = Snapshot {
+        meta: SnapshotMeta {
+            format: String::new(),
+            format_version: 0,
+            schema_version: SCHEMA_VERSION,
+            epoch: "epoch-1".into(),
+            folded_deltas: vec!["d1".into(), "d2".into()],
+        },
+        ops: vec![op("o1", 0.75), op("o2", 0.5)],
+    };
+    let a = dir.join("a.db");
+    let b = dir.join("b.db");
+    store.write_snapshot(&a, &snapshot).unwrap();
+    store.write_snapshot(&b, &snapshot).unwrap();
+    assert_eq!(
+        std::fs::read(&a).unwrap(),
+        std::fs::read(&b).unwrap(),
+        "the same snapshot gives byte-identical files (FR-152)"
+    );
+    let back = store.read_snapshot(&a).unwrap();
+    assert_eq!(back.ops, snapshot.ops, "operations round-trip in order");
+    assert_eq!(back.meta.epoch, "epoch-1");
+    assert_eq!(back.meta.folded_deltas, ["d1", "d2"]);
+    assert_eq!(back.meta.schema_version, SCHEMA_VERSION);
+    assert!(!back.meta.format.is_empty(), "the adapter names its format");
+    let junk = dir.join("junk.db");
+    std::fs::write(&junk, b"not a snapshot").unwrap();
+    assert!(store.read_snapshot(&junk).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn check_traversal(store: &mut dyn GraphStore) {

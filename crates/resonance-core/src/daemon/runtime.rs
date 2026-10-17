@@ -97,7 +97,7 @@ pub fn add_known_root(root: &Path) {
     }
 }
 
-/// `.resonance/daemon.json` (FR-083).
+/// `.resonance/local/daemon.json` (FR-083).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DaemonInfo {
@@ -112,29 +112,31 @@ pub struct DaemonInfo {
 }
 
 pub fn info_path(repo: &Repo) -> PathBuf {
-    repo.resonance_dir().join("daemon.json")
+    repo.local_dir().join("daemon.json")
 }
 
 pub fn lock_path(repo: &Repo) -> PathBuf {
-    repo.resonance_dir().join("daemon.lock")
+    repo.local_dir().join("daemon.lock")
 }
 
 pub fn log_path(repo: &Repo) -> PathBuf {
-    repo.resonance_dir().join("daemon.log")
+    repo.local_dir().join("daemon.log")
 }
 
 pub fn read_info(root: &Path) -> Option<DaemonInfo> {
-    let text = fs::read_to_string(root.join(".resonance").join("daemon.json")).ok()?;
+    let text =
+        fs::read_to_string(root.join(".resonance").join("local").join("daemon.json")).ok()?;
     serde_json::from_str(&text).ok()
 }
 
 /// Whether some process holds the daemon lock of the repository at `root` (FR-082).
 pub fn lock_held(root: &Path) -> bool {
-    let Ok(f) = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(root.join(".resonance").join("daemon.lock"))
-    else {
+    lock_file_held(&root.join(".resonance").join("local").join("daemon.lock"))
+}
+
+/// Whether some process holds the lock file at `path`.
+pub fn lock_file_held(path: &Path) -> bool {
+    let Ok(f) = OpenOptions::new().read(true).write(true).open(path) else {
         return false;
     };
     match f.try_lock() {

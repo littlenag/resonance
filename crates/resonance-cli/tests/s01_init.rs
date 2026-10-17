@@ -80,7 +80,7 @@ fn init_modifies_no_file_and_leaves_git_status_unchanged() {
         "AC5 / NFR-041: git status unchanged"
     );
     assert_eq!(build(&repo), build_before, "AC3: builds unaffected");
-    assert!(repo.path().join(".resonance/graph.db").is_file());
+    assert!(repo.path().join(".resonance/local/state.db").is_file());
     assert!(repo.path().join(".resonance/config.toml").is_file());
     let exclude = fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap();
     assert!(exclude.lines().any(|l| l == "/.resonance/"), "FR-025");

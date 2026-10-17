@@ -66,7 +66,18 @@ impl Ctx {
     /// The backend for an initialized repository: the daemon, or this process.
     pub fn backend(&self) -> Result<Box<dyn Backend>> {
         let repo = self.repo()?;
+        if let Some(note) = resonance_core::lifecycle::ensure_layout(&repo, &open_store)? {
+            self.note(&note);
+        }
         if !repo.is_initialized() {
+            let home = home_dir();
+            if !repo.resonance_dir().exists()
+                && resonance_core::lifecycle::latest_backup(&repo, &home).is_some()
+            {
+                return Err(Error::Invalid(
+                    ".resonance/ is missing, but a backup exists; restore it with `resonance backup --restore` (FR-184)".into(),
+                ));
+            }
             return Err(Error::NotInitialized);
         }
         let actor = human_actor(&repo);
@@ -123,6 +134,13 @@ impl Backend for DirectCached {
 /// Open the SQLite store; the binary is where the engine is chosen (FR-161).
 pub fn open_store(path: &Path) -> Result<Box<dyn GraphStore>> {
     Ok(Box::new(SqliteStore::open(path)?))
+}
+
+/// The user's home directory.
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
 
 /// This executable, for starting the daemon.
@@ -182,6 +200,13 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Status => setup::status(&ctx),
         Command::Reconcile { full } => setup::reconcile(&ctx, full),
         Command::RebuildDerived => setup::rebuild_derived(&ctx),
+        Command::Rebuild => setup::rebuild(&ctx),
+        Command::Restore { file } => setup::restore(&ctx, &file),
+        Command::Backup {
+            restore,
+            from,
+            list,
+        } => setup::backup(&ctx, restore, from, list),
         Command::Mcp => services::mcp(&ctx),
         Command::Daemon { foreground, stop } => services::daemon(&ctx, foreground, stop),
         Command::Registry(cmd) => services::registry(&ctx, cmd),

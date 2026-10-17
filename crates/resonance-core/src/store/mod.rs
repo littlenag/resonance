@@ -9,6 +9,8 @@
 pub mod conformance;
 pub mod traverse;
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -28,6 +30,8 @@ pub mod meta {
     pub const PARTICIPATION: &str = "participation";
     pub const LAST_RECONCILE: &str = "last_reconcile";
     pub const HLC: &str = "hlc";
+    /// The commit the graph was last brought up to date with (FR-068).
+    pub const RECONCILED_COMMIT: &str = "git.reconciledCommit";
 }
 
 /// Which graph a write handle may modify (MVP-018). Only the primary graph exists in the MVP;
@@ -130,6 +134,28 @@ impl EdgeQuery {
     }
 }
 
+/// The header of a snapshot (FR-074, FR-165, MVP-027).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotMeta {
+    /// The adapter's format identifier, for example `resonance-snapshot-sqlite`.
+    pub format: String,
+    pub format_version: u32,
+    pub schema_version: u32,
+    /// The SHA-256 of the sorted IDs of the folded deltas.
+    pub epoch: String,
+    /// The IDs of every delta folded into this snapshot, sorted.
+    pub folded_deltas: Vec<String>,
+}
+
+/// A snapshot: the operations it folded, in fold order (FR-157), and its header. The authored
+/// and identity data are the fold of these operations (FR-150).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Snapshot {
+    pub meta: SnapshotMeta,
+    pub ops: Vec<Op>,
+}
+
 /// A recorded operation and its position in the log.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OpRecord {
@@ -149,8 +175,13 @@ pub trait GraphRead {
     fn get_file(&self, path: &str) -> Result<Option<FileRecord>>;
     fn list_files(&self) -> Result<Vec<FileRecord>>;
     fn get_meta(&self, key: &str) -> Result<Option<String>>;
+    /// Metadata entries whose key starts with `prefix`, in key order. Local state such as
+    /// delta records and the change log is kept this way.
+    fn meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>>;
     /// Operations with a sequence number greater than `after`, oldest first, at most `limit`.
     fn ops_after(&self, after: u64, limit: usize) -> Result<Vec<OpRecord>>;
+    /// The sequence number of the newest operation, or 0 when the log is empty.
+    fn last_op_seq(&self) -> Result<u64>;
 
     /// Bounded traversal (FR-162). This generic implementation works on any adapter; an
     /// adapter may override it with an optimized one (FR-163).
@@ -180,7 +211,11 @@ pub trait GraphWrite: GraphRead {
     /// Forget every file record, so the next reconcile re-hashes everything.
     fn clear_files(&mut self) -> Result<()>;
     fn set_meta(&mut self, key: &str, value: &str) -> Result<()>;
+    fn delete_meta(&mut self, key: &str) -> Result<()>;
     fn append_op(&mut self, op: &Op) -> Result<()>;
+    /// Delete every node, edge and operation of this graph, keeping blobs, file records and
+    /// metadata. The first step of a re-fold (FR-150).
+    fn clear_graph(&mut self) -> Result<()>;
 }
 
 /// The store API (FR-160, FR-162).
@@ -202,4 +237,12 @@ pub trait GraphStore: GraphRead {
 
     /// A simple integrity check; returns a list of problems, empty when healthy (FR-162).
     fn integrity_check(&self) -> Result<Vec<String>>;
+
+    /// Write a snapshot file in this adapter's format (FR-162, FR-165). Writing the same
+    /// snapshot twice produces byte-identical files (FR-152). The file is written to a
+    /// temporary name and renamed into place.
+    fn write_snapshot(&self, path: &Path, snapshot: &Snapshot) -> Result<()>;
+
+    /// Read a snapshot file written by this adapter. Fails on any other file.
+    fn read_snapshot(&self, path: &Path) -> Result<Snapshot>;
 }

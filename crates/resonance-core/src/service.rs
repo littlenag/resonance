@@ -78,6 +78,8 @@ pub const MUTATIONS: &[&str] = &[
     "test",
     "reconcile",
     "rebuild_derived",
+    "rebuild",
+    "restore",
 ];
 
 /// Every method `dispatch` understands.
@@ -86,6 +88,8 @@ pub const METHODS: &[&str] = &[
     "repair_list",
     "reconcile",
     "rebuild_derived",
+    "rebuild",
+    "restore",
     "export",
     "import",
     "req_add",
@@ -283,6 +287,15 @@ fn dispatch_inner(engine: &mut Engine, call: &Call) -> Result<Value> {
             })?)
         }
         "rebuild_derived" => out(engine.rebuild_derived()?),
+        "rebuild" => out(engine.rebuild()?),
+        "restore" => {
+            #[derive(Deserialize)]
+            struct Restore {
+                jsonl: String,
+            }
+            let r: Restore = args(m, a)?;
+            out(engine.restore(&r.jsonl)?)
+        }
         "export" => {
             let mut buf = Vec::new();
             let operations = engine.export(&mut buf)?;
@@ -431,7 +444,10 @@ impl Backend for Direct {
         if call.cwd.is_none() {
             call.cwd = Some(self.engine.cwd().to_path_buf());
         }
-        if !matches!(call.method.as_str(), "reconcile" | "rebuild_derived") {
+        if !matches!(
+            call.method.as_str(),
+            "reconcile" | "rebuild_derived" | "rebuild"
+        ) {
             self.engine.reconcile(ReconcileOptions::default())?;
         }
         dispatch(&mut self.engine, &call)

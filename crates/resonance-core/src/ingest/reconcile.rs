@@ -76,6 +76,9 @@ pub struct ReconcileReport {
     pub intent: IntentReport,
     pub operations: usize,
     pub duration_ms: u64,
+    /// What catching up with git and the delta history did first (FR-068, FR-195).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<crate::history::fold::CatchUp>,
 }
 
 impl ReconcileReport {
@@ -352,7 +355,7 @@ fn apply(
         }
         tx.apply(
             kind::FILE_PUT,
-            json!({"path": h.path, "blob": h.hash, "size": h.size, "stored": stored}),
+            json!({"path": h.path, "blob": h.hash, "size": h.size, "stored": stored, "prev": old_blob}),
         )?;
         if old_blob.is_some() {
             report.files_changed += 1;
@@ -406,7 +409,10 @@ fn apply(
                 )?;
             }
         } else {
-            tx.apply(kind::FILE_DELETE, json!({"path": path}))?;
+            tx.apply(
+                kind::FILE_DELETE,
+                json!({"path": path, "prev": node.str_prop("blob")}),
+            )?;
             report.files_removed += 1;
             report.links += links::orphan_links(tx, &id)?;
         }
@@ -514,6 +520,96 @@ fn apply(
         recompute_containment(tx, path)?;
     }
     Ok(())
+}
+
+/// After a re-fold (MVP-027): recreate File nodes from the stat cache and stored blobs, and
+/// re-check every anchor against the stored content of its file, re-locating those that no
+/// longer match. Imported intent is re-read and derived containment rebuilt. The disk is not
+/// read; an ordinary reconcile afterwards picks up anything that changed there.
+pub fn settle(
+    store: &mut dyn GraphStore,
+    root: &Path,
+    config: &Config,
+    index: &mut LineIndex,
+) -> Result<ReconcileReport> {
+    let started = Instant::now();
+    *index = LineIndex::default();
+    let mut report = ReconcileReport::default();
+    store.write(GraphScope::Primary, &mut |w| {
+        report = ReconcileReport::default();
+        let mut tx = Tx::new(w, Actor::resonance())?;
+        let mut texts: BTreeMap<String, String> = BTreeMap::new();
+        for rec in tx.r().list_files()? {
+            let bytes = tx.r().get_blob(&rec.blob)?;
+            tx.apply(
+                kind::FILE_PUT,
+                json!({"path": rec.path, "blob": rec.blob, "size": rec.size, "stored": bytes.is_some(), "prev": null}),
+            )?;
+            report.files_added += 1;
+            if let Some(text) = bytes.and_then(|b| String::from_utf8(b).ok()) {
+                texts.insert(rec.path.clone(), text);
+            }
+        }
+        report.files_scanned = report.files_added;
+        let others: Vec<(&str, &str)> = texts
+            .iter()
+            .map(|(p, t)| (p.as_str(), t.as_str()))
+            .collect();
+        let mut changed_nodes: BTreeSet<String> = BTreeSet::new();
+        let by_path = anchored_by_path(&tx)?;
+        for units in by_path.values() {
+            for unit in units {
+                let Some(anchor) = anchor_of(unit) else {
+                    continue;
+                };
+                if anchor.state == AnchorState::Orphaned {
+                    if let Some(found) = restore(&anchor, &others) {
+                        put_anchor(&mut tx, &unit.id, &anchor, &found)?;
+                        report.anchors.restored += 1;
+                        report.links += links::restore_links(&mut tx, &unit.id)?;
+                    }
+                    continue;
+                }
+                let current = texts.get(&anchor.path).map(String::as_str);
+                let intact = current
+                    .and_then(|t| t.get(anchor.start_byte..anchor.end_byte))
+                    .is_some_and(|q| content_hash(q.as_bytes()) == anchor.quote_hash);
+                if intact {
+                    continue;
+                }
+                let r = relocate_with(&anchor, None, current, &others, &mut |_| Vec::new());
+                apply_relocation(
+                    &mut tx,
+                    unit,
+                    &anchor,
+                    r.anchor,
+                    r.step,
+                    &mut report,
+                    &mut changed_nodes,
+                )?;
+            }
+        }
+        report.intent = intent::sync(&mut tx, root, &config.intent.sources, true)?;
+        for key in &report.intent.changed {
+            changed_nodes.insert(ids::requirement_id(key));
+        }
+        for id in &changed_nodes {
+            report.links += links::refresh_statuses(&mut tx, id)?;
+        }
+        let paths: BTreeSet<String> = anchored_by_path(&tx)?
+            .into_keys()
+            .chain(texts.keys().cloned())
+            .collect();
+        for path in &paths {
+            recompute_containment(&mut tx, path)?;
+        }
+        tx.w()
+            .set_meta(meta::LAST_RECONCILE, &hlc::rfc3339(hlc::now_ms()))?;
+        report.operations = tx.finish()?;
+        Ok(())
+    })?;
+    report.duration_ms = started.elapsed().as_millis() as u64;
+    Ok(report)
 }
 
 /// Pair files that disappeared with new files whose content is at least half the same, as

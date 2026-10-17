@@ -165,6 +165,10 @@ fn a_region_rewritten_beyond_recognition_is_orphaned_and_listed() {
 #[test]
 fn orphaned_when_the_anchor_disappears_and_restored_when_it_reappears() {
     let repo = annotated();
+    // Graph changes belong to the next commit, like working-tree changes (MVP-030): commit on
+    // main first, so that the annotation belongs to main and to the branch made from it.
+    repo.write("NOTES.md", "notes\n");
+    repo.commit_all("notes");
     repo.git(&["checkout", "-q", "-b", "rewrite"]);
     let open_fn =
         &STORE[STORE.find("/// Opens the store.").unwrap()..STORE.find("pub fn close").unwrap()];

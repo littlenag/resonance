@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::anchors::{self, Anchor, AnchorState, Method};
 use crate::error::{Error, Result};
+use crate::history::{self, Mode, fold};
 use crate::ingest::lineindex::LineIndex;
 use crate::ingest::reconcile::{put_anchor, recompute_containment};
 use crate::ingest::{ReconcileOptions, ReconcileReport, reconcile};
@@ -55,6 +56,12 @@ pub struct Engine {
     cwd: PathBuf,
     /// Lines to files, for finding regions moved into unchanged files (MVP-024).
     index: LineIndex,
+    /// The repository's stage and this working tree's participation (§8.16).
+    mode: Mode,
+    /// Who writes this working tree's deltas (the person who opened the engine).
+    writer: String,
+    /// The open delta as last written, for self-write suppression (FR-044).
+    synced: history::Synced,
 }
 
 /// Counts for `status`.
@@ -84,6 +91,27 @@ pub struct StatusView {
     pub intent_sources: Vec<String>,
     pub counts: Counts,
     pub repair: Vec<RepairItem>,
+    pub history: HistoryStatus,
+}
+
+/// The delta history, for `status` (MVP-026–MVP-030).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryStatus {
+    /// The open delta's file, relative to the repository root, when it has content.
+    pub open_delta: Option<String>,
+    /// Operations in the open delta (excluding file manifest entries).
+    pub open_operations: usize,
+    /// Files in the open delta's manifest.
+    pub open_files: usize,
+    pub sealed: usize,
+    /// Offline deltas whose commits were rewritten and not re-associated (MVP-030).
+    pub detached: Vec<String>,
+    /// A re-fold refused because operations would disappear without `HEAD` moving (C6).
+    pub held: Option<fold::Held>,
+    /// Operations the last fold could not apply.
+    pub skipped: usize,
+    pub snapshot: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +229,16 @@ pub struct TestReport {
     pub errors: usize,
 }
 
+/// What `restore` did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreReport {
+    pub applied: usize,
+    /// Operations for things that already existed, or that could not apply.
+    pub skipped: usize,
+    pub reconcile: Option<ReconcileReport>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
@@ -285,6 +323,8 @@ impl Engine {
     ) -> Result<Engine> {
         store.migrate()?;
         let config = Config::load(&repo.config_path())?;
+        let mode = history::mode(&repo, &config);
+        let writer = actor.to_string();
         Ok(Engine {
             repo,
             config,
@@ -292,7 +332,66 @@ impl Engine {
             actor,
             cwd,
             index: LineIndex::default(),
+            mode,
+            writer,
+            synced: history::Synced::default(),
         })
+    }
+
+    /// The repository's stage and this working tree's participation.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Whether `path` is the open delta exactly as this engine last wrote it (FR-044).
+    pub fn is_own_write(&self, path: &Path) -> bool {
+        match (&self.synced.open_path, &self.synced.hash) {
+            (Some(p), Some(h)) if p == path => fs::read(path)
+                .map(|b| crate::model::content_hash(&b) == *h)
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// Write the open delta and the journal after a change set (MVP-033, FR-194).
+    fn after_write(&mut self) -> Result<()> {
+        self.synced = history::sync(&self.repo, &mut *self.store, self.mode, &self.writer)?;
+        Ok(())
+    }
+
+    /// Catch up with git and the delta history, settling the store after a re-fold.
+    fn catch_up(&mut self, force: bool) -> Result<(fold::CatchUp, Option<ReconcileReport>)> {
+        self.mode = history::mode(&self.repo, &self.config);
+        let cu = fold::catch_up(&self.repo, &mut *self.store, self.mode, &self.writer, force)?;
+        let settled = if cu.refolded {
+            let r = crate::ingest::reconcile::settle(
+                &mut *self.store,
+                &self.repo.root,
+                &self.config,
+                &mut self.index,
+            )?;
+            fold::mark_settled(&mut *self.store)?;
+            Some(r)
+        } else {
+            None
+        };
+        Ok((cu, settled))
+    }
+
+    /// Re-fold the graph from its snapshot and deltas, then reconcile (FR-150, `rebuild`).
+    pub fn rebuild(&mut self) -> Result<ReconcileReport> {
+        self.config = Config::load(&self.repo.config_path())?;
+        let (cu, _) = self.catch_up(true)?;
+        let mut report = reconcile(
+            &mut *self.store,
+            &self.repo.root,
+            &self.config,
+            ReconcileOptions::default(),
+            &mut self.index,
+        )?;
+        self.after_write()?;
+        report.history = Some(cu);
+        Ok(report)
     }
 
     pub fn reader(&self) -> &dyn GraphRead {
@@ -320,26 +419,50 @@ impl Engine {
     }
 
     /// Reconcile the graph with the disk (MVP-002). Re-reads the configuration first.
+    /// Catches up with git and the delta history first (FR-068, FR-195).
     pub fn reconcile(&mut self, opts: ReconcileOptions) -> Result<ReconcileReport> {
         self.config = Config::load(&self.repo.config_path())?;
-        reconcile(
+        let (cu, _) = self.catch_up(false)?;
+        let mut report = reconcile(
             &mut *self.store,
             &self.repo.root,
             &self.config,
             opts,
             &mut self.index,
-        )
+        )?;
+        self.after_write()?;
+        if cu != fold::CatchUp::default() {
+            report.history = Some(cu);
+        }
+        Ok(report)
     }
 
-    /// Reconcile only the given paths, as reported by the watcher (FR-049).
+    /// Reconcile only the given paths, as reported by the watcher (FR-049). After a re-fold
+    /// the whole tree is reconciled instead.
     pub fn reconcile_paths(&mut self, paths: &[String]) -> Result<ReconcileReport> {
-        crate::ingest::reconcile_paths(
-            &mut *self.store,
-            &self.repo.root,
-            &self.config,
-            paths,
-            &mut self.index,
-        )
+        let (cu, settled) = self.catch_up(false)?;
+        let mut report = if settled.is_some() {
+            reconcile(
+                &mut *self.store,
+                &self.repo.root,
+                &self.config,
+                ReconcileOptions::default(),
+                &mut self.index,
+            )?
+        } else {
+            crate::ingest::reconcile_paths(
+                &mut *self.store,
+                &self.repo.root,
+                &self.config,
+                paths,
+                &mut self.index,
+            )?
+        };
+        self.after_write()?;
+        if cu != fold::CatchUp::default() {
+            report.history = Some(cu);
+        }
+        Ok(report)
     }
 
     /// Re-read the configuration file (after it changes).
@@ -372,6 +495,7 @@ impl Engine {
             tx.finish()?;
             Ok(())
         })?;
+        self.after_write()?;
         Ok(out.expect("the change set ran"))
     }
 
@@ -395,12 +519,42 @@ impl Engine {
                 .count();
             links.insert(s.as_str().to_string(), n);
         }
+        let open = history::read_open(r)?;
+        let open_content = match &open {
+            Some(o) => Some(history::open_delta_content(r, o)?),
+            None => None,
+        };
+        let open_path = open
+            .as_ref()
+            .map(|o| history::delta_path(&self.repo, o.location, &o.id));
+        let records = history::records(r)?;
+        let skipped: Vec<String> = r
+            .get_meta(history::keys::SKIPPED)?
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let history_status = HistoryStatus {
+            open_delta: open_path.filter(|p| p.is_file()).and_then(|p| {
+                p.strip_prefix(&self.repo.root)
+                    .ok()
+                    .map(|p| p.display().to_string())
+            }),
+            open_operations: open_content.as_ref().map(|c| c.ops.len()).unwrap_or(0),
+            open_files: open_content.as_ref().map(|c| c.manifest.len()).unwrap_or(0),
+            sealed: records.values().filter(|r| !r.detached).count(),
+            detached: records
+                .iter()
+                .filter(|(_, r)| r.detached)
+                .map(|(id, _)| id.clone())
+                .collect(),
+            held: fold::held(r)?,
+            skipped: skipped.len(),
+            snapshot: self.repo.snapshot_path().is_file(),
+        };
         Ok(StatusView {
             root: self.repo.root.display().to_string(),
-            stage: r.get_meta(meta::STAGE)?.unwrap_or_else(|| "1".into()),
-            participation: r
-                .get_meta(meta::PARTICIPATION)?
-                .unwrap_or_else(|| "offline".into()),
+            stage: self.mode.stage.to_string(),
+            participation: self.mode.participation.as_str().to_string(),
+            history: history_status,
             schema_version: self.store.schema_version()?,
             last_reconcile: r.get_meta(meta::LAST_RECONCILE)?,
             intent_sources: self.config.intent.sources.clone(),
@@ -1415,6 +1569,62 @@ impl Engine {
     }
 
     /// Paths of the intent sources, for messages.
+    /// Restore authored and identity data from an engine-neutral export (FR-166). Operations
+    /// that would create something that already exists are skipped, so restoring into a
+    /// non-empty graph only adds what is missing.
+    pub fn restore(&mut self, jsonl: &str) -> Result<RestoreReport> {
+        let mut ops: Vec<crate::ops::Op> = Vec::new();
+        for (i, line) in jsonl.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: Value = serde_json::from_str(line)
+                .map_err(|e| Error::Invalid(format!("line {}: not JSON: {e}", i + 1)))?;
+            if i == 0 {
+                if v["format"] != export::FORMAT {
+                    return Err(Error::Invalid(
+                        "this is not a Resonance export (the first line is not its header)".into(),
+                    ));
+                }
+                continue;
+            }
+            ops.push(
+                serde_json::from_value(v)
+                    .map_err(|e| Error::Invalid(format!("line {}: {e}", i + 1)))?,
+            );
+        }
+        let mut report = RestoreReport::default();
+        self.store.write(GraphScope::Primary, &mut |w| {
+            report = RestoreReport::default();
+            for op in &ops {
+                let id = op.payload["id"].as_str().unwrap_or_default();
+                let exists = match op.kind.as_str() {
+                    kind::NODE_CREATE => w.get_node(id)?.is_some(),
+                    kind::EDGE_ADD => w.get_edge(id)?.is_some(),
+                    _ => false,
+                };
+                if exists {
+                    report.skipped += 1;
+                    continue;
+                }
+                if crate::ops::apply(w, op).is_ok() {
+                    w.append_op(op)?;
+                    report.applied += 1;
+                } else {
+                    report.skipped += 1;
+                }
+            }
+            Ok(())
+        })?;
+        self.after_write()?;
+        report.reconcile = Some(self.reconcile(ReconcileOptions {
+            force_intent: true,
+            rebuild_containment: true,
+            ..Default::default()
+        })?);
+        Ok(report)
+    }
+
     pub fn intent_sources(&self) -> &[String] {
         &self.config.intent.sources
     }

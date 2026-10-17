@@ -8,8 +8,12 @@ mod blobs;
 mod graph;
 mod ops;
 mod schema;
+mod snapshot;
+
+pub use snapshot::{FORMAT as SNAPSHOT_FORMAT, FORMAT_VERSION as SNAPSHOT_FORMAT_VERSION};
 
 use std::path::Path;
+
 use std::time::Duration;
 
 use resonance_core::error::{Error, Result};
@@ -17,6 +21,7 @@ use resonance_core::model::{Edge, Layer, Node};
 use resonance_core::ops::Op;
 use resonance_core::store::{
     EdgeQuery, FileRecord, GraphRead, GraphScope, GraphStore, GraphWrite, NodeQuery, OpRecord,
+    Snapshot,
 };
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
 
@@ -101,8 +106,20 @@ impl GraphRead for SqliteStore {
         }
         graph::get_meta(&self.conn, key)
     }
+    fn meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        if schema::version(&self.conn)? == 0 {
+            return Ok(Vec::new());
+        }
+        graph::meta_prefix(&self.conn, prefix)
+    }
     fn ops_after(&self, after: u64, limit: usize) -> Result<Vec<OpRecord>> {
         ops::after(&self.conn, PRIMARY, after, limit)
+    }
+    fn last_op_seq(&self) -> Result<u64> {
+        if schema::version(&self.conn)? == 0 {
+            return Ok(0);
+        }
+        ops::last_seq(&self.conn, PRIMARY)
     }
 }
 
@@ -146,8 +163,14 @@ impl GraphRead for SqliteWrite<'_> {
     fn get_meta(&self, key: &str) -> Result<Option<String>> {
         graph::get_meta(&self.tx, key)
     }
+    fn meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        graph::meta_prefix(&self.tx, prefix)
+    }
     fn ops_after(&self, after: u64, limit: usize) -> Result<Vec<OpRecord>> {
         ops::after(&self.tx, self.graph(), after, limit)
+    }
+    fn last_op_seq(&self) -> Result<u64> {
+        ops::last_seq(&self.tx, self.graph())
     }
 }
 
@@ -182,8 +205,14 @@ impl GraphWrite for SqliteWrite<'_> {
     fn set_meta(&mut self, key: &str, value: &str) -> Result<()> {
         graph::set_meta(&self.tx, key, value)
     }
+    fn delete_meta(&mut self, key: &str) -> Result<()> {
+        graph::delete_meta(&self.tx, key)
+    }
     fn append_op(&mut self, op: &Op) -> Result<()> {
         ops::append(&self.tx, self.graph(), op)
+    }
+    fn clear_graph(&mut self) -> Result<()> {
+        graph::clear_graph(&self.tx, self.graph())
     }
 }
 
@@ -217,5 +246,13 @@ impl GraphStore for SqliteStore {
 
     fn integrity_check(&self) -> Result<Vec<String>> {
         graph::integrity_check(&self.conn, PRIMARY)
+    }
+
+    fn write_snapshot(&self, path: &Path, snapshot: &Snapshot) -> Result<()> {
+        snapshot::write(path, snapshot)
+    }
+
+    fn read_snapshot(&self, path: &Path) -> Result<Snapshot> {
+        snapshot::read(path)
     }
 }

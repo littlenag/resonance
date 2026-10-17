@@ -14,10 +14,67 @@ pub const DEFAULT_CONFIG: &str = include_str!("../../assets/default-config.toml"
 #[serde(default, rename_all = "camelCase")]
 #[derive(Default)]
 pub struct Config {
+    pub repository: RepositoryConfig,
     pub intent: IntentConfig,
     pub ingest: IngestConfig,
     pub test: TestConfig,
     pub daemon: DaemonConfig,
+    pub compaction: CompactionConfig,
+    pub governance: GovernanceConfig,
+    pub changes: ChangesConfig,
+}
+
+/// `[repository]`: committed from stage 2 (MVP-033).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct RepositoryConfig {
+    /// The adoption stage: 1 offline trial, 2 shared (§8.16).
+    pub stage: u8,
+    /// The oldest binary version that may write this repository's data (FR-264).
+    pub min_version: String,
+}
+
+impl Default for RepositoryConfig {
+    fn default() -> Self {
+        RepositoryConfig {
+            stage: 1,
+            min_version: String::new(),
+        }
+    }
+}
+
+/// `[compaction]` (FR-154, MVP-034).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CompactionConfig {
+    /// Compact when the trunk has this many sealed deltas.
+    pub max_deltas: usize,
+    /// The trunk branch; empty means the remote's default branch, else `main`, else `master`.
+    pub trunk: String,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        CompactionConfig {
+            max_deltas: 100,
+            trunk: String::new(),
+        }
+    }
+}
+
+/// `[governance]` (FR-178): what Resonance governs; empty means everything.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GovernanceConfig {
+    pub paths: Vec<String>,
+}
+
+/// `[changes]`: the change log (FR-274, MVP-040).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChangesConfig {
+    /// Also log changes made by agents (OQ-27).
+    pub include_agents: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -45,6 +102,8 @@ pub struct IntentConfig {
 pub struct IngestConfig {
     pub ignore: Vec<String>,
     pub max_blob_bytes: u64,
+    /// Read `@satisfies` / `@verifies` tags from file text (FR-123).
+    pub source_tags: bool,
 }
 
 impl Default for IngestConfig {
@@ -52,6 +111,7 @@ impl Default for IngestConfig {
         IngestConfig {
             ignore: Vec::new(),
             max_blob_bytes: 5 * 1024 * 1024,
+            source_tags: false,
         }
     }
 }

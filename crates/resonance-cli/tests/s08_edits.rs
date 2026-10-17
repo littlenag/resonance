@@ -10,7 +10,7 @@ use resonance_store_sqlite::SqliteStore;
 
 /// The kinds of every operation in the log, in order.
 fn op_kinds(repo: &TestRepo) -> Vec<String> {
-    let mut store = SqliteStore::open(&repo.path().join(".resonance/graph.db")).unwrap();
+    let mut store = SqliteStore::open(&repo.path().join(".resonance/local/state.db")).unwrap();
     store.migrate().unwrap();
     store
         .ops_after(0, 1_000_000)
@@ -42,7 +42,7 @@ fn a_save_is_reflected_by_the_next_command() {
     assert_eq!(open["location"]["startLine"], 4);
     // The graph's own copy of the unit's text follows the latest save.
     let id = open["node"]["id"].as_str().unwrap();
-    let store = SqliteStore::open(&repo.path().join(".resonance/graph.db")).unwrap();
+    let store = SqliteStore::open(&repo.path().join(".resonance/local/state.db")).unwrap();
     let node = store.get_node(id).unwrap().unwrap();
     let quote = node.props["anchor"]["quote"].as_str().unwrap();
     assert!(quote.contains("conn.check2();"), "{quote}");
@@ -94,7 +94,7 @@ fn moves_and_approximate_matches_are_recorded_as_identity_operations() {
     assert!(op_kinds(&repo).contains(&"identity.move".to_string()));
 
     // Every operation carries the §9.1 envelope.
-    let mut store = SqliteStore::open(&repo.path().join(".resonance/graph.db")).unwrap();
+    let mut store = SqliteStore::open(&repo.path().join(".resonance/local/state.db")).unwrap();
     store.migrate().unwrap();
     let ops = store.ops_after(0, 1_000_000).unwrap();
     let mv = ops.iter().find(|r| r.op.kind == "identity.move").unwrap();

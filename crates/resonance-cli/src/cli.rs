@@ -55,6 +55,25 @@ pub enum Command {
     },
     /// Drop derived data (containment, file cache) and rebuild it.
     RebuildDerived,
+    /// Re-fold the graph from its snapshot and deltas (FR-150), then bring it up to date.
+    Rebuild,
+    /// Restore authored data from an export written by `resonance export` or `eject` (FR-166).
+    Restore {
+        /// The export file (JSON Lines).
+        file: PathBuf,
+    },
+    /// Back up .resonance/ outside the repository, or restore a missing .resonance/ (FR-184).
+    Backup {
+        /// Restore .resonance/ from the newest backup (or from --from) when it is missing.
+        #[arg(long)]
+        restore: bool,
+        /// The backup directory to restore from.
+        #[arg(long, value_name = "DIR", requires = "restore")]
+        from: Option<PathBuf>,
+        /// List this repository's backups.
+        #[arg(long, conflicts_with = "restore")]
+        list: bool,
+    },
     /// Run the MCP server over stdio (for agents).
     Mcp,
     /// Agent integration.

@@ -3,7 +3,7 @@
 use resonance_core::error::Result;
 use resonance_core::ops::Op;
 use resonance_core::store::OpRecord;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db;
 
@@ -65,4 +65,21 @@ pub fn after(conn: &Connection, graph: &str, after: u64, limit: usize) -> Result
         });
     }
     Ok(out)
+}
+
+pub fn last_seq(conn: &Connection, graph: &str) -> Result<u64> {
+    let seq: Option<i64> = db(conn.query_row(
+        "SELECT max(seq) FROM ops WHERE graph = ?1",
+        [graph],
+        |r| r.get(0),
+    ))?;
+    // AUTOINCREMENT never reuses numbers, even after the log is cleared.
+    let floor: Option<i64> = db(conn
+        .query_row(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'ops'",
+            [],
+            |r| r.get(0),
+        )
+        .optional())?;
+    Ok(seq.or(floor).unwrap_or(0).max(0) as u64)
 }

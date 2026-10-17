@@ -279,6 +279,31 @@ pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn meta_prefix(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>> {
+    let mut stmt = db(conn.prepare_cached(
+        "SELECT key, value FROM meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key",
+    ))?;
+    let rows = db(stmt.query_map([prefix], |r| Ok((r.get(0)?, r.get(1)?))))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(db(row)?);
+    }
+    Ok(out)
+}
+
+pub fn delete_meta(conn: &Connection, key: &str) -> Result<()> {
+    db(conn.execute("DELETE FROM meta WHERE key = ?1", [key]))?;
+    Ok(())
+}
+
+/// Delete every node, edge and operation of a graph (the first step of a re-fold).
+pub fn clear_graph(conn: &Connection, graph: &str) -> Result<()> {
+    db(conn.execute("DELETE FROM edges WHERE graph = ?1", [graph]))?;
+    db(conn.execute("DELETE FROM nodes WHERE graph = ?1", [graph]))?;
+    db(conn.execute("DELETE FROM ops WHERE graph = ?1", [graph]))?;
+    Ok(())
+}
+
 /// Dangling references and engine-level corruption.
 pub fn integrity_check(conn: &Connection, graph: &str) -> Result<Vec<String>> {
     let mut problems = Vec::new();
