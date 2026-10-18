@@ -36,6 +36,9 @@ pub struct Call {
     /// this call (FR-253), even when a daemon started by someone else serves it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    /// Where the call comes from (`cli`, `tui`, `mcp`), for the change log (MVP-040).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// This process's `RESONANCE_*` environment variables.
@@ -54,6 +57,7 @@ impl Call {
             cwd: None,
             cached: false,
             env: BTreeMap::new(),
+            origin: None,
         }
     }
 }
@@ -94,11 +98,17 @@ pub const MUTATIONS: &[&str] = &[
     "unshare",
     "compact",
     "repair_snapshot",
+    "changes_done",
 ];
 
 /// Every method `dispatch` understands.
 pub const METHODS: &[&str] = &[
     "status",
+    "changes",
+    "changes_show",
+    "changes_done",
+    "conventions",
+    "agent_gate",
     "repair_list",
     "reconcile",
     "rebuild_derived",
@@ -332,6 +342,11 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
     if let Some(actor) = &call.actor {
         engine.set_actor(actor.clone());
     }
+    engine.set_origin(
+        call.origin
+            .as_deref()
+            .unwrap_or(crate::changes::origin::CLI),
+    );
     let m = call.method.as_str();
     let a = &call.args;
     match m {
@@ -487,6 +502,33 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             }
         }
         "value" => out(engine.value()?),
+        "changes" => {
+            #[derive(Deserialize, Default)]
+            #[serde(default)]
+            struct Since {
+                since: Option<u64>,
+            }
+            let a: Since = args(m, a)?;
+            out(engine.changes(a.since)?)
+        }
+        "changes_show" => {
+            #[derive(Deserialize)]
+            struct Seq {
+                seq: u64,
+            }
+            let a: Seq = args(m, a)?;
+            out(engine.changes_show(a.seq)?)
+        }
+        "changes_done" => {
+            #[derive(Deserialize)]
+            struct Done {
+                seqs: Vec<u64>,
+                #[serde(default)]
+                note: Option<String>,
+            }
+            let a: Done = args(m, a)?;
+            out(engine.changes_done(&a.seqs, a.note.as_deref())?)
+        }
         "spec_add" => {
             #[derive(Deserialize)]
             struct SpecAdd {
@@ -558,6 +600,15 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             }
             let r: Compact = args(m, a)?;
             out(engine.compact(r.anywhere, r.commit)?)
+        }
+        "conventions" => out(crate::agent::conventions_view(&engine.repo, engine.mode())),
+        "agent_gate" => {
+            #[derive(Deserialize)]
+            struct Gate {
+                command: String,
+            }
+            let g: Gate = args(m, a)?;
+            out(engine.agent_gate(&g.command)?)
         }
         "check" => {
             #[derive(Deserialize, Default)]

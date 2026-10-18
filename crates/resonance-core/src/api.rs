@@ -13,7 +13,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod agent_hook;
 mod shared;
+pub use agent_hook::{GateDecision, git_subcommands};
 
 pub use shared::{
     CheckReport, Finding, JoinView, LeaveView, ReviewView, ShareView, governs, render_delta,
@@ -72,6 +74,8 @@ pub struct Engine {
     startup: bool,
     /// This developer's email, to tell their commits from others' (C2).
     me: String,
+    /// Where the current call comes from, for the change log (MVP-040).
+    origin: String,
 }
 
 /// Counts for `status`.
@@ -104,6 +108,12 @@ pub struct StatusView {
     pub history: HistoryStatus,
     /// Unresolved divergences (§8.18).
     pub divergences: Vec<crate::recovery::Divergence>,
+    /// Pending change-log entries (MVP-040).
+    #[serde(default)]
+    pub pending_changes: usize,
+    /// The agent kit for this working tree (FR-210).
+    #[serde(default)]
+    pub agent_kit: crate::agent::KitStatus,
 }
 
 /// `intent project` (FR-121).
@@ -157,9 +167,26 @@ pub struct ValueView {
     pub repair_tokens: u64,
     pub repair_seconds: u64,
     pub divergences: std::collections::BTreeMap<String, u64>,
+    /// The agent kit's effectiveness (MVP-039).
+    pub agent: AgentEffectiveness,
     pub counters: std::collections::BTreeMap<String, u64>,
     /// What improves on sharing or joining, in offline mode.
     pub upgrade: Option<String>,
+}
+
+/// Local counts of how well the agent kit works (MVP-039, NFR-046).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEffectiveness {
+    /// Agent commits that went through the agent-side gate.
+    pub commits_checked: u64,
+    /// Those that passed on the first attempt.
+    pub first_pass: u64,
+    pub denials: u64,
+    /// Denials the developer overrode.
+    pub overrides: u64,
+    /// Divergences recorded while an agent was acting.
+    pub divergences: u64,
 }
 
 /// The delta history, for `status` (MVP-026–MVP-030).
@@ -439,6 +466,7 @@ impl Engine {
             synced: history::Synced::default(),
             startup: false,
             me,
+            origin: crate::changes::origin::CLI.to_string(),
         })
     }
 
@@ -459,6 +487,12 @@ impl Engine {
         };
         let divs = crate::recovery::classify(&self.repo, self.reader(), &observed)?;
         crate::recovery::record(&mut *self.store, &divs)?;
+        if self.actor.kind == ActorKind::Agent && !divs.is_empty() {
+            crate::recovery::count(
+                &mut *self.store,
+                &[("agent.divergences", divs.len() as u64)],
+            )?;
+        }
         let a = &report.anchors;
         crate::recovery::count(
             &mut *self.store,
@@ -544,6 +578,58 @@ impl Engine {
         self.actor = actor;
     }
 
+    /// `resonance changes` (MVP-040): pending entries after `since`.
+    pub fn changes(&self, since: Option<u64>) -> Result<Vec<crate::changes::Entry>> {
+        Ok(crate::changes::list(self.reader(), since)?
+            .iter()
+            .map(|e| e.brief())
+            .collect())
+    }
+
+    /// `resonance changes show <seq>`: one entry with its before and after.
+    pub fn changes_show(&self, seq: u64) -> Result<crate::changes::Entry> {
+        crate::changes::get(self.reader(), seq)
+    }
+
+    /// `resonance changes done <seq>…` (FR-276).
+    pub fn changes_done(
+        &mut self,
+        seqs: &[u64],
+        note: Option<&str>,
+    ) -> Result<crate::changes::Done> {
+        let by = self.actor.to_string();
+        crate::changes::done(&self.repo, &mut *self.store, seqs, note, &by)
+    }
+
+    /// Where the current call comes from: `cli`, `tui` or `mcp` (MVP-040).
+    pub fn set_origin(&mut self, origin: &str) {
+        self.origin = origin.to_string();
+    }
+
+    /// Log the spec-item changes among the operations after `seq` (MVP-040).
+    fn log_changes_after(&mut self, seq: u64, origin: &str) -> Result<()> {
+        let ops: Vec<crate::ops::Op> = self
+            .store
+            .ops_after(seq, usize::MAX)?
+            .into_iter()
+            .map(|r| r.op)
+            .collect();
+        self.log_changes(&ops, origin)
+    }
+
+    fn log_changes(&mut self, ops: &[crate::ops::Op], origin: &str) -> Result<()> {
+        if ops.is_empty() {
+            return Ok(());
+        }
+        crate::changes::record(
+            &mut *self.store,
+            ops,
+            origin,
+            self.config.changes.include_agents,
+        )?;
+        Ok(())
+    }
+
     pub fn set_cwd(&mut self, cwd: PathBuf) {
         self.cwd = cwd;
     }
@@ -560,7 +646,9 @@ impl Engine {
     /// Catches up with git and the delta history first (FR-068, FR-195).
     pub fn reconcile(&mut self, opts: ReconcileOptions) -> Result<ReconcileReport> {
         self.config = Config::load(&self.repo.config_path())?;
+        let fresh = self.store.get_meta(history::keys::HEAD)?.is_none();
         let (cu, _) = self.catch_up(false)?;
+        let seq = self.store.last_op_seq()?;
         let mut report = reconcile(
             &mut *self.store,
             &self.repo.root,
@@ -569,6 +657,9 @@ impl Engine {
             &mut self.index,
         )?;
         self.after_write()?;
+        if !fresh {
+            self.log_reconcile(&cu, seq)?;
+        }
         self.classify(&cu, &mut report)?;
         if cu.head_move.is_some() {
             self.maybe_compact()?;
@@ -583,6 +674,7 @@ impl Engine {
     /// the whole tree is reconciled instead.
     pub fn reconcile_paths(&mut self, paths: &[String]) -> Result<ReconcileReport> {
         let (cu, settled) = self.catch_up(false)?;
+        let seq = self.store.last_op_seq()?;
         let mut report = if settled.is_some() {
             reconcile(
                 &mut *self.store,
@@ -601,11 +693,23 @@ impl Engine {
             )?
         };
         self.after_write()?;
+        self.log_reconcile(&cu, seq)?;
         self.classify(&cu, &mut report)?;
         if cu != fold::CatchUp::default() {
             report.history = Some(cu);
         }
         Ok(report)
+    }
+
+    /// Log spec changes that arrived through git, and source-document edits (MVP-040).
+    fn log_reconcile(&mut self, cu: &fold::CatchUp, seq: u64) -> Result<()> {
+        self.log_changes(&cu.arrived, crate::changes::origin::GIT)?;
+        let origin = if cu.head_move.is_some() {
+            crate::changes::origin::GIT
+        } else {
+            crate::changes::origin::IMPORT
+        };
+        self.log_changes_after(seq, origin)
     }
 
     /// Re-read the configuration file (after it changes).
@@ -629,6 +733,7 @@ impl Engine {
     /// Run `f` as one change set (FR-022, FR-103).
     fn mutate<T>(&mut self, f: impl FnOnce(&mut Tx<'_>) -> Result<T>) -> Result<T> {
         let actor = self.actor.clone();
+        let seq = self.store.last_op_seq()?;
         let mut f = Some(f);
         let mut out = None;
         self.store.write(GraphScope::Primary, &mut |w| {
@@ -639,6 +744,8 @@ impl Engine {
             Ok(())
         })?;
         self.after_write()?;
+        let origin = self.origin.clone();
+        self.log_changes_after(seq, &origin)?;
         Ok(out.expect("the change set ran"))
     }
 
@@ -694,6 +801,8 @@ impl Engine {
             snapshot: self.repo.snapshot_path().is_file(),
         };
         Ok(StatusView {
+            pending_changes: crate::changes::pending_count(r)?,
+            agent_kit: crate::agent::kit_status(&self.repo, self.mode),
             root: self.repo.root.display().to_string(),
             stage: self.mode.stage.to_string(),
             participation: self.mode.participation.as_str().to_string(),
@@ -2402,6 +2511,13 @@ impl Engine {
                 .filter(|(k, _)| k.starts_with("divergence."))
                 .map(|(k, v)| (k["divergence.".len()..].to_string(), *v))
                 .collect(),
+            agent: AgentEffectiveness {
+                commits_checked: get("agent.commits"),
+                first_pass: get("agent.firstPass"),
+                denials: get("agent.denials"),
+                overrides: get("agent.overrides"),
+                divergences: get("agent.divergences"),
+            },
             counters,
             upgrade,
         })

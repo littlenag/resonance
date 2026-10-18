@@ -81,13 +81,21 @@ impl Server {
                     None => name.to_string(),
                 };
                 self.actor = Actor::agent(agent);
+                // The dynamic part of the agent kit: conventions for this stage, participation
+                // and version (FR-212). Without a reachable graph, the common part.
+                let instructions = self
+                    .backend
+                    .call(crate::service::Call::new("conventions", json!({})))
+                    .ok()
+                    .and_then(|v| v["conventions"].as_str().map(String::from))
+                    .unwrap_or_else(|| INSTRUCTIONS.to_string());
                 jsonrpc::result(
                     id,
                     json!({
                         "protocolVersion": version,
                         "capabilities": {"tools": {"listChanged": false}},
                         "serverInfo": {"name": "resonance", "version": VERSION},
-                        "instructions": INSTRUCTIONS,
+                        "instructions": instructions,
                     }),
                 )
             }
@@ -114,6 +122,7 @@ impl Server {
                     .unwrap_or_else(|| json!({}));
                 let outcome = tools::to_call(name, &args).and_then(|mut call| {
                     call.actor = Some(self.actor.clone());
+                    call.origin = Some(crate::changes::origin::MCP.to_string());
                     self.backend.call(call)
                 });
                 jsonrpc::result(id, tool_result(outcome))

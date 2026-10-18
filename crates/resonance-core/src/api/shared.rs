@@ -40,7 +40,7 @@ pub struct Finding {
 }
 
 impl Finding {
-    fn new(
+    pub(crate) fn new(
         code: &str,
         severity: &str,
         message: impl Into<String>,
@@ -54,7 +54,7 @@ impl Finding {
             paths: Vec::new(),
         }
     }
-    fn with_paths(mut self, paths: Vec<String>) -> Finding {
+    pub(crate) fn with_paths(mut self, paths: Vec<String>) -> Finding {
         self.paths = paths;
         self
     }
@@ -118,6 +118,9 @@ pub struct LeaveView {
     pub hooks: Vec<HookChange>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub staged_removals: Vec<String>,
+    /// The agent kit's working-tree parts, removed (MVP-037).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kit: Vec<crate::agent::KitStep>,
 }
 
 /// A delta rendered for people (`show-delta`, `review`).
@@ -472,6 +475,7 @@ impl Engine {
             }
         }
         view.hooks = hooks::uninstall(&self.repo)?;
+        view.kit = crate::agent::uninstall_kit(&self.repo)?;
         let _ = self
             .repo
             .git(&["config", "--local", "--unset", PARTICIPATION_KEY]);
@@ -618,12 +622,23 @@ impl Engine {
                 "handle them and remove them with `resonance changes done <seq>` (FR-277)",
             ));
         }
-        if self.mode.opted_in() && !crate::agent::kit_installed(&self.repo) {
+        let kit = crate::agent::kit_status(&self.repo, self.mode);
+        if !kit.installed {
             out.push(Finding::new(
                 "R010",
                 "info",
                 "the agent kit is not installed for this working tree",
                 "`resonance agent install` (FR-210)",
+            ));
+        } else if kit.stale {
+            out.push(Finding::new(
+                "R010",
+                "info",
+                format!(
+                    "the agent kit is stale (installed by {} for another version, stage or participation)",
+                    kit.version.as_deref().unwrap_or("?")
+                ),
+                "`resonance agent update` (FR-214)",
             ));
         }
         Ok(())

@@ -268,6 +268,45 @@ pub fn definitions() -> Vec<Value> {
             &[],
         ),
         tool(
+            "resonance_conventions",
+            "The conventions for this working tree (they depend on the adoption stage, on whether this developer has opted in, and on the Resonance version), the state of the agent kit, and the orientation to give the developer at the end of onboarding. Read them at the start of a session.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "resonance_check",
+            "Consistency checks with findings (code, severity, message, fix). Without a range: what is staged for the next commit (run before every commit and fix every error). With a range such as origin/main..HEAD: the commits of a branch (run before opening or updating a pull request).",
+            json!({"range": s("A git range, for example origin/main..HEAD.")}),
+            &[],
+        ),
+        tool(
+            "resonance_review",
+            "A summary of the graph changes in a git range (intent added, changed and retired; links; annotations; identity operations; conflicts; compactions), for pull request descriptions. `resonance review <range> --markdown` prints it as Markdown.",
+            json!({"range": s("A git range, for example origin/main..HEAD.")}),
+            &["range"],
+        ),
+        tool(
+            "resonance_changes",
+            "The change log: people's recent changes to spec items (requirements, decisions, designs, constraints) that no agent has handled yet. Keep, in your own memory, the seq of the last entry you read; pass it as `since` at the start of work and before git operations, act on each entry, then remove it with resonance_changes_done.",
+            json!({"since": i("Only entries after this sequence number.")}),
+            &[],
+        ),
+        tool(
+            "resonance_changes_show",
+            "One change-log entry in full, with the item's fields before and after.",
+            json!({"seq": i("The entry's sequence number.")}),
+            &["seq"],
+        ),
+        tool(
+            "resonance_changes_done",
+            "Remove handled change-log entries. This deletes them from the log only; the changes stay in the graph's history. The log should be empty before commits, pushes and pulls.",
+            json!({
+                "seqs": {"type": "array", "items": {"type": "integer"}, "description": "The sequence numbers handled."},
+                "note": s("Optional: what was done about them."),
+            }),
+            &["seqs"],
+        ),
+        tool(
             "resonance_value",
             "What Resonance did for this developer, locally: traces, context packs, anchors that followed edits, repairs and their cost.",
             json!({}),
@@ -436,6 +475,24 @@ pub fn to_call(name: &str, args: &Value) -> Result<Call> {
             json!({"action": arg(args, "action"), "id": arg(args, "id"), "note": arg(args, "note")}),
         ),
         "resonance_value" => ("value", json!({})),
+        "resonance_conventions" => ("conventions", json!({})),
+        "resonance_check" => ("check", json!({"range": arg(args, "range")})),
+        "resonance_review" => ("review", json!({"range": req(args, "range")?})),
+        "resonance_changes" => (
+            "changes",
+            json!({"since": args.get("since").and_then(Value::as_u64)}),
+        ),
+        "resonance_changes_show" => (
+            "changes_show",
+            json!({"seq": args.get("seq").and_then(Value::as_u64).ok_or_else(|| Error::Usage("give the entry's seq".into()))?}),
+        ),
+        "resonance_changes_done" => (
+            "changes_done",
+            json!({
+                "seqs": args.get("seqs").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).collect::<Vec<_>>()).unwrap_or_default(),
+                "note": arg(args, "note"),
+            }),
+        ),
         "resonance_list_items" => (
             "spec_list",
             json!({"type": arg(args, "type"), "status": arg(args, "status"), "text": arg(args, "text")}),

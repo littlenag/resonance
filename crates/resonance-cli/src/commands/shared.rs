@@ -93,7 +93,15 @@ pub fn share(ctx: &Ctx, keep_local: &[String], dry_run: bool, yes: bool) -> Resu
         "share",
         json!({"exe": exe, "keepLocal": keep_local, "apply": true}),
     )?;
-    ctx.emit(&done, render_share)
+    let kit = super::setup::refresh_kit(&ctx.repo()?)?;
+    ctx.emit(&done, |d| {
+        let mut out = render_share(d);
+        out.push_str(match kit {
+            Some(_) => "Refreshed the agent kit for stage 2 (`resonance agent install --shared` also adds a section to the shared CLAUDE.md).\n",
+            None => "Onboard your agent for stage 2 with `resonance agent install` (FR-210).\n",
+        });
+        out
+    })
 }
 
 pub fn leave(ctx: &Ctx, export: Option<PathBuf>) -> Result<()> {

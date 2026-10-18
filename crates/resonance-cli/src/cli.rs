@@ -38,10 +38,10 @@ pub enum Command {
     // Setup and lifecycle
     /// Set up Resonance in this repository (offline mode): creates .resonance/, excludes it locally, reads every file.
     Init {
-        /// Also register the MCP server with Claude Code, without asking.
+        /// Also install the agent kit for Claude Code, without asking.
         #[arg(long, conflicts_with = "no_agent")]
         agent: bool,
-        /// Do not offer to register the MCP server.
+        /// Do not offer to install the agent kit.
         #[arg(long)]
         no_agent: bool,
         /// In a shared repository: try Resonance privately instead of joining (FR-187).
@@ -112,6 +112,12 @@ pub enum Command {
     /// Git drivers (plumbing).
     #[command(hide = true, subcommand)]
     GitDriver(GitDriverCommand),
+    /// Entry point for the agent harness hooks the agent kit installs (plumbing, FR-222).
+    #[command(hide = true)]
+    AgentHook {
+        /// The event: `pre-git`.
+        event: String,
+    },
     /// Counts and the repair list.
     Status,
     /// Bring the graph up to date with the files on disk now.
@@ -136,6 +142,14 @@ pub enum Command {
     },
     /// What Resonance did for you, locally: traces, context packs, anchors followed, repairs (FR-240).
     Value,
+    /// The change log: people's changes to spec items that agents have not handled yet (MVP-040).
+    Changes {
+        #[command(subcommand)]
+        action: Option<ChangesCommand>,
+        /// Only entries after this sequence number.
+        #[arg(long, value_name = "SEQ")]
+        since: Option<u64>,
+    },
     /// Back up .resonance/ outside the repository, or restore a missing .resonance/ (FR-184).
     Backup {
         /// Restore .resonance/ from the newest backup (or from --from) when it is missing.
@@ -320,6 +334,24 @@ pub enum GitDriverCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum ChangesCommand {
+    /// One entry in full, with the item before and after.
+    Show {
+        /// The entry's sequence number.
+        seq: u64,
+    },
+    /// Remove handled entries (the changes stay in the graph's history).
+    Done {
+        /// Sequence numbers.
+        #[arg(required = true)]
+        seqs: Vec<u64>,
+        /// What was done about them.
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum RecoverCommand {
     /// Repair a conflicted .resonance/graph.db mechanically, without the merge driver (C6).
     RepairSnapshot,
@@ -353,15 +385,29 @@ pub enum RecoverCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum AgentCommand {
-    /// Register the MCP server with Claude Code at local scope (writes nothing to tracked files).
+    /// Install the agent kit: the MCP server (local scope), the skill, harness hooks and an
+    /// instructions section (MVP-038).
     Install {
-        /// Show the command and change nothing.
+        /// Show what would be written and change nothing.
         #[arg(long)]
         dry_run: bool,
         /// Do not ask for confirmation.
         #[arg(long)]
         yes: bool,
+        /// From stage 2: put the instructions section in the shared CLAUDE.md or AGENTS.md.
+        #[arg(long)]
+        shared: bool,
+        /// For other agents: print an AGENTS.md section and the MCP command line.
+        #[arg(long)]
+        generic: bool,
+        /// Do not register the MCP server with Claude Code.
+        #[arg(long)]
+        no_mcp: bool,
     },
+    /// The installed kit, the conventions for this working tree and the orientation.
+    Status,
+    /// Refresh an installed kit for this version, stage and participation.
+    Update,
 }
 
 #[derive(Debug, Subcommand)]

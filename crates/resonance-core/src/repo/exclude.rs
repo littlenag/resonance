@@ -25,9 +25,14 @@ pub fn exclude_file(repo: &Repo) -> Result<PathBuf> {
 
 /// Add the exclusion if it is not there yet. Returns whether the file changed.
 pub fn add(repo: &Repo) -> Result<bool> {
+    add_line(repo, EXCLUDE_LINE)
+}
+
+/// Add one exclusion line if it is not there yet (local agent files, MVP-038).
+pub fn add_line(repo: &Repo, line: &str) -> Result<bool> {
     let path = exclude_file(repo)?;
     let current = fs::read_to_string(&path).unwrap_or_default();
-    if current.lines().any(|l| l.trim() == EXCLUDE_LINE) {
+    if current.lines().any(|l| l.trim() == line) {
         return Ok(false);
     }
     if let Some(dir) = path.parent() {
@@ -37,7 +42,7 @@ pub fn add(repo: &Repo) -> Result<bool> {
     if !next.is_empty() && !next.ends_with('\n') {
         next.push('\n');
     }
-    next.push_str(EXCLUDE_LINE);
+    next.push_str(line);
     next.push('\n');
     fs::write(&path, next).map_err(|e| Error::io(format!("writing {}", path.display()), e))?;
     Ok(true)

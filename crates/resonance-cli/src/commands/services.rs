@@ -130,6 +130,12 @@ pub struct RepoCheck {
     pub schema_version: Option<u32>,
     pub integrity_problems: Vec<String>,
     pub daemon_running: bool,
+    /// The agent kit (FR-210, FR-214).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_kit: Option<resonance_core::agent::KitStatus>,
+    /// The repository's stage (1 offline, 2 shared).
+    #[serde(default)]
+    pub stage: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,11 +158,18 @@ fn check_repo(repo: &Repo, problems: &mut Vec<String>) -> RepoCheck {
         schema_version: None,
         integrity_problems: Vec::new(),
         daemon_running: runtime::lock_held(&repo.root),
+        agent_kit: None,
+        stage: 0,
     };
     if !initialized {
         return check;
     }
-    if !check.excluded {
+    let config =
+        resonance_core::repo::config::Config::load(&repo.config_path()).unwrap_or_default();
+    let mode = resonance_core::history::mode(repo, &config);
+    check.stage = mode.stage;
+    check.agent_kit = Some(resonance_core::agent::kit_status(repo, mode));
+    if !check.excluded && !mode.shared() {
         problems.push("/.resonance/ is missing from .git/info/exclude; git will see .resonance/ (run `resonance init` to restore it)".into());
     }
     match open_store(&repo.store_path()) {

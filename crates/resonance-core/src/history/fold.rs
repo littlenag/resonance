@@ -285,6 +285,9 @@ pub struct CatchUp {
     pub operations: usize,
     /// Operations a re-fold could not apply.
     pub skipped: usize,
+    /// Operations that arrived through git: in effect now, but not in the store before.
+    #[serde(skip)]
+    pub arrived: Vec<Op>,
 }
 
 /// A re-fold that was refused, kept for `status` and `resonance rebuild`.
@@ -380,6 +383,14 @@ pub fn catch_up(
         .as_ref()
         .map(|d| d.manifest.clone())
         .unwrap_or_default();
+    if !current.is_empty() {
+        out.arrived = base
+            .iter()
+            .chain(open_ops.iter())
+            .filter(|o| !current.contains(&o.op_id))
+            .cloned()
+            .collect();
+    }
     out.skipped = refold(store, &base, &open_ops, &open, carried)?;
     out.refolded = true;
     store.write(GraphScope::Primary, &mut |w| w.delete_meta(keys::HELD))?;

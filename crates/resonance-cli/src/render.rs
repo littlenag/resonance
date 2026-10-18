@@ -192,6 +192,23 @@ pub fn status(s: &StatusView) -> String {
         }
         out.push('\n');
     }
+    if s.pending_changes > 0 {
+        let _ = writeln!(
+            out,
+            "Change log: {} pending entr{} (`resonance changes`); agents clear them before commits, pushes and pulls.\n",
+            s.pending_changes,
+            if s.pending_changes == 1 { "y" } else { "ies" }
+        );
+    }
+    if !s.agent_kit.installed {
+        out.push_str("Agent kit: not installed; onboard your agent with `resonance agent install` (FR-210).\n\n");
+    } else if s.agent_kit.stale {
+        let _ = writeln!(
+            out,
+            "Agent kit: {} is stale; `resonance agent update` refreshes it.\n",
+            s.agent_kit.version.as_deref().unwrap_or("?")
+        );
+    }
     out.push_str(&repair(&s.repair));
     out
 }
@@ -908,7 +925,9 @@ pub fn doctor(d: &crate::commands::services::DoctorReport) -> String {
                 r.schema_version
                     .map(|v| v.to_string())
                     .unwrap_or_else(|| "?".into()),
-                if r.excluded {
+                if r.stage >= 2 {
+                    "shared"
+                } else if r.excluded {
                     "excluded from git"
                 } else {
                     "NOT excluded from git"
@@ -919,6 +938,22 @@ pub fn doctor(d: &crate::commands::services::DoctorReport) -> String {
                     "not running"
                 }
             );
+            match &r.agent_kit {
+                Some(k) if !k.installed => out.push_str(
+                    "Agent kit: not installed; onboard your agent with `resonance agent install` (FR-210)\n",
+                ),
+                Some(k) if k.stale => {
+                    let _ = writeln!(
+                        out,
+                        "Agent kit: {} is stale; `resonance agent update` refreshes it",
+                        k.version.as_deref().unwrap_or("?")
+                    );
+                }
+                Some(k) => {
+                    let _ = writeln!(out, "Agent kit: {} installed", k.version.as_deref().unwrap_or("?"));
+                }
+                None => {}
+            }
         } else {
             let _ = writeln!(out, "This repository: {} (Resonance is not set up)", r.root);
         }

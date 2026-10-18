@@ -4,8 +4,8 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
-use resonance_core::agent::{self, AgentInstall};
-use resonance_core::api::{StatusView, version_info};
+use resonance_core::agent::{self, AgentInstall, ConventionsView, KitOptions, KitReport};
+use resonance_core::api::{GateDecision, StatusView, version_info};
 use resonance_core::daemon::client;
 use resonance_core::error::{Error, Result};
 use resonance_core::ingest::ReconcileReport;
@@ -17,6 +17,24 @@ use super::{Ctx, confirm, exe, open_store};
 use crate::cli::AgentCommand;
 use crate::render;
 
+/// Onboarding includes the agent (FR-210): install the kit when asked, or after confirming.
+fn init_kit(repo: &Repo, with_agent: bool, no_ask: bool) -> Result<Option<KitReport>> {
+    let go = with_agent
+        || (!no_ask
+            && confirm(
+                "Install the Resonance agent kit for Claude Code here (MCP server at local scope, skill, harness hooks, CLAUDE.local.md)?",
+            ) == Some(true));
+    if !go {
+        return Ok(None);
+    }
+    let mode = mode_of(repo)?;
+    Ok(Some(agent::install_kit(
+        repo,
+        mode,
+        &kit_options(exe()?, true, false, false, false),
+    )?))
+}
+
 pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool, offline: bool) -> Result<()> {
     let repo = Repo::discover(&ctx.cwd)?;
     let shared = repo.has_committed_data();
@@ -24,8 +42,12 @@ pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool, offline: bool) -> Resul
     if shared && !offline {
         // A teammate shared the graph: join it and opt in (FR-172, FR-186).
         let join: resonance_core::api::JoinView = ctx.run("join", json!({"exe": exe()?}))?;
+        let kit = match init_kit(&repo, with_agent, no_agent || ctx.json)? {
+            Some(k) => Some(k),
+            None => refresh_kit(&repo)?,
+        };
         let status: StatusView = ctx.run("status", json!({}))?;
-        return ctx.emit(&json!({"setup": setup, "join": join, "counts": status.counts}), |_| {
+        return ctx.emit(&json!({"setup": setup, "join": join, "counts": status.counts, "agent": kit}), |_| {
             let mut out = format!(
                 "Joined the shared Resonance graph in {}; you have opted in (stage 2).\n",
                 repo.root.display()
@@ -40,6 +62,10 @@ pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool, offline: bool) -> Resul
                 out.push_str(&format!("hook {}: {}\n", h.hook, h.action));
             }
             out.push_str("Your commits are now checked for consistency with the graph (pre-commit, pre-push). `resonance leave` steps out.\n");
+            match &kit {
+                Some(k) => out.push_str(&kit_text(k)),
+                None => out.push_str("Onboard your agent with `resonance agent install` (FR-210).\n"),
+            }
             out.push_str(&render::counts_line(&status.counts));
             out.push('\n');
             out
@@ -48,18 +74,7 @@ pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool, offline: bool) -> Resul
     // The first reconcile reads every file: in the daemon as it starts, or here.
     let status: StatusView = ctx.run("status", json!({}))?;
 
-    let agent = if with_agent {
-        Some(agent::install(&repo.root, &exe()?, true)?)
-    } else if no_agent || ctx.json {
-        None
-    } else {
-        match confirm(
-            "Register the Resonance MCP server with Claude Code for this project (local scope only)?",
-        ) {
-            Some(true) => Some(agent::install(&repo.root, &exe()?, true)?),
-            _ => None,
-        }
-    };
+    let agent = init_kit(&repo, with_agent, no_agent || ctx.json)?;
 
     if ctx.json {
         return ctx.emit(
@@ -88,9 +103,9 @@ pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool, offline: bool) -> Resul
     out.push_str(&render::counts_line(&status.counts));
     out.push('\n');
     match &agent {
-        Some(a) => out.push_str(&agent_text(a)),
+        Some(a) => out.push_str(&kit_text(a)),
         None => out.push_str(
-            "Next: import requirements with `resonance import <file.md>`, and let Claude Code use Resonance with `resonance agent install`.\n",
+            "Next: import requirements with `resonance import <file.md>`, and onboard your agent with `resonance agent install`.\n",
         ),
     }
     ctx.emit(&(), |_| out)
@@ -103,7 +118,6 @@ fn agent_text(a: &AgentInstall) -> String {
         if !a.output.is_empty() {
             out.push_str(&format!("{}\n", a.output));
         }
-        out.push_str("Start a new Claude Code session here to use it.\n");
     } else {
         if a.ran {
             out.push_str(&format!(
@@ -119,46 +133,243 @@ fn agent_text(a: &AgentInstall) -> String {
     out
 }
 
-pub fn agent(ctx: &Ctx, cmd: AgentCommand) -> Result<()> {
-    let AgentCommand::Install { dry_run, yes } = cmd;
-    let repo = Repo::discover(&ctx.cwd)?;
-    let exe = exe()?;
-    let plan = agent::install(&repo.root, &exe, false)?;
-    if dry_run || !plan.claude_found {
-        let mut text = String::new();
-        if dry_run && plan.claude_found {
-            text.push_str(&format!(
-                "Would run (in {}):\n  {}\nThis writes only to Claude Code's local configuration for this project; no tracked file changes.\n",
-                repo.root.display(),
-                plan.command
-            ));
-        } else {
-            text = agent_text(&plan);
-        }
-        return ctx.emit(&plan, |_| text);
+/// This working tree's mode, read without the daemon.
+fn mode_of(repo: &Repo) -> Result<resonance_core::history::Mode> {
+    let config = resonance_core::repo::config::Config::load(&repo.config_path())?;
+    Ok(resonance_core::history::mode(repo, &config))
+}
+
+fn kit_options(
+    exe: PathBuf,
+    register_mcp: bool,
+    shared: bool,
+    generic: bool,
+    dry_run: bool,
+) -> KitOptions {
+    KitOptions {
+        exe,
+        home: super::home_dir(),
+        register_mcp,
+        shared_section: shared,
+        generic,
+        dry_run,
     }
-    let go = yes
-        || confirm(&format!(
-            "Run `{}`? It registers the server for this project only (Claude Code local scope).",
-            plan.command
-        ))
-        .unwrap_or(false);
-    if !go {
-        let text = format!(
-            "Nothing changed. To register, run `resonance agent install --yes`, or run this yourself:\n  {}\n",
-            plan.command
+}
+
+fn kit_text(r: &KitReport) -> String {
+    let mut out = String::new();
+    if r.harness == "generic" {
+        out.push_str("For agents other than Claude Code (FR-214):\n\n1. Run the MCP server as a stdio server in this directory:\n   ");
+        out.push_str(r.mcp_command.as_deref().unwrap_or("resonance mcp"));
+        out.push_str(
+            "\n\n2. Add this section to AGENTS.md (or your agent's instructions file):\n\n",
         );
-        ctx.emit(&plan, |_| text)?;
-        return Err(Error::Invalid("not confirmed".into()));
+        out.push_str(r.section.as_deref().unwrap_or_default());
+        out.push('\n');
+    } else if let Some(m) = &r.mcp {
+        out.push_str(&agent_text(m));
     }
-    let result = agent::install(&repo.root, &exe, true)?;
-    let text = agent_text(&result);
-    ctx.emit(&result, |_| text)?;
-    if result.succeeded {
-        Ok(())
+    let verb = if r.dry_run {
+        "Would install"
     } else {
-        Err(Error::Invalid("registering the MCP server failed".into()))
+        "Installed"
+    };
+    if !r.steps.is_empty() {
+        out.push_str(&format!(
+            "{verb} the agent kit {} (stage {}, {}):\n",
+            r.version, r.stage, r.participation
+        ));
+        for s in &r.steps {
+            out.push_str(&format!("  {}: {} ({})\n", s.what, s.path, s.action));
+        }
     }
+    if !r.dry_run {
+        out.push_str(
+            "Start a new agent session here; ask it for the Resonance orientation (FR-225).\n",
+        );
+    }
+    out
+}
+
+/// After `share` or `join`: refresh an installed kit for the new stage (MVP-037).
+pub fn refresh_kit(repo: &Repo) -> Result<Option<KitReport>> {
+    let Some(rec) = agent::kit_record(repo) else {
+        return Ok(None);
+    };
+    let generic = rec.harness == "generic";
+    let shared = rec
+        .files
+        .iter()
+        .any(|f| f == "CLAUDE.md" || f == "AGENTS.md");
+    let mode = mode_of(repo)?;
+    Ok(Some(agent::install_kit(
+        repo,
+        mode,
+        &kit_options(exe()?, false, shared, generic, false),
+    )?))
+}
+
+pub fn agent(ctx: &Ctx, cmd: AgentCommand) -> Result<()> {
+    let repo = Repo::discover(&ctx.cwd)?;
+    if !repo.is_initialized() {
+        return Err(Error::NotInitialized);
+    }
+    let mode = mode_of(&repo)?;
+    match cmd {
+        AgentCommand::Status => {
+            let v: ConventionsView = ctx.run("conventions", json!({}))?;
+            ctx.emit(&v, |v| {
+                let mut out = String::new();
+                match (&v.kit.installed, &v.kit.version) {
+                    (true, Some(ver)) => {
+                        out.push_str(&format!(
+                            "Agent kit {ver} installed ({}){}.\n",
+                            v.kit.harness.as_deref().unwrap_or("?"),
+                            if v.kit.stale {
+                                "; stale: `resonance agent update`"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
+                    _ => out.push_str(
+                        "The agent kit is not installed: `resonance agent install` (FR-210).\n",
+                    ),
+                }
+                out.push_str("\nOrientation:\n");
+                for l in &v.orientation {
+                    out.push_str(&format!("  {l}\n"));
+                }
+                out
+            })
+        }
+        AgentCommand::Update => {
+            let Some(rec) = agent::kit_record(&repo) else {
+                return Err(Error::Invalid(
+                    "the agent kit is not installed; run `resonance agent install`".into(),
+                ));
+            };
+            let shared = rec
+                .files
+                .iter()
+                .any(|f| f == "CLAUDE.md" || f == "AGENTS.md");
+            let generic = rec.harness == "generic";
+            let report = agent::install_kit(
+                &repo,
+                mode,
+                &kit_options(exe()?, false, shared, generic, false),
+            )?;
+            ctx.emit(&report, kit_text)
+        }
+        AgentCommand::Install {
+            dry_run,
+            yes,
+            shared,
+            generic,
+            no_mcp,
+        } => {
+            if shared && !mode.shared() {
+                return Err(Error::Invalid(
+                    "the shared instructions file is edited only from stage 2 (FR-132); offline, the kit stays local".into(),
+                ));
+            }
+            let plan = agent::install_kit(
+                &repo,
+                mode,
+                &kit_options(exe()?, !no_mcp, shared, generic, true),
+            )?;
+            if dry_run {
+                let mut text = kit_text(&plan);
+                if let Some(m) = &plan.mcp
+                    && m.claude_found
+                    && !no_mcp
+                {
+                    text.push_str(&format!(
+                        "Would run (in {}):\n  {}\n",
+                        repo.root.display(),
+                        m.command
+                    ));
+                }
+                return ctx.emit(&plan, |_| text);
+            }
+            let go = yes
+                || confirm(&format!(
+                    "Install the Resonance agent kit here (stage {}, {})? It writes local agent configuration only{}.",
+                    mode.stage,
+                    mode.participation.as_str(),
+                    if shared { ", plus a section in the shared instructions file" } else { "" }
+                ))
+                .unwrap_or(false);
+            if !go {
+                let text = "Nothing changed. To install, run `resonance agent install --yes` (`--dry-run` shows what it writes).\n".to_string();
+                ctx.emit(&plan, |_| text)?;
+                return Err(Error::Invalid("not confirmed".into()));
+            }
+            let report = agent::install_kit(
+                &repo,
+                mode,
+                &kit_options(exe()?, !no_mcp, shared, generic, false),
+            )?;
+            ctx.emit(&report, kit_text)?;
+            match &report.mcp {
+                Some(m) if m.ran && !m.succeeded => {
+                    Err(Error::Invalid("registering the MCP server failed".into()))
+                }
+                _ => Ok(()),
+            }
+        }
+    }
+}
+
+/// `resonance agent-hook pre-git` (FR-222): the harness hook. Reads Claude Code's hook input
+/// on standard input and, to stop the command, prints a `deny` decision with the reason.
+pub fn agent_hook(ctx: &Ctx, event: &str) -> Result<()> {
+    if event != "pre-git" {
+        return Err(Error::Usage(format!(
+            "unknown agent hook event `{event}` (expected pre-git)"
+        )));
+    }
+    let mut input = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
+    let v: Value = serde_json::from_str(&input).unwrap_or(Value::Null);
+    let command = v["tool_input"]["command"]
+        .as_str()
+        .or(v["command"].as_str())
+        .unwrap_or(input.trim())
+        .to_string();
+    let (git, _) = resonance_core::api::git_subcommands(&command);
+    if git.is_empty() {
+        return Ok(());
+    }
+    if !Repo::discover(&ctx.cwd).is_ok_and(|r| r.is_initialized()) {
+        return Ok(()); // Not a Resonance working tree: nothing to gate.
+    }
+    let d: GateDecision = match ctx.run("agent_gate", json!({"command": command})) {
+        Ok(d) => d,
+        Err(e) => {
+            ctx.note(&format!(
+                "resonance: the agent gate could not run ({e}); the git hooks still check"
+            ));
+            return Ok(());
+        }
+    };
+    if ctx.json {
+        return ctx.emit(&d, |_| String::new());
+    }
+    if d.decision == "deny" {
+        let out = json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": d.reason,
+            }
+        });
+        return ctx.emit(&out, |o| format!("{o}\n"));
+    }
+    if d.overridden {
+        ctx.note("resonance: the developer overrode the agent gate; the git hooks still check.");
+    }
+    Ok(())
 }
 
 pub fn status(ctx: &Ctx) -> Result<()> {

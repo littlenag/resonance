@@ -2,6 +2,7 @@
 //! (FR-252), or run in this process with `--no-daemon` (direct mode, MVP-002). Either way the
 //! graph is brought up to date with the disk before the answer.
 
+mod changes;
 mod intent;
 mod links;
 mod recover;
@@ -153,8 +154,17 @@ pub fn exe() -> Result<PathBuf> {
     Ok(p.canonicalize().unwrap_or(p))
 }
 
-/// The person running the CLI, from git's configuration.
+/// Who is running the CLI (MVP-040): the agent named by `RESONANCE_ACTOR` (`agent:<name>`,
+/// set by the agent kit in the agent's environment), or else the person from git's
+/// configuration.
 pub fn human_actor(repo: &Repo) -> Actor {
+    if let Ok(v) = std::env::var("RESONANCE_ACTOR") {
+        match v.split_once(':') {
+            Some(("agent", name)) if !name.is_empty() => return Actor::agent(name),
+            Some(("human", name)) if !name.is_empty() => return Actor::human(name),
+            _ => {}
+        }
+    }
     let id = repo
         .git(&["config", "user.email"])
         .ok()
@@ -217,6 +227,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::ShowDelta { file } => shared::show_delta(&ctx, &file),
         Command::Hook { name, args } => shared::hook(&ctx, &name, &args),
         Command::GitDriver(cmd) => shared::git_driver(cmd),
+        Command::AgentHook { event } => setup::agent_hook(&ctx, &event),
         Command::Status => setup::status(&ctx),
         Command::Reconcile { full } => setup::reconcile(&ctx, full),
         Command::RebuildDerived => setup::rebuild_derived(&ctx),
@@ -224,6 +235,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Restore { file } => setup::restore(&ctx, &file),
         Command::Recover { action } => recover::recover(&ctx, action),
         Command::Value => recover::value(&ctx),
+        Command::Changes { action, since } => changes::changes(&ctx, action, since),
         Command::Backup {
             restore,
             from,
