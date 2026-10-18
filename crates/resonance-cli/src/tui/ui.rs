@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use serde_json::Value;
 
 use super::app::{App, FormRow, Screen};
@@ -16,6 +16,14 @@ List
   s              cycle the status filter                esc   clear filters
   a              add an item     e       edit            r     retire
   l              the change log  g       reload          q     quit
+
+Details
+  up/down, j/k   scroll the text          n/p     next/previous item
+  pgup/pgdn      scroll a page            esc     back
+
+Change log
+  up/down, j/k   scroll                   pgup/pgdn  scroll a page
+  esc            back
 
 Edit and add
   up/down, tab   move between fields
@@ -88,14 +96,14 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         (Screen::List, _) => {
             "enter details · / filter · t type · s status · a add · e edit · r retire · l log · ? help · q quit"
         }
-        (Screen::Detail, _) => "esc back · e edit · r retire · a add · l log · ? help · q quit",
+        (Screen::Detail, _) => {
+            "j/k scroll · n/p item · pgup/pgdn page · esc back · e edit · r retire · ? help · q quit"
+        }
         (Screen::Form, _) => {
             "tab/↑↓ move · type to edit · enter: long field in $EDITOR · ctrl-s save · esc cancel"
         }
         (Screen::Confirm, _) => "y retire · any other key: keep",
-        (Screen::Log, _) => {
-            "read-only · agents clear entries with `resonance changes done` · esc back"
-        }
+        (Screen::Log, _) => "j/k scroll · pgup/pgdn page · esc back · q quit",
         (Screen::Help, _) => "any key: back",
     };
     let mut lines = vec![Line::from(Span::styled(
@@ -187,11 +195,38 @@ fn value_text(v: &Value) -> String {
     }
 }
 
-fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
-    let Some(d) = &app.detail else {
-        f.render_widget(Paragraph::new("Nothing selected."), area);
+fn push_field(lines: &mut Vec<Line<'static>>, bold: Style, key: &str, text: &str) {
+    let mut rows = text.lines();
+    let Some(first) = rows.next() else {
+        lines.push(Line::from(Span::styled(format!("{key}: "), bold)));
         return;
     };
+    lines.push(Line::from(vec![
+        Span::styled(format!("{key}: "), bold),
+        Span::raw(first.to_string()),
+    ]));
+    for l in rows {
+        lines.push(Line::from(format!("  {l}")));
+    }
+}
+
+/// `alsoDefinedIn` is a list of `{path, line}` from later sources of the same key.
+fn also_defined_text(v: &Value) -> String {
+    let Some(items) = v.as_array() else {
+        return value_text(v);
+    };
+    items
+        .iter()
+        .map(|item| {
+            let path = item.get("path").and_then(Value::as_str).unwrap_or("?");
+            let line = item.get("line").and_then(Value::as_u64).unwrap_or(0);
+            format!("{path}:{line}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn detail_lines(d: &Value) -> Vec<Line<'static>> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut lines: Vec<Line> = Vec::new();
     let node = &d["node"];
@@ -211,25 +246,25 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
             value_text(&src["line"])
         )));
     }
+    // Shown on their own: the generic loop would hide them, or print the array as JSON.
+    if let Some(status) = props.get("specStatus").and_then(Value::as_str) {
+        if !status.is_empty() {
+            push_field(&mut lines, bold, "specStatus", status);
+        }
+    }
+    if let Some(also) = props.get("alsoDefinedIn").filter(|v| !v.is_null()) {
+        let text = also_defined_text(also);
+        if !text.is_empty() {
+            push_field(&mut lines, bold, "alsoDefinedIn", &text);
+        }
+    }
     lines.push(Line::from(""));
     let skip = ["source", "alsoDefinedIn", "key", "specStatus"];
     for (k, v) in &props {
         if skip.contains(&k.as_str()) || v.is_null() {
             continue;
         }
-        let text = value_text(v);
-        let mut first = true;
-        for l in text.lines() {
-            if first {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{k}: "), bold),
-                    Span::raw(l.to_string()),
-                ]));
-                first = false;
-            } else {
-                lines.push(Line::from(format!("  {l}")));
-            }
-        }
+        push_field(&mut lines, bold, k, &value_text(v));
     }
     lines.push(Line::from(""));
     let links = d["links"].as_array().cloned().unwrap_or_default();
@@ -269,9 +304,24 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
             )));
         }
     }
+    lines
+}
+
+fn draw_detail(f: &mut Frame, app: &mut App, area: Rect) {
+    let Some(d) = app.detail.clone() else {
+        f.render_widget(Paragraph::new("Nothing selected."), area);
+        return;
+    };
+    let lines = detail_lines(&d);
+    // The border takes two rows; scroll is in lines of the paragraph inside it.
+    let inner = area.height.saturating_sub(2) as usize;
+    let max = lines.len().saturating_sub(inner) as u16;
+    app.detail_scroll = app.detail_scroll.min(max);
+    let scroll = app.detail_scroll;
     f.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
+            .scroll((scroll, 0))
             .block(Block::default().borders(Borders::ALL).title(" Details ")),
         area,
     );
@@ -359,7 +409,7 @@ fn draw_confirm(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn draw_log(f: &mut Frame, app: &App, area: Rect) {
+fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     if app.log.is_empty() {
         f.render_widget(
             Paragraph::new("The change log is empty: agents have handled every change.")
@@ -368,6 +418,9 @@ fn draw_log(f: &mut Frame, app: &App, area: Rect) {
         );
         return;
     }
+    let max = app.log.len().saturating_sub(1);
+    app.log_offset = app.log_offset.min(max);
+    let mut state = TableState::new().with_offset(app.log_offset);
     let rows: Vec<Row> = app
         .log
         .iter()
@@ -381,7 +434,7 @@ fn draw_log(f: &mut Frame, app: &App, area: Rect) {
             ])
         })
         .collect();
-    f.render_widget(
+    f.render_stateful_widget(
         Table::new(
             rows,
             [
@@ -402,5 +455,7 @@ fn draw_log(f: &mut Frame, app: &App, area: Rect) {
                 .title(format!(" Change log: {} pending ", app.log.len())),
         ),
         area,
+        &mut state,
     );
+    app.log_offset = state.offset();
 }

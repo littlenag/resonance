@@ -13,11 +13,11 @@ The TUI is a client of the daemon, so it stays current as files, git and other t
 | Screen | Keys |
 | --- | --- |
 | **List**: key, type, status, title, links (and how many are stale), and `doc` for items imported from a document | `↑`/`↓` or `j`/`k` move · `enter` details · `/` filter by text · `t` cycle the type filter · `s` cycle the status filter · `esc` clear filters |
-| **Details**: every field, links with their statuses and latest test results, annotations, and the source document | `esc` back |
+| **Details**: every field (including `specStatus` and `alsoDefinedIn`), links with their statuses and latest test results, annotations, and the source document | `j`/`k` or `↑`/`↓` scroll · `pgup`/`pgdn` scroll a page · `n`/`p` next and previous item · `esc` back |
 | **Edit** (`e`) | `tab`/`↑`/`↓` move between fields · type to change short fields · `enter` on a long field (requirement text, decision text) opens it in `$VISUAL` or `$EDITOR` · `ctrl-s` or `F2` save · `esc` cancel |
 | **Add** (`a`) | `←`/`→` on the type row changes the type · the key is prefilled with the next free key for its prefix (`FR-043`, `ADR-0007`) · an existing key is refused |
 | **Retire** (`r`) | Asks first, and shows how many links the item has. Items are retired, never deleted, and their links stay. |
-| **Change log** (`l`) | The pending entries, read-only. |
+| **Change log** (`l`) | The pending entries, read-only. `j`/`k` or `↑`/`↓` scroll · `pgup`/`pgdn` scroll a page · `esc` back |
 | Anywhere | `?` help · `g` reload · `q` quit |
 
 Items imported from a document are owned by that document. For them, `e` and `r` open the document in your editor at the item's line; Resonance picks up your edit when you save. The TUI itself writes no project files.

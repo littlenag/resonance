@@ -179,6 +179,12 @@ pub struct App {
     pub form: Option<Form>,
     pub confirm: Option<Confirm>,
     pub log: Vec<Entry>,
+    /// First visible change-log row. `j`/`k` move it; the log is read-only.
+    pub log_offset: usize,
+    /// Lines scrolled off the top of the detail screen.
+    pub detail_scroll: u16,
+    /// Item whose detail is open, so a reload of the same item keeps the scroll position.
+    detail_for: Option<String>,
     /// The last message: (text, is an error).
     pub message: Option<(String, bool)>,
     pub quit: bool,
@@ -203,6 +209,9 @@ impl App {
             form: None,
             confirm: None,
             log: Vec::new(),
+            log_offset: 0,
+            detail_scroll: 0,
+            detail_for: None,
             message: None,
             quit: false,
         };
@@ -268,7 +277,13 @@ impl App {
     }
 
     fn load_detail(&mut self) -> Result<()> {
-        self.detail = match self.selected().map(|i| i.id.clone()) {
+        let id = self.selected().map(|i| i.id.clone());
+        // A different item starts at the top. Reloading the same item keeps the place.
+        if id != self.detail_for {
+            self.detail_scroll = 0;
+            self.detail_for = id.clone();
+        }
+        self.detail = match id {
             Some(id) => Some(self.client.call("show", json!({"ref": id}))?),
             None => None,
         };
@@ -277,7 +292,25 @@ impl App {
 
     fn load_log(&mut self) -> Result<()> {
         self.log = serde_json::from_value(self.client.call("changes", json!({}))?)?;
+        let max = self.log.len().saturating_sub(1);
+        self.log_offset = self.log_offset.min(max);
         Ok(())
+    }
+
+    fn scroll_detail(&mut self, delta: i32) {
+        let next = i32::from(self.detail_scroll).saturating_add(delta).max(0);
+        self.detail_scroll = u16::try_from(next).unwrap_or(u16::MAX);
+    }
+
+    fn scroll_log(&mut self, delta: isize) {
+        if self.log.is_empty() {
+            self.log_offset = 0;
+            return;
+        }
+        let max = self.log.len() as isize - 1;
+        self.log_offset = (self.log_offset as isize)
+            .saturating_add(delta)
+            .clamp(0, max) as usize;
     }
 
     /// Handle one key; returns what the run loop must do next.
@@ -304,11 +337,9 @@ impl App {
             Screen::Detail => self.on_detail_key(key),
             Screen::Form => self.on_form_key(key),
             Screen::Confirm => self.on_confirm_key(key),
-            Screen::Log | Screen::Help => {
-                match key.code {
-                    KeyCode::Char('q') if self.screen == Screen::Log => self.quit = true,
-                    _ => self.screen = self.back,
-                }
+            Screen::Log => self.on_log_key(key),
+            Screen::Help => {
+                self.screen = self.back;
                 Ok(Effect::None)
             }
         }
@@ -350,6 +381,7 @@ impl App {
                 self.screen = Screen::Help;
             }
             KeyCode::Char('l') => {
+                self.log_offset = 0;
                 self.load_log()?;
                 self.back = self.screen;
                 self.screen = Screen::Log;
@@ -425,14 +457,36 @@ impl App {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Backspace => self.screen = Screen::List,
-            KeyCode::Down | KeyCode::Char('j') => {
+            // Scroll the open item. `n`/`p` move between items, which `j`/`k` used to do.
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_detail(1),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_detail(-1),
+            KeyCode::PageDown => self.scroll_detail(10),
+            KeyCode::PageUp => self.scroll_detail(-10),
+            KeyCode::Char('n') => {
                 self.move_selection(1);
                 self.load_detail()?;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Char('p') => {
                 self.move_selection(-1);
                 self.load_detail()?;
             }
+            _ => {}
+        }
+        Ok(Effect::None)
+    }
+
+    fn on_log_key(&mut self, key: KeyEvent) -> Result<Effect> {
+        match key.code {
+            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('?') => {
+                self.back = Screen::Log;
+                self.screen = Screen::Help;
+            }
+            KeyCode::Esc | KeyCode::Backspace => self.screen = self.back,
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_log(1),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_log(-1),
+            KeyCode::PageDown => self.scroll_log(10),
+            KeyCode::PageUp => self.scroll_log(-10),
             _ => {}
         }
         Ok(Effect::None)

@@ -340,7 +340,7 @@ This installs the agent kit: Resonance's MCP server for this project only (Claud
 $ resonance tui
 ```
 
-lists your requirements and decisions; `enter` shows one, `a` adds one, and `l` shows the change log, which records your spec edits for your agent to pick up. See [The TUI and the change log](tui-and-change-log.md).
+lists your requirements and decisions; `enter` shows one (`j`/`k` scroll a long item, `n`/`p` move to the next), `a` adds one, and `l` shows the change log, which records your spec edits for your agent to pick up. See [The TUI and the change log](tui-and-change-log.md).
 
 ## Where to go next
 

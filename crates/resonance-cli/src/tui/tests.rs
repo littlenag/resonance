@@ -87,9 +87,9 @@ fn save(app: &mut App) {
     app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
 }
 
-/// The screen as text.
-fn render(app: &mut App) -> String {
-    let mut t = Terminal::new(TestBackend::new(140, 30)).unwrap();
+/// The screen as text, at the given size.
+fn render_size(app: &mut App, width: u16, height: u16) -> String {
+    let mut t = Terminal::new(TestBackend::new(width, height)).unwrap();
     t.draw(|f| ui::draw(f, app)).unwrap();
     let buf = t.backend().buffer().clone();
     let mut out = String::new();
@@ -100,6 +100,11 @@ fn render(app: &mut App) -> String {
         out.push('\n');
     }
     out
+}
+
+/// The screen as text.
+fn render(app: &mut App) -> String {
+    render_size(app, 140, 30)
 }
 
 fn select(app: &mut App, key: &str) {
@@ -316,4 +321,163 @@ fn imported_items_open_their_source_document() {
         .collect();
     assert_eq!(cmd.get_program(), "sh");
     assert_eq!(args, ["-c", "code -w \"$@\"", "sh", "+4", "/x/spec.md"]);
+}
+
+#[test]
+fn detail_shows_spec_status_and_other_definitions() {
+    let (dir, mut app) = setup();
+    std::fs::write(
+        dir.path().join("spec/requirements.md"),
+        "# Requirements\n\n- **FR-001** The store opens a database at a path. [Decided]\n- **FR-002** Saving is atomic.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("spec/also.md"),
+        "- **FR-001** A second definition of the same key.\n",
+    )
+    .unwrap();
+    call(
+        &mut app,
+        "import",
+        json!({"paths": ["spec/requirements.md", "spec/also.md"]}),
+    );
+    app.refresh();
+    select(&mut app, "FR-001");
+    app.on_key(key(KeyCode::Enter));
+    let screen = render(&mut app);
+    assert!(
+        screen.contains("specStatus: Decided"),
+        "the trailing status label is a field of the item:\n{screen}"
+    );
+    assert!(
+        screen.contains("alsoDefinedIn:") && screen.contains("spec/also.md:1"),
+        "a later source of the same key is listed:\n{screen}"
+    );
+    // `n` moves to the next item and starts that item at the top.
+    press(&mut app, 'j');
+    press(&mut app, 'j');
+    press(&mut app, 'n');
+    assert_eq!(app.detail_scroll, 0);
+    let screen = render(&mut app);
+    assert!(screen.contains("FR-002"), "{screen}");
+    assert!(!screen.contains("specStatus: Decided"), "{screen}");
+}
+
+#[test]
+fn detail_and_change_log_scroll() {
+    let (_dir, mut app) = setup();
+    let text: String = (0..40)
+        .map(|i| format!("scroll-line-{i:02}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    call(
+        &mut app,
+        "spec_add",
+        json!({"type": "Requirement", "key": "FR-040", "fields": {"text": text}}),
+    );
+    for i in 0..12 {
+        call(
+            &mut app,
+            "spec_add",
+            json!({"type": "Decision", "key": format!("ADR-{i:03}"), "fields": {"title": format!("decision {i}"), "decision": "yes"}}),
+        );
+    }
+    app.refresh();
+
+    select(&mut app, "FR-040");
+    app.on_key(key(KeyCode::Enter));
+    assert_eq!(app.screen, Screen::Detail);
+    // Short terminal: the header fields fill the window, so the long body is clipped.
+    let top = render_size(&mut app, 80, 12);
+    assert!(top.contains("FR-040"), "{top}");
+    assert!(
+        !top.contains("scroll-line-30"),
+        "the tail is below the window:\n{top}"
+    );
+
+    // j moves down until the first body line appears, then until it leaves.
+    let mut saw_start = top.contains("scroll-line-00");
+    let mut passed_start = false;
+    for _ in 0..80 {
+        press(&mut app, 'j');
+        let screen = render_size(&mut app, 80, 12);
+        if screen.contains("scroll-line-00") {
+            saw_start = true;
+        } else if saw_start {
+            assert!(
+                screen.contains("scroll-line-"),
+                "j keeps a later line on screen:\n{screen}"
+            );
+            passed_start = true;
+            break;
+        }
+    }
+    assert!(saw_start && passed_start, "j scrolls the open item");
+
+    // A reload of the same item (the direct-mode refresh) keeps the place.
+    let kept = app.detail_scroll;
+    assert!(kept > 0);
+    app.refresh();
+    assert_eq!(app.screen, Screen::Detail);
+    assert_eq!(app.detail_scroll, kept);
+    assert!(
+        !render_size(&mut app, 80, 12).contains("scroll-line-00"),
+        "refresh does not jump back to the top"
+    );
+
+    let at = app.detail_scroll;
+    app.on_key(key(KeyCode::PageUp));
+    let _ = render_size(&mut app, 80, 12);
+    assert!(app.detail_scroll < at, "page up scrolls toward the start");
+
+    // Extra j presses stop at the last line instead of scrolling into a blank page.
+    for _ in 0..200 {
+        press(&mut app, 'j');
+    }
+    let end = render_size(&mut app, 80, 12);
+    assert!(
+        end.contains("Links") || end.contains("scroll-line-39"),
+        "the end stays on screen:\n{end}"
+    );
+    let capped = app.detail_scroll;
+    press(&mut app, 'j');
+    let _ = render_size(&mut app, 80, 12);
+    assert_eq!(app.detail_scroll, capped);
+
+    for _ in 0..200 {
+        press(&mut app, 'k');
+    }
+    let _ = render_size(&mut app, 80, 12);
+    assert_eq!(
+        app.detail_scroll, 0,
+        "k scrolls back to the start and stops"
+    );
+
+    // The change log is its own screen: j scrolls it and does not leave it.
+    press(&mut app, 'l');
+    assert_eq!(app.screen, Screen::Log);
+    let log = render_size(&mut app, 100, 12);
+    assert!(log.contains("FR-040 created"), "{log}");
+    assert!(
+        !log.contains("decision 11"),
+        "later entries start off screen:\n{log}"
+    );
+    for _ in 0..8 {
+        press(&mut app, 'j');
+    }
+    assert_eq!(app.screen, Screen::Log);
+    let log = render_size(&mut app, 100, 12);
+    assert!(
+        !log.contains("FR-040 created"),
+        "j scrolls the change log:\n{log}"
+    );
+    assert!(
+        log.contains("decision 8") || log.contains("decision 11"),
+        "{log}"
+    );
+    // A key that is not a log command stays on the log.
+    press(&mut app, 'x');
+    assert_eq!(app.screen, Screen::Log);
+    app.on_key(key(KeyCode::Esc));
+    assert_eq!(app.screen, Screen::Detail);
 }

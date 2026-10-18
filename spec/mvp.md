@@ -194,7 +194,7 @@ Goals served: G1–G4, G6, G7, G8 (partial), G9, G12, G13, G14. Principles honor
 
   Its changes carry the person's identity. It is tested with `ratatui`'s test backend.
 
-  As built: forms save with `ctrl-s` (or `F2`) and cancel with `esc`; `g` reloads. In direct mode, where there is no daemon to subscribe to, the TUI reloads every two seconds. An existing key is refused at creation; putting a later collision with an imported key on the repair list (FR-273) is not built yet.
+  As built: forms save with `ctrl-s` (or `F2`) and cancel with `esc`; `g` reloads. On the detail screen, `j`/`k` (and `↑`/`↓`) scroll and `n`/`p` move to the next and previous item; `pgup`/`pgdn` scroll a page. The change log scrolls the same way and `esc` leaves it. In direct mode, where there is no daemon to subscribe to, the TUI reloads every two seconds. An existing key is refused at creation; putting a later collision with an imported key on the repair list (FR-273) is not built yet.
 
 ---
 
