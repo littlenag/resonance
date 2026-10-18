@@ -1,0 +1,3 @@
+# Written by `resonance share`: per-working-tree state is never committed (FR-025).
+local/
+*.tmp

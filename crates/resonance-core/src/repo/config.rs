@@ -181,6 +181,48 @@ impl Config {
     }
 }
 
+/// Set one value in the configuration file, keeping every other line (and comments). `value`
+/// is a TOML literal, for example `2` or `"0.1.0"`.
+pub fn set_value(path: &Path, table: &str, key: &str, value: &str) -> Result<()> {
+    let text = fs::read_to_string(path).unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
+    let rendered = format!("{key} = {value}");
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut done = false;
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            if current == table && !done {
+                out.push(rendered.clone());
+                done = true;
+            }
+            current = t.trim_matches(|c| c == '[' || c == ']').trim().to_string();
+        }
+        let is_key = t.split_once('=').is_some_and(|(k, _)| k.trim() == key);
+        if current == table && !done && is_key {
+            out.push(rendered.clone());
+            done = true;
+            continue;
+        }
+        out.push(line.to_string());
+        if i + 1 == lines.len() && current == table && !done {
+            out.push(rendered.clone());
+            done = true;
+        }
+    }
+    if !done {
+        out.push(String::new());
+        out.push(format!("[{table}]"));
+        out.push(rendered);
+    }
+    let mut next = out.join("\n");
+    next.push('\n');
+    toml::from_str::<Config>(&next)
+        .map_err(|e| Error::Config(format!("could not update {}: {e}", path.display())))?;
+    fs::write(path, next).map_err(|e| Error::io(format!("writing {}", path.display()), e))
+}
+
 /// Rewrite `intent.sources` in the configuration file, keeping every other line (and its
 /// comments) as it was.
 pub fn write_intent_sources(path: &Path, sources: &[String]) -> Result<()> {

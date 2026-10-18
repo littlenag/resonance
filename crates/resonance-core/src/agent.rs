@@ -117,3 +117,8 @@ pub fn install(root: &Path, resonance_exe: &Path, run: bool) -> Result<AgentInst
         instructions: (!out.status.success()).then_some(manual),
     })
 }
+
+/// Whether the agent kit is installed for this working tree (FR-210).
+pub fn kit_installed(repo: &crate::repo::Repo) -> bool {
+    repo.local_dir().join("agent-kit.json").is_file()
+}

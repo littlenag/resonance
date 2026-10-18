@@ -18,6 +18,16 @@ pub fn recover(ctx: &Ctx, action: Option<RecoverCommand>) -> Result<()> {
             let v: RecoverView = ctx.run("recover", json!({"action": "list"}))?;
             ctx.emit(&v, render_recover)
         }
+        Some(RecoverCommand::RepairSnapshot) => {
+            let v: Value = ctx.run("repair_snapshot", json!({}))?;
+            ctx.emit(&v, |v| {
+                if v["repaired"] == true {
+                    "Merged both sides of .resonance/graph.db and staged the result; finish the merge with `git commit`.\n".into()
+                } else {
+                    "No conflict on .resonance/graph.db.\n".into()
+                }
+            })
+        }
         Some(RecoverCommand::Undo { id }) => {
             let v: UndoView = ctx.run("recover", json!({"action": "undo", "id": id}))?;
             ctx.emit(&v, |v| {

@@ -156,19 +156,39 @@ impl TestRepo {
     }
 
     pub fn git(&self, args: &[&str]) -> String {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(self.path())
-            .env("HOME", self.home())
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .output()
-            .expect("git");
+        let out = self.git_command(args).output().expect("git");
         assert!(
             out.status.success(),
             "git {args:?} failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// git, with the same Resonance environment as `command`, so that hooks git runs behave
+    /// like the test's own `resonance` runs.
+    pub fn git_command(&self, args: &[&str]) -> Command {
+        let mut cmd = Command::new("git");
+        cmd.args(args)
+            .current_dir(self.path())
+            .env("HOME", self.home())
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        for (k, _) in std::env::vars() {
+            if k.starts_with("RESONANCE_") {
+                cmd.env_remove(k);
+            }
+        }
+        cmd.env("RESONANCE_RUNTIME_DIR", self.runtime.path())
+            .env("RESONANCE_DAEMON_IDLE_SECONDS", "120");
+        if direct_mode() && !self.force_daemon {
+            cmd.env("RESONANCE_NO_DAEMON", "1");
+        }
+        cmd
+    }
+
+    /// Run git and return its output without asserting success.
+    pub fn git_output(&self, args: &[&str]) -> Output {
+        self.git_command(args).output().expect("git")
     }
 
     pub fn commit_all(&self, message: &str) {

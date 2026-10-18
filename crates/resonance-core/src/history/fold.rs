@@ -20,8 +20,12 @@ use crate::store::{GraphRead, GraphScope, GraphStore, GraphWrite, Snapshot, meta
 #[derive(Debug, Clone, Default)]
 pub struct Inputs {
     pub snapshot: Option<Snapshot>,
-    /// Delta files other than the open one that are in effect, in fold order.
+    /// Delta files other than the open one that are in effect, in fold order. Deltas of the
+    /// same commit are merged into one entry.
     pub deltas: Vec<Delta>,
+    /// For each entry of `deltas`: the IDs of the delta files it holds, and whether they are
+    /// committed history (sealed) rather than uncommitted files.
+    pub groups: Vec<(Vec<String>, bool)>,
     /// The open delta's file, if it exists.
     pub open: Option<Delta>,
 }
@@ -156,7 +160,15 @@ pub fn collect(
             .push(Delta::read(&path)?);
     }
     let mut deltas = Vec::new();
-    for (_, mut group) in groups {
+    let mut group_info = Vec::new();
+    for ((bucket, _), mut group) in groups {
+        group_info.push((
+            group
+                .iter()
+                .map(|d| d.header.id.clone())
+                .collect::<Vec<_>>(),
+            bucket == 0,
+        ));
         if group.len() == 1 {
             deltas.push(group.remove(0));
             continue;
@@ -181,6 +193,7 @@ pub fn collect(
     Ok(Inputs {
         snapshot,
         deltas,
+        groups: group_info,
         open: open_delta,
     })
 }
@@ -427,6 +440,19 @@ pub fn mark_settled(store: &mut dyn GraphStore) -> Result<()> {
         return Ok(());
     };
     open.manifest_after = store.last_op_seq()?;
+    let text = serde_json::to_string(&open)?;
+    store.write(GraphScope::Primary, &mut |w| w.set_meta(keys::OPEN, &text))
+}
+
+/// Start the open delta afresh at the current state, dropping what it holds (`join` on a clean
+/// tree, where everything in it is the local rebuild's own bookkeeping).
+pub fn rebase_open(store: &mut dyn GraphStore) -> Result<()> {
+    let Some(mut open) = read_open(&*store)? else {
+        return Ok(());
+    };
+    let last = store.last_op_seq()?;
+    open.after_seq = last;
+    open.manifest_after = last;
     let text = serde_json::to_string(&open)?;
     store.write(GraphScope::Primary, &mut |w| w.set_meta(keys::OPEN, &text))
 }

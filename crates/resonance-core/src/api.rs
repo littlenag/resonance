@@ -13,6 +13,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod shared;
+
+pub use shared::{
+    CheckReport, Finding, JoinView, LeaveView, ReviewView, ShareView, governs, render_delta,
+};
+
 use crate::anchors::{self, Anchor, AnchorState, Method};
 use crate::error::{Error, Result};
 use crate::history::{self, Mode, fold};
@@ -449,6 +455,7 @@ impl Engine {
             startup: std::mem::take(&mut self.startup),
             mode: self.mode,
             me: &self.me,
+            config: &self.config,
         };
         let divs = crate::recovery::classify(&self.repo, self.reader(), &observed)?;
         crate::recovery::record(&mut *self.store, &divs)?;
@@ -563,6 +570,9 @@ impl Engine {
         )?;
         self.after_write()?;
         self.classify(&cu, &mut report)?;
+        if cu.head_move.is_some() {
+            self.maybe_compact()?;
+        }
         if cu != fold::CatchUp::default() {
             report.history = Some(cu);
         }

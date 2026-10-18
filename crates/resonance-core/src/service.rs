@@ -88,6 +88,12 @@ pub const MUTATIONS: &[&str] = &[
     "supersede",
     "ext_add",
     "intent_project",
+    "share",
+    "join",
+    "leave",
+    "unshare",
+    "compact",
+    "repair_snapshot",
 ];
 
 /// Every method `dispatch` understands.
@@ -108,6 +114,16 @@ pub const METHODS: &[&str] = &[
     "supersede",
     "ext_add",
     "intent_project",
+    "share",
+    "join",
+    "leave",
+    "unshare",
+    "compact",
+    "check",
+    "review",
+    "hook",
+    "repair_snapshot",
+    "install_hooks",
     "export",
     "import",
     "req_add",
@@ -494,6 +510,99 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             }
             let r: SpecEdit = args(m, a)?;
             out(engine.spec_edit(&r.reference, &r.fields)?)
+        }
+        "share" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Share {
+                exe: PathBuf,
+                #[serde(default)]
+                keep_local: Vec<String>,
+                #[serde(default)]
+                apply: bool,
+            }
+            let r: Share = args(m, a)?;
+            out(engine.share(&r.exe, &r.keep_local, r.apply)?)
+        }
+        "join" => {
+            #[derive(Deserialize)]
+            struct Join {
+                exe: PathBuf,
+            }
+            let r: Join = args(m, a)?;
+            out(engine.join(&r.exe)?)
+        }
+        "leave" => {
+            #[derive(Deserialize)]
+            struct Leave {
+                export: Option<PathBuf>,
+            }
+            let r: Leave = args(m, a)?;
+            out(engine.leave(r.export.as_deref())?)
+        }
+        "unshare" => {
+            #[derive(Deserialize)]
+            struct Unshare {
+                export: PathBuf,
+                exe: PathBuf,
+            }
+            let r: Unshare = args(m, a)?;
+            out(engine.unshare(&r.export, &r.exe)?)
+        }
+        "compact" => {
+            #[derive(Deserialize, Default)]
+            #[serde(default)]
+            struct Compact {
+                anywhere: bool,
+                commit: bool,
+            }
+            let r: Compact = args(m, a)?;
+            out(engine.compact(r.anywhere, r.commit)?)
+        }
+        "check" => {
+            #[derive(Deserialize, Default)]
+            #[serde(default)]
+            struct Check {
+                range: Option<String>,
+                stage: bool,
+            }
+            let r: Check = args(m, a)?;
+            match r.range {
+                Some(range) => out(engine.check_range(&range)?),
+                None => out(engine.check_staged(r.stage)?),
+            }
+        }
+        "review" => {
+            #[derive(Deserialize)]
+            struct Review {
+                range: String,
+            }
+            let r: Review = args(m, a)?;
+            out(engine.review(&r.range)?)
+        }
+        "hook" => {
+            #[derive(Deserialize)]
+            struct Hook {
+                name: String,
+                #[serde(default)]
+                args: Vec<String>,
+                #[serde(default)]
+                stdin: String,
+            }
+            let r: Hook = args(m, a)?;
+            out(engine.run_hook(&r.name, &r.args, &r.stdin)?)
+        }
+        "repair_snapshot" => out(json!({"repaired": engine.repair_snapshot()?})),
+        "install_hooks" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Install {
+                exe: PathBuf,
+                #[serde(default)]
+                dry_run: bool,
+            }
+            let r: Install = args(m, a)?;
+            out(engine.install_hooks(&r.exe, r.dry_run)?)
         }
         "intent_project" => {
             #[derive(Deserialize)]

@@ -10,6 +10,7 @@
 //! re-folded and then settled against the files on disk.
 
 pub mod canonical;
+pub mod compact;
 pub mod delta;
 pub mod fold;
 
@@ -659,6 +660,18 @@ fn seal_shared(
     write_atomic(&path, &committed)?;
     let mut next = new_open(repo, &*store, mode, writer, boundary);
     next.manifest_after = boundary.max(open.manifest_after);
+    // Files in the sealed manifest that the commit did not take stay changed: they remain
+    // covered for the commit that does take them.
+    let still: std::collections::BTreeSet<String> = repo
+        .git(&["diff", "--name-only", "HEAD"])
+        .map(|s| s.lines().map(String::from).collect())
+        .unwrap_or_default();
+    let current = open_delta_content(&*store, open)?;
+    for (path, entry) in current.manifest {
+        if still.contains(&path) {
+            next.carried.insert(path, entry);
+        }
+    }
     let next_text = serde_json::to_string(&next)?;
     let rec = serde_json::to_string(&DeltaRecord {
         location: Location::Deltas,

@@ -384,6 +384,7 @@ pub struct Observed<'a> {
     pub mode: crate::history::Mode,
     /// This developer's email, to tell their commits from others' (C2).
     pub me: &'a str,
+    pub config: &'a crate::repo::config::Config,
 }
 
 fn shorten(paths: Vec<String>) -> Vec<String> {
@@ -643,7 +644,54 @@ pub fn classify(repo: &Repo, r: &dyn GraphRead, o: &Observed<'_>) -> Result<Vec<
             }
         }
         // C3: changes found when a daemon starts were made while Resonance was not running.
-        if o.startup {
+        // For a developer who has opted in, the graph is the source of truth (FR-012b): the
+        // file is restored from the graph and the disk version kept for `recover undo`.
+        if o.startup && o.mode.opted_in() {
+            let explained: std::collections::BTreeSet<String> =
+                out.iter().flat_map(|d| d.paths.clone()).collect();
+            for c in o.changed.iter().filter(|c| !explained.contains(&c.path)) {
+                if !crate::api::governs(o.config, &c.path) {
+                    continue;
+                }
+                let abs = crate::repo::abs_path(&repo.root, &c.path);
+                let disk = std::fs::read(&abs).unwrap_or_default();
+                let graph = match &c.old_blob {
+                    Some(b) => r.get_blob(b)?,
+                    None => None,
+                };
+                let mut d = Divergence::new(
+                    Class::C3,
+                    Level::ActionRequired,
+                    format!("{}: changed while Resonance was not running", c.path),
+                );
+                d.evidence
+                    .push("found by the start-up reconcile; no git operation explains it".into());
+                d.paths = vec![c.path.clone()];
+                match graph {
+                    Some(bytes) if c.new_blob.is_some() => {
+                        let rec = keep(
+                            repo,
+                            &c.path,
+                            Class::C3,
+                            "graph",
+                            &disk,
+                            c.old_blob.clone(),
+                            "a change made while Resonance was not running (FR-012b)",
+                        )?;
+                        write_file(&abs, &bytes)?;
+                        d.resolution = format!(
+                            "restored the graph's version; your disk version is kept: `resonance recover undo {}` brings it back, then decide: merge, keep, or discard",
+                            rec.id
+                        );
+                        d.recovery = Some(rec.id);
+                    }
+                    _ => {
+                        d.resolution = "the graph has no stored version to restore (a new, large or binary file); the disk version stays: decide whether to keep it".into();
+                    }
+                }
+                out.push(d);
+            }
+        } else if o.startup {
             let explained: std::collections::BTreeSet<String> =
                 out.iter().flat_map(|d| d.paths.clone()).collect();
             let rest: Vec<String> = changed_paths

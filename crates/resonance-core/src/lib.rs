@@ -5,10 +5,12 @@
 pub mod agent;
 pub mod anchors;
 pub mod api;
+pub mod changes;
 pub mod daemon;
 pub mod error;
 pub mod export;
 pub mod history;
+pub mod hooks;
 pub mod ingest;
 pub mod intent;
 pub mod lifecycle;

@@ -1,0 +1,4 @@
+# Written by `resonance share` (FR-079). Readable diffs of deltas, and a mechanical merge
+# for colliding snapshots, when Resonance is installed; plain binary handling otherwise.
+*.delta diff=resonance-delta
+graph.db -diff merge=resonance-snapshot

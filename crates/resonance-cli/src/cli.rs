@@ -44,7 +44,74 @@ pub enum Command {
         /// Do not offer to register the MCP server.
         #[arg(long)]
         no_agent: bool,
+        /// In a shared repository: try Resonance privately instead of joining (FR-187).
+        #[arg(long)]
+        offline: bool,
     },
+    /// Share the graph with the team (stage 1 to stage 2): preview, then new files to commit.
+    Share {
+        /// Annotations to keep local (private), by ID (repeatable).
+        #[arg(long = "keep-local", value_name = "ANNOTATION")]
+        keep_local: Vec<String>,
+        /// Show what would be committed and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Stop being a Resonance user here, without loss (removes hooks and opting in).
+    Leave {
+        /// Write the open delta's uncommitted changes here first.
+        #[arg(long, value_name = "FILE")]
+        export: Option<PathBuf>,
+    },
+    /// Stop sharing the graph (stage 2 to stage 1): export, then stage the removal of .resonance/.
+    Unshare {
+        #[arg(long)]
+        yes: bool,
+        /// Where to write the export (default: ~/.resonance/exports/<repo>-<time>.jsonl).
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+    },
+    /// Fold sealed deltas into a new snapshot (on the trunk; never commits unless --commit).
+    Compact {
+        /// Commit the compaction in its own commit.
+        #[arg(long)]
+        commit: bool,
+        /// Compact even off the trunk.
+        #[arg(long)]
+        anywhere: bool,
+    },
+    /// Consistency checks for commits and pull requests (FR-215, FR-216).
+    Check {
+        /// Check what is staged (what `pre-commit` runs).
+        #[arg(long, conflicts_with = "range")]
+        staged: bool,
+        /// Check a range of commits, such as main..HEAD (what `pre-push` and CI run).
+        #[arg(long)]
+        range: Option<String>,
+    },
+    /// A readable summary of graph changes in a range of commits, for pull requests (FR-066).
+    Review {
+        /// For example main..HEAD.
+        range: String,
+        /// Markdown, for a pull request description.
+        #[arg(long)]
+        markdown: bool,
+    },
+    /// Render a delta file for people (also git's textconv driver for *.delta).
+    ShowDelta { file: PathBuf },
+    /// Entry point for the git hooks Resonance installs (plumbing).
+    #[command(hide = true)]
+    Hook {
+        name: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Git drivers (plumbing).
+    #[command(hide = true, subcommand)]
+    GitDriver(GitDriverCommand),
     /// Counts and the repair list.
     Status,
     /// Bring the graph up to date with the files on disk now.
@@ -243,7 +310,19 @@ pub enum Command {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum GitDriverCommand {
+    /// The merge driver for .resonance/graph.db: union of both snapshots (FR-157).
+    Merge {
+        base: PathBuf,
+        ours: PathBuf,
+        theirs: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum RecoverCommand {
+    /// Repair a conflicted .resonance/graph.db mechanically, without the merge driver (C6).
+    RepairSnapshot,
     /// Put back what an automatic resolution displaced.
     Undo {
         /// A recovery record ID (a unique prefix is enough).

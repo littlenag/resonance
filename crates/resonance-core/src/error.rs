@@ -8,6 +8,14 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// Everything that can go wrong in Resonance, phrased for someone who does not know its internals.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A check found errors (exit code 3, FR-253).
+    #[error("{0}")]
+    CheckFailed(String),
+
+    /// Waiting on an *action required* decision (exit code 4, FR-253).
+    #[error("{0}")]
+    ActionRequired(String),
+
     /// Not inside a git repository (MVP-009).
     #[error(
         "not inside a git repository: {0}\nResonance runs inside a git repository; run it from within one, or pass -C <path>."
@@ -89,6 +97,8 @@ impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
             Error::Usage(_) => 2,
+            Error::CheckFailed(_) => 3,
+            Error::ActionRequired(_) => 4,
             Error::Remote { code, .. } => *code,
             _ => 1,
         }

@@ -5,6 +5,7 @@
 mod intent;
 mod links;
 mod recover;
+mod shared;
 pub use recover::divergence_line as recover_line;
 mod read;
 pub mod services;
@@ -198,7 +199,24 @@ pub fn run(cli: Cli) -> Result<()> {
         cached: cli.cached,
     };
     match cli.command {
-        Command::Init { agent, no_agent } => setup::init(&ctx, agent, no_agent),
+        Command::Init {
+            agent,
+            no_agent,
+            offline,
+        } => setup::init(&ctx, agent, no_agent, offline),
+        Command::Share {
+            keep_local,
+            dry_run,
+            yes,
+        } => shared::share(&ctx, &keep_local, dry_run, yes),
+        Command::Leave { export } => shared::leave(&ctx, export),
+        Command::Unshare { yes, out } => shared::unshare(&ctx, yes, out),
+        Command::Compact { commit, anywhere } => shared::compact(&ctx, commit, anywhere),
+        Command::Check { staged, range } => shared::check(&ctx, staged, range),
+        Command::Review { range, markdown } => shared::review(&ctx, &range, markdown),
+        Command::ShowDelta { file } => shared::show_delta(&ctx, &file),
+        Command::Hook { name, args } => shared::hook(&ctx, &name, &args),
+        Command::GitDriver(cmd) => shared::git_driver(cmd),
         Command::Status => setup::status(&ctx),
         Command::Reconcile { full } => setup::reconcile(&ctx, full),
         Command::RebuildDerived => setup::rebuild_derived(&ctx),

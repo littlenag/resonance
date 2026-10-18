@@ -17,9 +17,34 @@ use super::{Ctx, confirm, exe, open_store};
 use crate::cli::AgentCommand;
 use crate::render;
 
-pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool) -> Result<()> {
+pub fn init(ctx: &Ctx, with_agent: bool, no_agent: bool, offline: bool) -> Result<()> {
     let repo = Repo::discover(&ctx.cwd)?;
+    let shared = repo.has_committed_data();
     let setup = lifecycle::init(&repo, &open_store)?;
+    if shared && !offline {
+        // A teammate shared the graph: join it and opt in (FR-172, FR-186).
+        let join: resonance_core::api::JoinView = ctx.run("join", json!({"exe": exe()?}))?;
+        let status: StatusView = ctx.run("status", json!({}))?;
+        return ctx.emit(&json!({"setup": setup, "join": join, "counts": status.counts}), |_| {
+            let mut out = format!(
+                "Joined the shared Resonance graph in {}; you have opted in (stage 2).\n",
+                repo.root.display()
+            );
+            if join.merged_operations > 0 {
+                out.push_str(&format!(
+                    "Your offline work ({} operation(s)) joins the shared graph as new deltas; commit them with your next commit.\n",
+                    join.merged_operations
+                ));
+            }
+            for h in &join.hooks {
+                out.push_str(&format!("hook {}: {}\n", h.hook, h.action));
+            }
+            out.push_str("Your commits are now checked for consistency with the graph (pre-commit, pre-push). `resonance leave` steps out.\n");
+            out.push_str(&render::counts_line(&status.counts));
+            out.push('\n');
+            out
+        });
+    }
     // The first reconcile reads every file: in the daemon as it starts, or here.
     let status: StatusView = ctx.run("status", json!({}))?;
 
