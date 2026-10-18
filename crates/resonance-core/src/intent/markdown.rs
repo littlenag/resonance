@@ -40,7 +40,10 @@ fn bold_key(s: &str) -> Option<(&str, &str)> {
     let inner = s.strip_prefix("**")?;
     let end = inner.find("**")?;
     let key = &inner[..end];
-    is_import_key(key).then(|| (key, &inner[end + 2..]))
+    // GitHub Spec Kit writes `**FR-001**: text`; the colon is not part of the text.
+    let rest = &inner[end + 2..];
+    let rest = rest.strip_prefix(':').unwrap_or(rest);
+    is_import_key(key).then_some((key, rest))
 }
 
 fn indent_of(line: &str) -> usize {
@@ -262,6 +265,13 @@ Paragraph.
         assert_eq!(reqs[0].text, "Single-file ingest latency");
         assert_eq!(reqs[0].spec_status.as_deref(), Some("Open"));
         assert_eq!(reqs[1].text, "No loss of a text write | ever");
+    }
+
+    #[test]
+    fn spec_kit_colons() {
+        let reqs = parse("- **FR-001**: System MUST let users sign in.\n");
+        assert_eq!(reqs[0].key, "FR-001");
+        assert_eq!(reqs[0].text, "System MUST let users sign in.");
     }
 
     #[test]

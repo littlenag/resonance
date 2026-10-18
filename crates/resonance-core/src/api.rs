@@ -100,6 +100,15 @@ pub struct StatusView {
     pub divergences: Vec<crate::recovery::Divergence>,
 }
 
+/// `intent project` (FR-121).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectView {
+    pub path: String,
+    pub keys: Vec<String>,
+    pub written: bool,
+}
+
 /// `recover` with no action (FR-196).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -331,11 +340,21 @@ fn check_link_types(etype: EdgeType, src: &Node, dst: &Node) -> Result<()> {
         }
         EdgeType::Verifies => src.ntype == Test && matches!(dst.ntype, Requirement | CodeUnit),
         EdgeType::Constrains => {
-            src.ntype == Decision && !matches!(dst.ntype, Evidence | Annotation)
+            matches!(src.ntype, Decision | Constraint)
+                && !matches!(dst.ntype, Evidence | Annotation)
         }
         EdgeType::Annotates => {
             src.ntype == Annotation && !matches!(dst.ntype, Evidence | Annotation)
         }
+        EdgeType::DerivedFrom => {
+            matches!(src.ntype, Requirement | Design) && dst.ntype == Requirement
+        }
+        EdgeType::Supersedes => {
+            src.ntype == dst.ntype
+                && matches!(src.ntype, Requirement | Decision | Design | Constraint)
+        }
+        EdgeType::Realizes => matches!(src.ntype, CodeUnit | Test | File) && dst.ntype == Design,
+        EdgeType::Extension => !matches!(src.ntype, Evidence) && !matches!(dst.ntype, Evidence),
         EdgeType::Contains | EdgeType::Evidences => false,
     };
     if ok {
@@ -345,15 +364,38 @@ fn check_link_types(etype: EdgeType, src: &Node, dst: &Node) -> Result<()> {
         EdgeType::Satisfies => "a code unit, test or file satisfies a requirement",
         EdgeType::Verifies => "a test verifies a requirement or a code unit",
         EdgeType::Constrains => {
-            "a decision constrains a requirement, code unit, test, file or decision"
+            "a decision or constraint constrains a requirement, code unit, test, file, design or decision"
         }
         EdgeType::Annotates => "an annotation annotates a node",
+        EdgeType::DerivedFrom => "a requirement or design is derived from a requirement",
+        EdgeType::Supersedes => "an item supersedes an earlier item of the same type",
+        EdgeType::Realizes => "a code unit, test or file realizes a design",
         _ => "this link type is derived and cannot be created by hand",
     };
     Err(Error::Invalid(format!(
         "a {} cannot {} a {}: {expected}",
         src.ntype, etype, dst.ntype
     )))
+}
+
+/// A namespaced extension type name: `namespace:Name` (FR-007).
+pub fn check_ext_name(name: &str) -> Result<()> {
+    let ok = name.split_once(':').is_some_and(|(ns, n)| {
+        !ns.is_empty()
+            && !n.is_empty()
+            && ns
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && n.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    });
+    if ok {
+        Ok(())
+    } else {
+        Err(Error::Usage(format!(
+            "`{name}` is not a namespaced extension type; use namespace:Name, for example acme:Service (FR-007)"
+        )))
+    }
 }
 
 fn require_live(node: &Node, label: &str) -> Result<()> {
@@ -674,19 +716,31 @@ impl Engine {
     // ----- Intent ---------------------------------------------------------------------------
 
     /// Import requirement documents and keep them in sync (MVP-011, FR-122).
-    pub fn import(&mut self, paths: &[String]) -> Result<ImportView> {
+    pub fn import(&mut self, paths: &[String], format: Option<&str>) -> Result<ImportView> {
         if paths.is_empty() {
             return Err(Error::Usage(
-                "give at least one Markdown file to import".into(),
+                "give at least one file (or ADR directory) to import".into(),
             ));
+        }
+        if let Some(f) = format
+            && intent::formats::Format::parse(f).is_none()
+        {
+            return Err(Error::Usage(format!(
+                "unknown format `{f}` (expected markdown, speckit, kiro, kiro-design, ears or adr)"
+            )));
         }
         let mut sources = self.config.intent.sources.clone();
         let mut added = Vec::new();
         for p in paths {
             let rel = self.repo.relative_path(&self.cwd, p)?;
-            if !abs_path(&self.repo.root, &rel).is_file() {
+            let abs = abs_path(&self.repo.root, &rel);
+            if !abs.is_file() && !abs.is_dir() {
                 return Err(Error::NotFound(format!("the file {p}")));
             }
+            let rel = match format {
+                Some(f) => format!("{f}:{rel}"),
+                None => rel,
+            };
             if !sources.contains(&rel) {
                 sources.push(rel.clone());
                 added.push(rel);
@@ -1224,7 +1278,21 @@ impl Engine {
         dst: &str,
         confidence: Option<f64>,
     ) -> Result<LinkResult> {
-        let etype: EdgeType = etype.parse().map_err(Error::Usage)?;
+        let ext_type = if etype.contains(':') {
+            check_ext_name(etype)?;
+            Some(etype.to_string())
+        } else {
+            None
+        };
+        let etype: EdgeType = match &ext_type {
+            Some(_) => EdgeType::Extension,
+            None => etype.parse().map_err(Error::Usage)?,
+        };
+        if etype == EdgeType::Extension && ext_type.is_none() {
+            return Err(Error::Usage(
+                "give an extension link a namespaced type such as acme:deploys (FR-007)".into(),
+            ));
+        }
         match etype {
             EdgeType::Annotates => {
                 return Err(Error::Usage(
@@ -1257,14 +1325,17 @@ impl Engine {
             .reader()
             .find_edges(&EdgeQuery::from(&s.id).of_type(etype))?
             .into_iter()
-            .find(|e| e.dst == d.id)
+            .find(|e| e.dst == d.id && e.str_prop("extType") == ext_type.as_deref())
         {
             return self.link_result(&existing, false);
         }
         let provenance = self.provenance();
         let author = self.actor.id.clone();
         let edge = self.mutate(|tx| {
-            let props = new_link_props(tx.r(), &s.id, &d.id, provenance, &author, confidence)?;
+            let mut props = new_link_props(tx.r(), &s.id, &d.id, provenance, &author, confidence)?;
+            if let Some(t) = &ext_type {
+                props.insert("extType".into(), json!(t));
+            }
             let edge = new_link(etype, &s.id, &d.id, props);
             tx.add_edge(&edge)?;
             Ok(edge)
@@ -1719,6 +1790,447 @@ impl Engine {
         Ok(report)
     }
 
+    // ----- Spec items (FR-120, §8.22) ---------------------------------------------------------
+
+    /// The fields each spec-item type accepts, besides `key`.
+    fn spec_fields(ntype: NodeType) -> &'static [&'static str] {
+        match ntype {
+            NodeType::Requirement => &["text", "kind", "priority", "status"],
+            NodeType::Decision => &["title", "decision", "context", "consequences", "status"],
+            NodeType::Design => &["title", "text", "status"],
+            NodeType::Constraint => &["title", "text", "scope", "status"],
+            _ => &[],
+        }
+    }
+
+    fn check_status(ntype: NodeType, status: &str) -> Result<()> {
+        let allowed: &[&str] = match ntype {
+            NodeType::Requirement => &["draft", "active", "superseded", "retired"],
+            NodeType::Decision => &[
+                "proposed",
+                "accepted",
+                "superseded",
+                "deprecated",
+                "retired",
+            ],
+            _ => &["draft", "active", "superseded", "retired"],
+        };
+        if allowed.contains(&status) {
+            Ok(())
+        } else {
+            Err(Error::Usage(format!(
+                "`{status}` is not a {ntype} status (expected one of: {})",
+                allowed.join(", ")
+            )))
+        }
+    }
+
+    /// Create a spec item: a requirement, decision, design or constraint (FR-120). `fields`
+    /// are the type's fields (see `spec_fields`); requirements need `key` and `text`,
+    /// decisions `title` and `decision`, designs `title`, constraints `text`.
+    pub fn spec_add(
+        &mut self,
+        ntype: NodeType,
+        key: Option<&str>,
+        fields: &std::collections::BTreeMap<String, String>,
+    ) -> Result<query::SpecItemView> {
+        let allowed = Self::spec_fields(ntype);
+        if allowed.is_empty() {
+            return Err(Error::Usage(format!("a {ntype} is not a spec item")));
+        }
+        for k in fields.keys() {
+            if !allowed.contains(&k.as_str()) {
+                return Err(Error::Usage(format!(
+                    "a {ntype} has no field `{k}` (fields: {})",
+                    allowed.join(", ")
+                )));
+            }
+        }
+        if let Some(st) = fields.get("status") {
+            Self::check_status(ntype, st)?;
+        }
+        let get = |k: &str| {
+            fields
+                .get(k)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let id = match ntype {
+            NodeType::Requirement => {
+                let key = key.ok_or_else(|| {
+                    Error::Usage("a requirement needs a key such as FR-042".into())
+                })?;
+                let text =
+                    get("text").ok_or_else(|| Error::Usage("a requirement needs text".into()))?;
+                let mut v = self.req_add(key, &text, get("kind").as_deref())?;
+                let mut extra = Vec::new();
+                for k in ["priority", "status"] {
+                    if let Some(val) = get(k) {
+                        extra.push((k, val));
+                    }
+                }
+                if !extra.is_empty() {
+                    let id = v.id.clone();
+                    self.mutate(|tx| {
+                        for (k, val) in &extra {
+                            tx.set_prop(&id, k, json!(val))?;
+                        }
+                        Ok(())
+                    })?;
+                    v = self.requirement(&id)?;
+                }
+                v.id
+            }
+            NodeType::Decision => {
+                let mut v = self.decision_add(DecisionInput {
+                    title: get("title"),
+                    decision: get("decision"),
+                    context: get("context"),
+                    consequences: get("consequences"),
+                    status: get("status"),
+                })?;
+                if let Some(k) = key {
+                    let id = v.id.clone();
+                    self.mutate(|tx| tx.set_prop(&id, "key", json!(k)))?;
+                    v.id = id;
+                }
+                v.id
+            }
+            NodeType::Design | NodeType::Constraint => {
+                let title = get("title");
+                let text = get("text");
+                if ntype == NodeType::Design && title.is_none() {
+                    return Err(Error::Usage("a design needs a title".into()));
+                }
+                if ntype == NodeType::Constraint && text.is_none() {
+                    return Err(Error::Usage("a constraint needs its text".into()));
+                }
+                let prefix = if ntype == NodeType::Design {
+                    "design"
+                } else {
+                    "constraint"
+                };
+                let id = match key {
+                    Some(k) => {
+                        if k.trim().is_empty() || k.contains(char::is_whitespace) {
+                            return Err(Error::Usage(format!("`{k}` cannot be used as a key")));
+                        }
+                        let id = format!("{prefix}:{k}");
+                        if self.reader().get_node(&id)?.is_some() {
+                            return Err(Error::Invalid(format!("{k} already exists")));
+                        }
+                        id
+                    }
+                    None => new_id(),
+                };
+                let author = self.actor.id.clone();
+                let status = get("status").unwrap_or_else(|| "active".into());
+                self.mutate(|tx| {
+                    let mut p = Props::new();
+                    if let Some(k) = key {
+                        p.insert("key".into(), json!(k));
+                    }
+                    p.insert("title".into(), json!(title));
+                    p.insert("text".into(), json!(text));
+                    if ntype == NodeType::Constraint {
+                        p.insert("scope".into(), json!(get("scope")));
+                    }
+                    p.insert("status".into(), json!(status));
+                    p.insert("origin".into(), json!("authored"));
+                    p.insert("author".into(), json!(author));
+                    p.insert("createdAt".into(), json!(hlc::rfc3339(hlc::now_ms())));
+                    tx.create_node(&id, ntype, Layer::Authored, p)
+                })?;
+                id
+            }
+            _ => unreachable!("checked above"),
+        };
+        self.spec_item(&id)
+    }
+
+    /// One spec item.
+    pub fn spec_item(&self, reference: &str) -> Result<query::SpecItemView> {
+        let n = match self.reader().get_node(reference)? {
+            Some(n) => n,
+            None => self.resolve_node(reference)?,
+        };
+        if !NodeType::SPEC_ITEMS.contains(&n.ntype) {
+            return Err(Error::Invalid(format!(
+                "{reference} is a {}, not a spec item",
+                n.ntype
+            )));
+        }
+        Ok(query::spec_item_view(&n))
+    }
+
+    /// Spec items, filtered by type, status and text (for the TUI and `spec list`).
+    pub fn spec_list(
+        &self,
+        ntype: Option<NodeType>,
+        status: Option<&str>,
+        text: Option<&str>,
+    ) -> Result<Vec<query::SpecItemView>> {
+        let types: Vec<NodeType> = match ntype {
+            Some(t) => vec![t],
+            None => NodeType::SPEC_ITEMS.to_vec(),
+        };
+        let needle = text.map(str::to_lowercase).filter(|t| !t.is_empty());
+        let mut out = Vec::new();
+        for t in types {
+            for n in self
+                .reader()
+                .find_nodes(&NodeQuery::of_type(t).including_retired())?
+            {
+                let v = query::spec_item_view(&n);
+                if status.is_some_and(|s| s != v.status) {
+                    continue;
+                }
+                if let Some(nd) = &needle {
+                    let hay = format!(
+                        "{} {} {}",
+                        v.key.as_deref().unwrap_or_default(),
+                        v.title,
+                        v.text
+                    )
+                    .to_lowercase();
+                    if !hay.contains(nd) {
+                        continue;
+                    }
+                }
+                out.push(v);
+            }
+        }
+        out.sort_by(|a, b| {
+            (a.ntype, a.key.clone().unwrap_or_default(), a.title.clone()).cmp(&(
+                b.ntype,
+                b.key.clone().unwrap_or_default(),
+                b.title.clone(),
+            ))
+        });
+        Ok(out)
+    }
+
+    /// Change a spec item's fields. Items owned by a source document are edited there
+    /// (FR-272). Links to a changed item become stale (S7).
+    pub fn spec_edit(
+        &mut self,
+        reference: &str,
+        fields: &std::collections::BTreeMap<String, String>,
+    ) -> Result<query::SpecItemView> {
+        let item = self.spec_item(reference)?;
+        if item.origin == "import" {
+            let src = item
+                .source
+                .as_ref()
+                .map(|s| format!("{}:{}", s["path"].as_str().unwrap_or("?"), s["line"]))
+                .unwrap_or_default();
+            return Err(Error::Invalid(format!(
+                "{} is imported from {src}; edit it there and Resonance picks up the change",
+                item.key.as_deref().unwrap_or(&item.title)
+            )));
+        }
+        let allowed = Self::spec_fields(item.ntype);
+        for k in fields.keys() {
+            if !allowed.contains(&k.as_str()) {
+                return Err(Error::Usage(format!(
+                    "a {} has no field `{k}` (fields: {})",
+                    item.ntype,
+                    allowed.join(", ")
+                )));
+            }
+        }
+        if fields.is_empty() {
+            return Err(Error::Usage(
+                "nothing to change; give at least one field".into(),
+            ));
+        }
+        if let Some(st) = fields.get("status") {
+            Self::check_status(item.ntype, st)?;
+        }
+        let required: &[&str] = match item.ntype {
+            NodeType::Requirement => &["text"],
+            NodeType::Decision => &["title", "decision"],
+            NodeType::Design => &["title"],
+            _ => &["text"],
+        };
+        for k in required {
+            if fields.get(*k).is_some_and(|v| v.trim().is_empty()) {
+                return Err(Error::Usage(format!(
+                    "the {} {k} must not be empty",
+                    item.ntype
+                )));
+            }
+        }
+        let id = item.id.clone();
+        let current = item.props.clone();
+        self.mutate(|tx| {
+            let mut changed = false;
+            for (k, v) in fields {
+                let v = v.trim();
+                if current.get(k).and_then(Value::as_str) != Some(v) {
+                    tx.set_prop(&id, k, json!(v))?;
+                    changed = true;
+                }
+            }
+            if changed {
+                links::refresh_statuses(tx, &id)?;
+            }
+            Ok(())
+        })?;
+        self.spec_item(&id)
+    }
+
+    /// Retire a spec item: it is never deleted (FR-271). Returns it with its link count.
+    pub fn spec_retire(&mut self, reference: &str) -> Result<(query::SpecItemView, usize)> {
+        let item = self.spec_item(reference)?;
+        if item.origin == "import" {
+            return Err(Error::Invalid(format!(
+                "{} is imported; remove it from its source document",
+                item.key.as_deref().unwrap_or(&item.title)
+            )));
+        }
+        let id = item.id.clone();
+        let link_count = links::links_of(self.reader(), &id)?.len();
+        self.mutate(|tx| {
+            tx.set_prop(&id, "status", json!("retired"))?;
+            links::refresh_statuses(tx, &id)?;
+            Ok(())
+        })?;
+        Ok((self.spec_item(&id)?, link_count))
+    }
+
+    /// `new` supersedes `old` (§6.3): a `supersedes` link, and `old` becomes superseded, so
+    /// its links become stale (S7).
+    pub fn supersede(&mut self, old: &str, new: &str) -> Result<LinkResult> {
+        let o = self.resolve_node(old)?;
+        let n = self.resolve_node(new)?;
+        if o.id == n.id {
+            return Err(Error::Usage("an item cannot supersede itself".into()));
+        }
+        let result = self.link(
+            &n.id,
+            "supersedes",
+            &o.id,
+            (self.actor.kind == ActorKind::Agent).then_some(1.0),
+        )?;
+        let id = o.id.clone();
+        let supersedes = result.link.id.clone();
+        self.mutate(|tx| {
+            tx.set_prop(&id, "status", json!("superseded"))?;
+            // Links to what was superseded no longer hold as they were (S7 AC1).
+            for e in links::links_of(tx.r(), &id)? {
+                if e.id != supersedes
+                    && matches!(e.status, LinkStatus::Asserted | LinkStatus::Verified)
+                    && e.etype != EdgeType::Annotates
+                {
+                    tx.set_edge(&e.id, "status", json!(LinkStatus::Stale))?;
+                }
+            }
+            Ok(())
+        })?;
+        Ok(result)
+    }
+
+    /// Create a node of a namespaced extension type (FR-007).
+    pub fn ext_add(
+        &mut self,
+        ext_type: &str,
+        name: &str,
+        text: Option<&str>,
+        props: &std::collections::BTreeMap<String, String>,
+    ) -> Result<ShowView> {
+        check_ext_name(ext_type)?;
+        nonempty("the name", name)?;
+        let id = new_id();
+        let author = self.actor.id.clone();
+        self.mutate(|tx| {
+            let mut p = Props::new();
+            for (k, v) in props {
+                p.insert(k.clone(), json!(v));
+            }
+            p.insert("extType".into(), json!(ext_type));
+            p.insert("name".into(), json!(name));
+            p.insert("text".into(), json!(text));
+            p.insert("author".into(), json!(author));
+            p.insert("createdAt".into(), json!(hlc::rfc3339(hlc::now_ms())));
+            tx.create_node(&id, NodeType::Extension, Layer::Authored, p)
+        })?;
+        self.show(&id)
+    }
+
+    /// Project graph-native requirements into `<dir>/requirements.md` in this spec's Markdown
+    /// conventions (FR-121, one-shot). With `apply`, the file is written and becomes their
+    /// import source, so the document owns them from then on; without, only a preview.
+    pub fn intent_project(&mut self, dir: &str, apply: bool) -> Result<ProjectView> {
+        let rel_dir = self.repo.relative_path(&self.cwd, dir)?;
+        let rel = if rel_dir.is_empty() {
+            "requirements.md".to_string()
+        } else {
+            format!("{rel_dir}/requirements.md")
+        };
+        let target = abs_path(&self.repo.root, &rel);
+        if target.exists() {
+            return Err(Error::Invalid(format!(
+                "{rel} exists; project into a directory without a requirements.md"
+            )));
+        }
+        let mut reqs: Vec<Node> = self
+            .reader()
+            .find_nodes(&NodeQuery::of_type(NodeType::Requirement))?
+            .into_iter()
+            .filter(|n| n.str_prop("origin") != Some("import"))
+            .filter(|n| n.str_prop("status") != Some("retired"))
+            .collect();
+        reqs.sort_by(|a, b| a.str_prop("key").cmp(&b.str_prop("key")));
+        let mut text = String::from(
+            "# Requirements\n\nProjected from the Resonance graph (FR-121). This file now owns these\nrequirements: edit them here.\n\n",
+        );
+        let mut lines = Vec::new();
+        for n in &reqs {
+            let line = text.lines().count() + 1;
+            let body = n.str_prop("text").unwrap_or_default().replace('\n', "\n  ");
+            text.push_str(&format!(
+                "- **{}** {body}\n",
+                n.str_prop("key").unwrap_or_default()
+            ));
+            lines.push((n.id.clone(), line));
+        }
+        let keys: Vec<String> = reqs
+            .iter()
+            .map(|n| n.str_prop("key").unwrap_or_default().to_string())
+            .collect();
+        if !apply || reqs.is_empty() {
+            return Ok(ProjectView {
+                path: rel,
+                keys,
+                written: false,
+            });
+        }
+        crate::recovery::write_file(&target, text.as_bytes())?;
+        let path = rel.clone();
+        self.mutate(|tx| {
+            for (id, line) in &lines {
+                tx.set_prop(id, "origin", json!("import"))?;
+                tx.set_prop(id, "source", json!({"path": path, "line": line}))?;
+            }
+            Ok(())
+        })?;
+        let mut sources = self.config.intent.sources.clone();
+        if !sources.contains(&rel) {
+            sources.push(rel.clone());
+            write_intent_sources(&self.repo.config_path(), &sources)?;
+        }
+        self.reconcile(ReconcileOptions {
+            force_intent: true,
+            ..Default::default()
+        })?;
+        Ok(ProjectView {
+            path: rel,
+            keys,
+            written: true,
+        })
+    }
+
     // ----- Recovery and value (§8.18, FR-196, FR-240) ---------------------------------------
 
     /// Unresolved divergences, the detached pool, a held re-fold and recent recovery records.
@@ -1765,6 +2277,26 @@ impl Engine {
 
     /// Mark a divergence handled.
     pub fn recover_dismiss(&mut self, id: &str, note: &str) -> Result<crate::recovery::Divergence> {
+        if let Some(conflict) = self
+            .reader()
+            .get_node(id)?
+            .filter(|n| n.ntype == NodeType::Conflict)
+        {
+            // An identity conflict (§9.4): closed by recording how it was resolved.
+            let cid = conflict.id.clone();
+            let note = note.to_string();
+            self.mutate(|tx| {
+                tx.set_prop(&cid, "status", json!("resolved"))?;
+                tx.set_prop(&cid, "resolution", json!(note))
+            })?;
+            let mut d = crate::recovery::Divergence::new(
+                crate::recovery::Class::C9,
+                crate::recovery::Level::Info,
+                format!("identity conflict {cid} resolved"),
+            );
+            d.resolution = "dismissed".into();
+            return Ok(d);
+        }
         let how = if note.is_empty() {
             format!("dismissed by {}", self.actor)
         } else {

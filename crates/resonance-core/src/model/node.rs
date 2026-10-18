@@ -7,11 +7,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{Layer, Props};
 
-/// The node types of the MVP (§6.2, partial).
+/// The core node types (§6.2), plus namespaced extensions (FR-007).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NodeType {
     Requirement,
     Decision,
+    /// A design element: component, interface, flow.
+    Design,
+    /// A rule code must obey (performance, compatibility, policy).
+    Constraint,
     File,
     /// A declared region of a file (MVP-013).
     CodeUnit,
@@ -19,23 +23,44 @@ pub enum NodeType {
     Test,
     Evidence,
     Annotation,
+    /// An unresolved semantic conflict found while folding concurrent changes (§9.4).
+    Conflict,
+    /// A namespaced extension type such as `acme:Service`; the name is in the `extType`
+    /// property (FR-007). Preserved by every version (FR-008).
+    Extension,
 }
 
 impl NodeType {
-    pub const ALL: [NodeType; 7] = [
+    pub const ALL: [NodeType; 11] = [
         NodeType::Requirement,
         NodeType::Decision,
+        NodeType::Design,
+        NodeType::Constraint,
         NodeType::File,
         NodeType::CodeUnit,
         NodeType::Test,
         NodeType::Evidence,
         NodeType::Annotation,
+        NodeType::Conflict,
+        NodeType::Extension,
+    ];
+
+    /// Spec items: the intent the TUI lists and edits (§8.22).
+    pub const SPEC_ITEMS: [NodeType; 4] = [
+        NodeType::Requirement,
+        NodeType::Decision,
+        NodeType::Design,
+        NodeType::Constraint,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             NodeType::Requirement => "Requirement",
             NodeType::Decision => "Decision",
+            NodeType::Design => "Design",
+            NodeType::Constraint => "Constraint",
+            NodeType::Conflict => "Conflict",
+            NodeType::Extension => "Extension",
             NodeType::File => "File",
             NodeType::CodeUnit => "CodeUnit",
             NodeType::Test => "Test",
@@ -64,6 +89,10 @@ impl FromStr for NodeType {
         let alias = match lower.as_str() {
             "requirement" | "req" | "requirements" => Some(NodeType::Requirement),
             "decision" | "decisions" => Some(NodeType::Decision),
+            "design" | "designs" => Some(NodeType::Design),
+            "constraint" | "constraints" => Some(NodeType::Constraint),
+            "conflict" | "conflicts" => Some(NodeType::Conflict),
+            "extension" | "extensions" => Some(NodeType::Extension),
             "file" | "files" => Some(NodeType::File),
             "codeunit" | "unit" | "units" | "code-unit" => Some(NodeType::CodeUnit),
             "test" | "tests" => Some(NodeType::Test),

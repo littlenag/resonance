@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{Layer, LinkStatus, Props};
 
-/// The edge types of the MVP (§6.3, partial).
+/// The core edge types of the primary graph (§6.3), plus namespaced extensions (FR-007).
+/// `references` lives only in parallel graphs (§6.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "camelCase")]
 pub enum EdgeType {
     /// CodeUnit/File/Test → Requirement.
     Satisfies,
@@ -23,16 +24,28 @@ pub enum EdgeType {
     Contains,
     /// Evidence → edge.
     Evidences,
+    /// Requirement/Design → Requirement: refinement or decomposition.
+    DerivedFrom,
+    /// Same type → same type: replaces an earlier version.
+    Supersedes,
+    /// CodeUnit → Design: the current realization of a design element.
+    Realizes,
+    /// A namespaced extension edge such as `acme:deploys`; the name is in `extType` (FR-007).
+    Extension,
 }
 
 impl EdgeType {
-    pub const ALL: [EdgeType; 6] = [
+    pub const ALL: [EdgeType; 10] = [
         EdgeType::Satisfies,
         EdgeType::Verifies,
         EdgeType::Constrains,
         EdgeType::Annotates,
         EdgeType::Contains,
         EdgeType::Evidences,
+        EdgeType::DerivedFrom,
+        EdgeType::Supersedes,
+        EdgeType::Realizes,
+        EdgeType::Extension,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -43,6 +56,10 @@ impl EdgeType {
             EdgeType::Annotates => "annotates",
             EdgeType::Contains => "contains",
             EdgeType::Evidences => "evidences",
+            EdgeType::DerivedFrom => "derivedFrom",
+            EdgeType::Supersedes => "supersedes",
+            EdgeType::Realizes => "realizes",
+            EdgeType::Extension => "extension",
         }
     }
 
@@ -55,6 +72,10 @@ impl EdgeType {
             EdgeType::Annotates => "annotated by",
             EdgeType::Contains => "contained by",
             EdgeType::Evidences => "evidenced by",
+            EdgeType::DerivedFrom => "refined by",
+            EdgeType::Supersedes => "superseded by",
+            EdgeType::Realizes => "realized by",
+            EdgeType::Extension => "extended by",
         }
     }
 }
@@ -71,7 +92,7 @@ impl FromStr for EdgeType {
         let lower = s.to_ascii_lowercase();
         EdgeType::ALL
             .into_iter()
-            .find(|t| t.as_str() == lower)
+            .find(|t| t.as_str().to_ascii_lowercase() == lower)
             .ok_or_else(|| {
                 format!(
                     "unknown edge type `{s}` (expected one of: {})",

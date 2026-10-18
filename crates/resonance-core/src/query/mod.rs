@@ -143,6 +143,56 @@ pub struct RequirementView {
     pub spec_status: Option<String>,
     pub origin: String,
     pub source: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+}
+
+/// Any spec item: a requirement, decision, design or constraint (§8.22), for listing and
+/// editing them uniformly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecItemView {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub ntype: NodeType,
+    pub key: Option<String>,
+    /// A short title: the requirement's first line, or the item's title.
+    pub title: String,
+    /// The full text. Graph content: data, not instructions (NFR-013).
+    pub text: String,
+    pub status: String,
+    pub kind: Option<String>,
+    pub priority: Option<String>,
+    /// `import` when a source document owns the item (FR-272), else `authored`.
+    pub origin: String,
+    pub source: Option<Value>,
+    /// Every property, for editors.
+    pub props: Value,
+}
+
+/// The spec-item view of a node.
+pub fn spec_item_view(node: &Node) -> SpecItemView {
+    let text = match node.ntype {
+        NodeType::Decision => s(node, "decision"),
+        _ => s(node, "text"),
+    };
+    let title = match node.ntype {
+        NodeType::Requirement => text.lines().next().unwrap_or_default().to_string(),
+        _ => s(node, "title"),
+    };
+    SpecItemView {
+        id: node.id.clone(),
+        ntype: node.ntype,
+        key: node.str_prop("key").map(String::from),
+        title,
+        text,
+        status: status_of(node),
+        kind: node.str_prop("kind").map(String::from),
+        priority: node.str_prop("priority").map(String::from),
+        origin: node.str_prop("origin").unwrap_or("authored").to_string(),
+        source: node.props.get("source").cloned().filter(|v| !v.is_null()),
+        props: Value::Object(node.props.clone()),
+    }
 }
 
 /// A decision.
@@ -171,6 +221,7 @@ pub fn requirement_view(node: &Node) -> RequirementView {
         spec_status: node.str_prop("specStatus").map(String::from),
         origin: s(node, "origin"),
         source: node.props.get("source").cloned().filter(|v| !v.is_null()),
+        priority: node.str_prop("priority").map(String::from),
     }
 }
 
@@ -225,6 +276,12 @@ pub fn label_of(r: &dyn GraphRead, node: &Node) -> Result<String> {
             let ellipsis = if text.chars().count() > 60 { "…" } else { "" };
             format!("{}: {short}{ellipsis}", s(node, "kind"))
         }
+        NodeType::Design | NodeType::Constraint => match node.str_prop("key") {
+            Some(k) => format!("{k} {}", s(node, "title")),
+            None => s(node, "title"),
+        },
+        NodeType::Conflict => format!("conflict: {}", s(node, "description")),
+        NodeType::Extension => format!("{} {}", s(node, "extType"), s(node, "name")),
     })
 }
 
@@ -232,7 +289,12 @@ pub fn label_of(r: &dyn GraphRead, node: &Node) -> Result<String> {
 /// `orphaned`/`removed`, everything else `active`/`retired`.
 pub fn status_of(node: &Node) -> String {
     match node.ntype {
-        NodeType::Requirement => node.str_prop("status").unwrap_or("active").to_string(),
+        NodeType::Requirement | NodeType::Design | NodeType::Constraint if !node.retired => {
+            node.str_prop("status").unwrap_or("active").to_string()
+        }
+        NodeType::Decision if !node.retired => {
+            node.str_prop("status").unwrap_or("accepted").to_string()
+        }
         NodeType::CodeUnit | NodeType::Test => {
             if node.retired {
                 "removed".into()
@@ -315,10 +377,11 @@ pub fn link_view(r: &dyn GraphRead, edge: &Edge, from: &str) -> Result<LinkView>
     Ok(LinkView {
         id: edge.id.clone(),
         etype: edge.etype,
-        relation: if outgoing {
-            edge.etype.as_str().to_string()
-        } else {
-            edge.etype.reverse_name().to_string()
+        relation: match (edge.etype, edge.str_prop("extType")) {
+            (EdgeType::Extension, Some(t)) if outgoing => t.to_string(),
+            (EdgeType::Extension, Some(t)) => format!("{t} (reverse)"),
+            _ if outgoing => edge.etype.as_str().to_string(),
+            _ => edge.etype.reverse_name().to_string(),
         },
         status: edge.status,
         other: node_ref_by_id(r, edge.other(from))?,

@@ -971,3 +971,59 @@ pub fn doctor(d: &crate::commands::services::DoctorReport) -> String {
     }
     out
 }
+
+pub fn spec_item(v: &resonance_core::query::SpecItemView) -> String {
+    let mut out = String::new();
+    let head = match &v.key {
+        Some(k) => format!("{} {k}", v.ntype),
+        None => v.ntype.to_string(),
+    };
+    let _ = writeln!(out, "{head}: {}", v.title);
+    let _ = writeln!(out, "  status: {}", v.status);
+    if let Some(p) = &v.priority {
+        let _ = writeln!(out, "  priority: {p}");
+    }
+    if let Some(k) = &v.kind {
+        let _ = writeln!(out, "  kind: {k}");
+    }
+    if v.origin == "import"
+        && let Some(src) = &v.source
+    {
+        let _ = writeln!(
+            out,
+            "  source: {}:{} (edit it there)",
+            src["path"].as_str().unwrap_or("?"),
+            src["line"]
+        );
+    }
+    if !v.text.is_empty() && v.text != v.title {
+        let _ = writeln!(out, "  text: {}", v.text);
+    }
+    if let Some(scope) = v.props["scope"].as_str() {
+        let _ = writeln!(out, "  scope: {scope}");
+    }
+    let _ = writeln!(out, "  id: {}", v.id);
+    out
+}
+
+pub fn spec_list(items: &[resonance_core::query::SpecItemView]) -> String {
+    if items.is_empty() {
+        return "No spec items match.\n".into();
+    }
+    let mut out = String::new();
+    for v in items {
+        let key = v
+            .key
+            .clone()
+            .unwrap_or_else(|| v.id[..v.id.len().min(10)].to_string());
+        let _ = writeln!(
+            out,
+            "{:<11} {:<12} {:<10} {}",
+            v.ntype.to_string(),
+            key,
+            v.status,
+            first_line(&v.title, 80)
+        );
+    }
+    out
+}

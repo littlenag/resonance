@@ -207,6 +207,57 @@ pub fn definitions() -> Vec<Value> {
             &["ref", "target"],
         ),
         tool(
+            "resonance_list_items",
+            "Spec items (requirements, decisions, designs, constraints), filtered by type, status and text.",
+            json!({
+                "type": s("Requirement, Decision, Design or Constraint."),
+                "status": s("draft, active, superseded, retired, accepted, ..."),
+                "text": s("Text to look for in keys, titles and text."),
+            }),
+            &[],
+        ),
+        tool(
+            "resonance_create_item",
+            "Create a spec item. Requirements need key and fields.text; decisions fields.title and fields.decision; designs fields.title; constraints fields.text. Optional fields: kind, priority, status, scope, context, consequences.",
+            json!({
+                "type": s("Requirement, Decision, Design or Constraint."),
+                "key": s("A key: FR-042 for requirements; optional for the others."),
+                "fields": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Field values by name."},
+            }),
+            &["type"],
+        ),
+        tool(
+            "resonance_edit_item",
+            "Change a graph-native spec item's fields (imported items are edited in their source document). Links to it become stale.",
+            json!({
+                "ref": s(reference),
+                "fields": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Field values by name."},
+            }),
+            &["ref", "fields"],
+        ),
+        tool(
+            "resonance_retire_item",
+            "Retire a graph-native spec item; it is never deleted.",
+            json!({"ref": s(reference)}),
+            &["ref"],
+        ),
+        tool(
+            "resonance_supersede",
+            "Record that a new spec item supersedes an old one; the old one becomes superseded and its links stale.",
+            json!({"old": s(reference), "new": s(reference)}),
+            &["old", "new"],
+        ),
+        tool(
+            "resonance_create_extension",
+            "Create a node of a namespaced extension type such as acme:Service (FR-007). Link it with a namespaced link type such as acme:deploys.",
+            json!({
+                "type": s("namespace:Name"),
+                "name": s("The node's name."),
+                "text": s("Optional description."),
+            }),
+            &["type", "name"],
+        ),
+        tool(
             "resonance_recover",
             "Divergences between git, the files and the graph (classified C1-C9 from git evidence), the detached pool and recovery records. action: list (default), undo <recovery id> (puts back what a resolution displaced), dismiss <divergence id>, attach <delta id> (detached delta onto HEAD), drop <delta id> (exports, then removes). Get the developer's confirmation before anything that cannot be undone.",
             json!({
@@ -385,6 +436,27 @@ pub fn to_call(name: &str, args: &Value) -> Result<Call> {
             json!({"action": arg(args, "action"), "id": arg(args, "id"), "note": arg(args, "note")}),
         ),
         "resonance_value" => ("value", json!({})),
+        "resonance_list_items" => (
+            "spec_list",
+            json!({"type": arg(args, "type"), "status": arg(args, "status"), "text": arg(args, "text")}),
+        ),
+        "resonance_create_item" => (
+            "spec_add",
+            json!({"type": req(args, "type")?, "key": arg(args, "key"), "fields": args.get("fields").cloned().unwrap_or(json!({}))}),
+        ),
+        "resonance_edit_item" => (
+            "spec_edit",
+            json!({"ref": req(args, "ref")?, "fields": args.get("fields").cloned().unwrap_or(json!({}))}),
+        ),
+        "resonance_retire_item" => ("spec_retire", json!({"ref": req(args, "ref")?})),
+        "resonance_supersede" => (
+            "supersede",
+            json!({"old": req(args, "old")?, "new": req(args, "new")?}),
+        ),
+        "resonance_create_extension" => (
+            "ext_add",
+            json!({"type": req(args, "type")?, "name": req(args, "name")?, "text": arg(args, "text")}),
+        ),
         "resonance_test" => ("test", json!({"ref": req(args, "ref")?})),
         "resonance_split_unit" => (
             "unit_split",

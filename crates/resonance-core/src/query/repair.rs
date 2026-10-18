@@ -31,6 +31,8 @@ pub enum RepairKind {
     RetiredRequirementWithLinks,
     /// A document defines a key that was authored through the CLI or MCP first.
     IntentKeyConflict,
+    /// Concurrent identity operations that could not both hold (§9.4).
+    IdentityConflict,
 }
 
 impl RepairKind {
@@ -44,6 +46,7 @@ impl RepairKind {
             RepairKind::UnreadableIntentSource => "unreadable intent source",
             RepairKind::RetiredRequirementWithLinks => "retired requirement with links",
             RepairKind::IntentKeyConflict => "requirement key conflict",
+            RepairKind::IdentityConflict => "identity conflict",
         }
     }
 }
@@ -76,6 +79,23 @@ fn short(s: &str) -> String {
 /// The repair list, most urgent first.
 pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
     let mut items = Vec::new();
+
+    for c in r.find_nodes(&NodeQuery::of_type(NodeType::Conflict))? {
+        if c.str_prop("status") != Some("open") {
+            continue;
+        }
+        items.push(RepairItem {
+            kind: RepairKind::IdentityConflict,
+            target: c.id.clone(),
+            summary: c.str_prop("description").unwrap_or_default().to_string(),
+            location: None,
+            quote: None,
+            suggestion: format!(
+                "decide which identity change holds (re-anchor with `resonance unit edit`, or split/merge again), then `resonance recover dismiss {}`",
+                c.id
+            ),
+        });
+    }
 
     for t in [NodeType::CodeUnit, NodeType::Test] {
         for n in r.find_nodes(&NodeQuery::of_type(t))? {

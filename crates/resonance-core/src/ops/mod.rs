@@ -266,6 +266,8 @@ pub fn apply(w: &mut dyn GraphWrite, op: &Op) -> Result<()> {
             node.retired = true;
             node.props
                 .insert("splitInto".into(), field(p, "into")?.clone());
+            node.props
+                .insert("identityChangeSet".into(), json!(op.change_set));
             w.put_node(&node)
         }
         kind::IDENTITY_MERGE => {
@@ -276,6 +278,8 @@ pub fn apply(w: &mut dyn GraphWrite, op: &Op) -> Result<()> {
                 let mut node = node_or_err(w, &id)?;
                 node.retired = true;
                 node.props.insert("mergedInto".into(), into.clone());
+                node.props
+                    .insert("identityChangeSet".into(), json!(op.change_set));
                 w.put_node(&node)?;
             }
             Ok(())

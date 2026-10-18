@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use crate::api::{DecisionInput, Engine, UnitEdit, UnitInput};
 use crate::error::{Error, Result};
 use crate::ingest::ReconcileOptions;
+use crate::model::NodeType;
 use crate::ops::Actor;
 
 /// One call of an operation.
@@ -81,6 +82,12 @@ pub const MUTATIONS: &[&str] = &[
     "rebuild",
     "restore",
     "recover",
+    "spec_add",
+    "spec_edit",
+    "spec_retire",
+    "supersede",
+    "ext_add",
+    "intent_project",
 ];
 
 /// Every method `dispatch` understands.
@@ -93,6 +100,14 @@ pub const METHODS: &[&str] = &[
     "restore",
     "recover",
     "value",
+    "spec_add",
+    "spec_edit",
+    "spec_retire",
+    "spec_list",
+    "spec_show",
+    "supersede",
+    "ext_add",
+    "intent_project",
     "export",
     "import",
     "req_add",
@@ -144,6 +159,8 @@ struct Full {
 #[derive(Deserialize)]
 struct Paths {
     paths: Vec<String>,
+    #[serde(default)]
+    format: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -328,7 +345,7 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
         }
         "import" => {
             let p: Paths = args(m, a)?;
-            out(engine.import(&p.paths)?)
+            out(engine.import(&p.paths, p.format.as_deref())?)
         }
         "req_add" => {
             let r: ReqAdd = args(m, a)?;
@@ -454,6 +471,87 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             }
         }
         "value" => out(engine.value()?),
+        "spec_add" => {
+            #[derive(Deserialize)]
+            struct SpecAdd {
+                #[serde(rename = "type")]
+                ntype: String,
+                key: Option<String>,
+                #[serde(default)]
+                fields: BTreeMap<String, String>,
+            }
+            let r: SpecAdd = args(m, a)?;
+            let t: NodeType = r.ntype.parse().map_err(Error::Usage)?;
+            out(engine.spec_add(t, r.key.as_deref(), &r.fields)?)
+        }
+        "spec_edit" => {
+            #[derive(Deserialize)]
+            struct SpecEdit {
+                #[serde(rename = "ref")]
+                reference: String,
+                #[serde(default)]
+                fields: BTreeMap<String, String>,
+            }
+            let r: SpecEdit = args(m, a)?;
+            out(engine.spec_edit(&r.reference, &r.fields)?)
+        }
+        "intent_project" => {
+            #[derive(Deserialize)]
+            struct Project {
+                dir: String,
+                #[serde(default)]
+                apply: bool,
+            }
+            let r: Project = args(m, a)?;
+            out(engine.intent_project(&r.dir, r.apply)?)
+        }
+        "spec_retire" => {
+            let r: Ref = args(m, a)?;
+            let (item, links) = engine.spec_retire(&r.reference)?;
+            out(json!({"item": item, "links": links}))
+        }
+        "spec_show" => {
+            let r: Ref = args(m, a)?;
+            out(engine.spec_item(&r.reference)?)
+        }
+        "spec_list" => {
+            #[derive(Deserialize, Default)]
+            #[serde(default)]
+            struct SpecList {
+                #[serde(rename = "type")]
+                ntype: Option<String>,
+                status: Option<String>,
+                text: Option<String>,
+            }
+            let r: SpecList = args(m, a)?;
+            let t = match r.ntype.as_deref() {
+                Some(t) if !t.is_empty() => Some(t.parse::<NodeType>().map_err(Error::Usage)?),
+                _ => None,
+            };
+            out(engine.spec_list(t, r.status.as_deref(), r.text.as_deref())?)
+        }
+        "supersede" => {
+            #[derive(Deserialize)]
+            struct Supersede {
+                old: String,
+                new: String,
+            }
+            let r: Supersede = args(m, a)?;
+            out(engine.supersede(&r.old, &r.new)?)
+        }
+        "ext_add" => {
+            #[derive(Deserialize)]
+            struct ExtAdd {
+                #[serde(rename = "type")]
+                ext_type: String,
+                name: String,
+                text: Option<String>,
+                #[serde(default)]
+                props: BTreeMap<String, String>,
+            }
+            let r: ExtAdd = args(m, a)?;
+            out(engine.ext_add(&r.ext_type, &r.name, r.text.as_deref(), &r.props)?)
+        }
         "show" => {
             let r: Ref = args(m, a)?;
             out(engine.show(&r.reference)?)

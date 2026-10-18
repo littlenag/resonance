@@ -1,6 +1,7 @@
 //! Intent: importing requirements from Markdown and keeping them in sync (MVP-011, FR-122).
 //! Authoring requirements, decisions and annotations is in [`crate::api`] (FR-120, FR-123).
 
+pub mod formats;
 pub mod markdown;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,8 +52,14 @@ pub struct IntentReport {
     pub reactivated: Vec<String>,
     pub unreadable: Vec<UnreadableSource>,
     pub conflicts: Vec<KeyConflict>,
-    /// Requirements defined in the sources, after the import.
+    /// Statements that look like intent but have no stable identifier (FR-122).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unidentified: Vec<formats::Unidentified>,
+    /// Items defined in the sources, after the import.
     pub total: usize,
+    /// Node IDs whose content changed (their links become stale). Not serialized.
+    #[serde(skip)]
+    pub changed_ids: Vec<String>,
 }
 
 /// The kind of a requirement, from its key prefix.
@@ -64,34 +71,48 @@ pub fn kind_of(key: &str) -> &'static str {
     }
 }
 
-struct Definition {
-    key: String,
-    text: String,
-    spec_status: Option<String>,
-    path: String,
-    line: usize,
+/// The node ID of an imported item: deterministic, so that clones agree (FR-031, FR-186).
+pub fn item_id(ntype: NodeType, key: &str) -> String {
+    match ntype {
+        NodeType::Decision => format!("dec:{key}"),
+        NodeType::Design => format!("design:{key}"),
+        NodeType::Constraint => format!("constraint:{key}"),
+        _ => ids::requirement_id(key),
+    }
 }
+
+/// The node types that sources can define.
+const IMPORTED: [NodeType; 3] = [NodeType::Requirement, NodeType::Decision, NodeType::Design];
 
 /// Bring imported requirements in line with the configured sources. Unless `force`, does
 /// nothing when no source changed since the last import.
 pub fn sync(tx: &mut Tx<'_>, root: &Path, sources: &[String], force: bool) -> Result<IntentReport> {
     let mut report = IntentReport::default();
-    let mut readable: Vec<(String, String)> = Vec::new();
+    let mut parsed: Vec<formats::Parsed> = Vec::new();
     let mut fingerprint = String::new();
-    for path in sources {
-        match fs::read(abs_path(root, path)) {
+    for entry in sources {
+        let (explicit, path) = formats::split_source(entry);
+        let abs = abs_path(root, path);
+        if abs.is_dir() {
+            let p = formats::parse_adr_dir(root, path);
+            fingerprint.push_str(&format!("{entry}=[{}];", p.fingerprint));
+            parsed.push(p);
+            continue;
+        }
+        let format = explicit.unwrap_or_else(|| formats::detect(path, false));
+        match fs::read(&abs) {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => {
-                    fingerprint.push_str(&format!("{path}={};", content_hash(text.as_bytes())));
-                    readable.push((path.clone(), text));
+                    fingerprint.push_str(&format!("{entry}={};", content_hash(text.as_bytes())));
+                    parsed.push(formats::parse_text(format, path, &text));
                 }
                 Err(_) => report.unreadable.push(UnreadableSource {
-                    path: path.clone(),
+                    path: path.to_string(),
                     reason: "not valid UTF-8".into(),
                 }),
             },
             Err(e) => report.unreadable.push(UnreadableSource {
-                path: path.clone(),
+                path: path.to_string(),
                 reason: if e.kind() == std::io::ErrorKind::NotFound {
                     "file not found".into()
                 } else {
@@ -109,48 +130,46 @@ pub fn sync(tx: &mut Tx<'_>, root: &Path, sources: &[String], force: bool) -> Re
     }
     report.scanned = true;
 
-    // The first definition of each key wins: sources in configured order, then by line.
-    let mut defs: BTreeMap<String, Definition> = BTreeMap::new();
+    // The first definition of each item wins: sources in configured order, then by line.
+    let mut defs: BTreeMap<String, formats::Item> = BTreeMap::new();
     let mut also: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    for (path, text) in &readable {
-        for r in markdown::parse(text) {
-            if defs.contains_key(&r.key) {
-                also.entry(r.key.clone())
+    for p in parsed {
+        report.unidentified.extend(p.unidentified);
+        for item in p.items {
+            let id = item_id(item.ntype, &item.key);
+            if defs.contains_key(&id) {
+                also.entry(id)
                     .or_default()
-                    .push(json!({"path": path, "line": r.line}));
+                    .push(json!({"path": item.path, "line": item.line}));
                 continue;
             }
-            defs.insert(
-                r.key.clone(),
-                Definition {
-                    key: r.key,
-                    text: r.text,
-                    spec_status: r.spec_status,
-                    path: path.clone(),
-                    line: r.line,
-                },
-            );
+            defs.insert(id, item);
         }
     }
     let unreadable_paths: BTreeSet<&str> =
         report.unreadable.iter().map(|u| u.path.as_str()).collect();
 
-    for def in defs.values() {
-        let id = ids::requirement_id(&def.key);
+    for (id, def) in &defs {
         let source = json!({"path": def.path, "line": def.line});
-        let also_defined = Value::Array(also.get(&def.key).cloned().unwrap_or_default());
-        match tx.r().get_node(&id)? {
+        let also_defined = Value::Array(also.get(id).cloned().unwrap_or_default());
+        match tx.r().get_node(id)? {
             None => {
                 let mut p = Props::new();
                 p.insert("key".into(), json!(def.key));
-                p.insert("text".into(), json!(def.text));
-                p.insert("kind".into(), json!(kind_of(&def.key)));
-                p.insert("specStatus".into(), json!(def.spec_status));
-                p.insert("status".into(), json!("active"));
+                for (k, v) in &def.fields {
+                    p.insert(k.clone(), v.clone());
+                }
+                if def.ntype == NodeType::Requirement {
+                    p.insert("kind".into(), json!(kind_of(&def.key)));
+                    p.insert("specStatus".into(), json!(def.spec_status));
+                    p.insert("status".into(), json!("active"));
+                } else if !p.contains_key("status") {
+                    p.insert("status".into(), json!("active"));
+                }
                 p.insert("origin".into(), json!("import"));
                 p.insert("source".into(), source);
                 p.insert("alsoDefinedIn".into(), also_defined);
-                tx.create_node(&id, NodeType::Requirement, Layer::Authored, p)?;
+                tx.create_node(id, def.ntype, Layer::Authored, p)?;
                 report.added.push(def.key.clone());
             }
             Some(node) if node.str_prop("origin") != Some("import") => {
@@ -161,22 +180,42 @@ pub fn sync(tx: &mut Tx<'_>, root: &Path, sources: &[String], force: bool) -> Re
                 });
             }
             Some(node) => {
-                if node.str_prop("text") != Some(def.text.as_str()) {
-                    tx.set_prop(&id, "text", json!(def.text))?;
-                    report.changed.push(def.key.clone());
+                let mut content_changed = false;
+                for (k, v) in &def.fields {
+                    if k == "status" {
+                        continue;
+                    }
+                    if node.props.get(k) != Some(v) {
+                        tx.set_prop(id, k, v.clone())?;
+                        content_changed = true;
+                    }
                 }
-                let updates = [
-                    ("specStatus", json!(def.spec_status)),
-                    ("source", source),
-                    ("alsoDefinedIn", also_defined),
-                ];
+                if content_changed {
+                    report.changed.push(def.key.clone());
+                    report.changed_ids.push(id.clone());
+                }
+                let mut updates = vec![("source", source), ("alsoDefinedIn", also_defined)];
+                if def.ntype == NodeType::Requirement {
+                    updates.push(("specStatus", json!(def.spec_status)));
+                }
+                if let Some(st) = def.fields.get("status")
+                    && node.str_prop("status") != st.as_str()
+                    && node.str_prop("status") != Some("retired")
+                {
+                    updates.push(("status", st.clone()));
+                }
                 for (k, v) in updates {
                     if node.props.get(k) != Some(&v) {
-                        tx.set_prop(&id, k, v)?;
+                        tx.set_prop(id, k, v)?;
                     }
                 }
                 if node.str_prop("status") == Some("retired") {
-                    tx.set_prop(&id, "status", json!("active"))?;
+                    let back = def
+                        .fields
+                        .get("status")
+                        .cloned()
+                        .unwrap_or_else(|| json!("active"));
+                    tx.set_prop(id, "status", back)?;
                     report.reactivated.push(def.key.clone());
                 }
             }
@@ -184,12 +223,16 @@ pub fn sync(tx: &mut Tx<'_>, root: &Path, sources: &[String], force: bool) -> Re
     }
 
     // Requirements that disappeared from every readable source are retired, never deleted.
-    let imported = tx
-        .r()
-        .find_nodes(&NodeQuery::of_type(NodeType::Requirement).with_prop("origin", "import"))?;
+    let mut imported = Vec::new();
+    for t in IMPORTED {
+        imported.extend(
+            tx.r()
+                .find_nodes(&NodeQuery::of_type(t).with_prop("origin", "import"))?,
+        );
+    }
     for node in imported {
         let key = node.str_prop("key").unwrap_or_default().to_string();
-        if defs.contains_key(&key) || node.str_prop("status") == Some("retired") {
+        if defs.contains_key(&node.id) || node.str_prop("status") == Some("retired") {
             continue;
         }
         let from = node

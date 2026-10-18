@@ -124,9 +124,14 @@ pub enum Command {
     // Intent
     /// Import requirements from Markdown files and keep them in sync.
     Import {
-        /// Markdown files with `- **FR-001** text` items or `| **FR-001** | text |` rows.
+        /// Markdown files with `- **FR-001** text` items or `| **FR-001** | text |` rows; Spec
+        /// Kit spec.md files; Kiro requirements.md / design.md; EARS statements; ADR directories.
         #[arg(required = true)]
         paths: Vec<String>,
+        /// The format, when it cannot be told from the path: markdown, speckit, kiro,
+        /// kiro-design, ears or adr.
+        #[arg(long)]
+        format: Option<String>,
     },
     /// Requirements.
     #[command(subcommand)]
@@ -134,6 +139,21 @@ pub enum Command {
     /// Decisions.
     #[command(subcommand)]
     Decision(DecisionCommand),
+    /// Designs: components, interfaces, flows.
+    #[command(subcommand)]
+    Design(ItemCommand),
+    /// Constraints: rules code must obey.
+    #[command(subcommand)]
+    Constraint(ItemCommand),
+    /// Spec items of every type.
+    #[command(subcommand)]
+    Spec(SpecCommand),
+    /// Namespaced extension types (FR-007).
+    #[command(subcommand)]
+    Ext(ExtCommand),
+    /// Intent documents.
+    #[command(subcommand)]
+    Intent(IntentCommand),
 
     // Code units and tests
     /// Code units: named regions of files.
@@ -277,15 +297,125 @@ pub enum ReqCommand {
         /// functional or non-functional (default from the key).
         #[arg(long)]
         kind: Option<String>,
+        /// A priority, for example high, medium or low.
+        #[arg(long)]
+        priority: Option<String>,
+        /// draft or active (default active).
+        #[arg(long)]
+        status: Option<String>,
     },
-    /// Change a requirement's text (its links become stale).
+    /// Change a requirement (its links become stale when the text changes).
     Edit {
         requirement: String,
         #[arg(long)]
-        text: String,
+        text: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        priority: Option<String>,
+        /// draft, active, superseded or retired.
+        #[arg(long)]
+        status: Option<String>,
     },
     /// Retire a requirement (it is never deleted).
     Retire { requirement: String },
+    /// Record that another requirement supersedes this one (its links become stale).
+    Supersede {
+        /// The requirement being replaced.
+        requirement: String,
+        /// The requirement that replaces it.
+        #[arg(long)]
+        by: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ItemCommand {
+    /// Create one.
+    Add {
+        /// An optional key, for example DES-001.
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        text: Option<String>,
+        /// For constraints: where it applies.
+        #[arg(long)]
+        scope: Option<String>,
+        /// draft or active (default active).
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Change one (links to it become stale).
+    Edit {
+        item: String,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long)]
+        scope: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Retire one (it is never deleted).
+    Retire { item: String },
+    /// Record that another one supersedes this one.
+    Supersede {
+        item: String,
+        #[arg(long)]
+        by: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SpecCommand {
+    /// Spec items: requirements, decisions, designs and constraints.
+    List {
+        /// Requirement, Decision, Design or Constraint.
+        #[arg(long = "type")]
+        ntype: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        /// Text to look for in keys, titles and text.
+        #[arg(long)]
+        text: Option<String>,
+    },
+    /// One spec item, with every field.
+    Show { item: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IntentCommand {
+    /// Write graph-native requirements to DIR/requirements.md, which then owns them (FR-121).
+    Project {
+        #[arg(value_name = "DIR")]
+        directory: String,
+        /// Show what would be written and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ExtCommand {
+    /// Create a node of a namespaced extension type, such as acme:Service (FR-007).
+    Add {
+        /// namespace:Name
+        #[arg(value_name = "TYPE")]
+        ext_type: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        text: Option<String>,
+        /// Extra properties, key=value (repeatable).
+        #[arg(long = "prop", value_name = "KEY=VALUE")]
+        props: Vec<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

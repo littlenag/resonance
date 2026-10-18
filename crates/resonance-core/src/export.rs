@@ -74,6 +74,10 @@ pub fn write(r: &dyn GraphRead, repository: &str, out: &mut dyn Write) -> Result
     let order = [
         NodeType::Requirement,
         NodeType::Decision,
+        NodeType::Design,
+        NodeType::Constraint,
+        NodeType::Extension,
+        NodeType::Conflict,
         NodeType::File,
         NodeType::CodeUnit,
         NodeType::Test,

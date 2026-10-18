@@ -528,8 +528,37 @@ fn apply(
 
     // Intent sources (MVP-011): re-imported when they change.
     report.intent = intent::sync(tx, root, &config.intent.sources, opts.force_intent)?;
-    for key in &report.intent.changed {
-        changed_nodes.insert(ids::requirement_id(key));
+    for id in &report.intent.changed_ids {
+        changed_nodes.insert(id.clone());
+    }
+
+    // Source tags (FR-123): in changed files, or everywhere when they were just enabled.
+    let enabled = config.ingest.source_tags;
+    let was = tx.r().get_meta(crate::ingest::tags::ENABLED)?.as_deref() == Some("true");
+    if enabled && !was {
+        for f in tx.r().list_files()? {
+            let text = tx
+                .r()
+                .get_blob(&f.blob)?
+                .and_then(|b| String::from_utf8(b).ok());
+            crate::ingest::tags::sync_file(tx, &f.path, text.as_deref())?;
+        }
+    } else if enabled {
+        for c in &changes {
+            let text = texts.get(&c.path).map(String::as_str);
+            crate::ingest::tags::sync_file(tx, &c.path, text)?;
+        }
+    } else if was {
+        // Turned off: tag links go away.
+        for f in tx.r().list_files()? {
+            crate::ingest::tags::sync_file(tx, &f.path, None)?;
+        }
+    }
+    if enabled != was {
+        tx.w().set_meta(
+            crate::ingest::tags::ENABLED,
+            if enabled { "true" } else { "false" },
+        )?;
     }
 
     // Link statuses (MVP-012).
@@ -615,8 +644,8 @@ pub fn settle(
             }
         }
         report.intent = intent::sync(&mut tx, root, &config.intent.sources, true)?;
-        for key in &report.intent.changed {
-            changed_nodes.insert(ids::requirement_id(key));
+        for id in &report.intent.changed_ids {
+            changed_nodes.insert(id.clone());
         }
         for id in &changed_nodes {
             report.links += links::refresh_statuses(&mut tx, id)?;

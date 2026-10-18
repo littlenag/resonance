@@ -10,11 +10,15 @@ use crate::ops::{Tx, hlc};
 use crate::store::{EdgeQuery, GraphRead};
 
 /// Authored edge types whose status follows their endpoints.
-pub const LINK_TYPES: [EdgeType; 4] = [
+pub const LINK_TYPES: [EdgeType; 8] = [
     EdgeType::Satisfies,
     EdgeType::Verifies,
     EdgeType::Constrains,
     EdgeType::Annotates,
+    EdgeType::DerivedFrom,
+    EdgeType::Supersedes,
+    EdgeType::Realizes,
+    EdgeType::Extension,
 ];
 
 /// The anchor of a code unit or test, if it has one.
@@ -38,6 +42,13 @@ pub fn node_hash(node: &Node) -> Option<String> {
             Some(content_hash(parts.join("\u{1f}").as_bytes()))
         }
         NodeType::Annotation => node.str_prop("text").map(|t| content_hash(t.as_bytes())),
+        NodeType::Design | NodeType::Constraint | NodeType::Conflict | NodeType::Extension => {
+            let parts: Vec<&str> = ["title", "text", "description", "scope", "name"]
+                .iter()
+                .map(|k| node.str_prop(k).unwrap_or(""))
+                .collect();
+            Some(content_hash(parts.join("\u{1f}").as_bytes()))
+        }
         NodeType::Evidence => None,
     }
 }

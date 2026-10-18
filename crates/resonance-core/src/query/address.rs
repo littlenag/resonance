@@ -49,6 +49,18 @@ pub fn resolve(r: &dyn GraphRead, repo: &Repo, cwd: &Path, reference: &str) -> R
     {
         return Ok(Resolved::Node(n));
     }
+    // A spec item's key: imported decisions and designs, and keyed designs and constraints.
+    for prefix in ["dec:", "design:", "constraint:"] {
+        if let Some(n) = r.get_node(&format!("{prefix}{reference}"))? {
+            return Ok(Resolved::Node(n));
+        }
+    }
+    for t in [NodeType::Decision, NodeType::Design, NodeType::Constraint] {
+        let keyed = r.find_nodes(&NodeQuery::of_type(t).with_prop("key", reference))?;
+        if let [only] = keyed.as_slice() {
+            return Ok(Resolved::Node(only.clone()));
+        }
+    }
     if let Some((path, name)) = reference.rsplit_once("::") {
         return resolve_address(r, repo, cwd, reference, path, name).map(Resolved::Node);
     }

@@ -19,9 +19,13 @@ pub struct SearchHit {
     pub snippet: Option<String>,
 }
 
-const DEFAULT_TYPES: [NodeType; 6] = [
+const DEFAULT_TYPES: [NodeType; 10] = [
     NodeType::Requirement,
     NodeType::Decision,
+    NodeType::Design,
+    NodeType::Constraint,
+    NodeType::Extension,
+    NodeType::Conflict,
     NodeType::CodeUnit,
     NodeType::Test,
     NodeType::Annotation,
@@ -37,6 +41,10 @@ fn searchable(r: &dyn GraphRead, n: &Node) -> Result<Vec<String>> {
         NodeType::CodeUnit | NodeType::Test => vec![label_of(r, n)?, p("kind"), p("run")],
         NodeType::Annotation => vec![p("text"), p("kind"), p("task")],
         NodeType::Evidence => vec![p("result"), p("command"), p("outputTail")],
+        NodeType::Design => vec![p("key"), p("title"), p("text")],
+        NodeType::Constraint => vec![p("key"), p("title"), p("text"), p("scope")],
+        NodeType::Conflict => vec![p("description")],
+        NodeType::Extension => vec![p("extType"), p("name"), p("text")],
     })
 }
 

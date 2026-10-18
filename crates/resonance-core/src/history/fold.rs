@@ -189,7 +189,74 @@ pub fn collect(
 /// cannot apply (for example, it refers to a node that a concurrent branch never created) is
 /// skipped and reported (FR-150).
 fn apply_lenient(w: &mut dyn GraphWrite, op: &Op) -> bool {
+    if is_identity_conflict(w, op) {
+        return record_conflict(w, op).is_ok();
+    }
     ops::apply(w, op).is_ok()
+}
+
+/// An identity operation on a unit that another change set already split or merged away:
+/// the two cannot both hold (§9.4).
+fn is_identity_conflict(w: &dyn GraphWrite, op: &Op) -> bool {
+    use crate::ops::kind;
+    if !matches!(
+        op.kind.as_str(),
+        kind::IDENTITY_MOVE | kind::IDENTITY_RETARGET | kind::IDENTITY_SPLIT | kind::IDENTITY_MERGE
+    ) || op.payload.get("edgeId").is_some()
+    {
+        return false;
+    }
+    let ids: Vec<String> = match op.kind.as_str() {
+        kind::IDENTITY_MERGE => op.payload["ids"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => op.payload["id"]
+            .as_str()
+            .map(String::from)
+            .into_iter()
+            .collect(),
+    };
+    ids.iter().any(|id| {
+        w.get_node(id).ok().flatten().is_some_and(|n| {
+            n.retired
+                && (n.props.contains_key("splitInto") || n.props.contains_key("mergedInto"))
+                && n.str_prop("identityChangeSet") != Some(op.change_set.as_str())
+        })
+    })
+}
+
+/// A `Conflict` node for an identity operation that could not apply. Its ID comes from the
+/// operation, so every clone records the same conflict.
+fn record_conflict(w: &mut dyn GraphWrite, op: &Op) -> crate::error::Result<()> {
+    use crate::model::{Layer, Node, NodeType, Props};
+    let target = op.payload["id"]
+        .as_str()
+        .map(String::from)
+        .or_else(|| op.payload["ids"].as_array().map(|a| format!("{a:?}")))
+        .unwrap_or_default();
+    let mut p = Props::new();
+    p.insert(
+        "description".into(),
+        serde_json::json!(format!(
+            "{} of {target} conflicts with a split or merge made on another branch",
+            op.kind
+        )),
+    );
+    p.insert("ops".into(), serde_json::json!([op.op_id]));
+    p.insert("target".into(), serde_json::json!(target));
+    p.insert("operation".into(), serde_json::to_value(op)?);
+    p.insert("status".into(), serde_json::json!("open"));
+    w.put_node(&Node::new(
+        format!("conflict:{}", op.op_id),
+        NodeType::Conflict,
+        Layer::Authored,
+        p,
+    ))
 }
 
 /// What a catch-up did.

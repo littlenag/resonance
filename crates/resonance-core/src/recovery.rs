@@ -430,6 +430,20 @@ pub fn classify(repo: &Repo, r: &dyn GraphRead, o: &Observed<'_>) -> Result<Vec<
                 .unwrap_or("?")
         )];
         let own_commit = op.starts_with("commit");
+        // What the operation changed, from git itself: the files may already have been
+        // ingested by an earlier reconcile that ran before HEAD moved (daemon timing).
+        let changed_paths: Vec<String> = match (&mv.from, &mv.to) {
+            (Some(from), Some(to)) => repo
+                .git(&["diff", "--name-only", from, to])
+                .map(|s| {
+                    s.lines()
+                        .filter(|l| !l.starts_with(".resonance/"))
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or(changed_paths),
+            _ => changed_paths,
+        };
         if !own_commit && !changed_paths.is_empty() {
             let mut d = Divergence::new(
                 Class::C1,
