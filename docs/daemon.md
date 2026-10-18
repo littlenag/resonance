@@ -11,7 +11,7 @@ Each repository that uses Resonance gets a background process, the **daemon**. I
 ## Life cycle
 
 - **Started on demand.** The first `resonance` command in a repository starts its daemon and waits until it's ready. A daemon that starts up first brings the graph up to date with everything that changed while none was running.
-- **One per repository.** A lock file (`.resonance/daemon.lock`) guarantees that only one daemon runs for each repository. A second one exits immediately.
+- **One per repository.** A lock file (`.resonance/local/daemon.lock`) guarantees that only one daemon runs for each repository. A second one exits immediately.
 - **Exits when idle.** After 30 minutes without requests the daemon exits. Change this with `daemon.idleSeconds` in [the configuration](configuration.md).
 - **Replaced after an upgrade.** If you install a new build of `resonance`, the next command stops the daemon from the old build and starts a new one.
 - **Recovers from crashes.** If the daemon is killed or crashes, the next command starts a new one, which catches up with the disk before answering. A missing daemon only ever costs a short delay, never a wrong answer.
@@ -112,10 +112,10 @@ Daemons register with the registry when they start, renew their entry every 10 s
 
 | Path | What |
 | --- | --- |
-| `.resonance/daemon.lock` | Held by the running daemon. |
-| `.resonance/daemon.json` | The running daemon's socket, process ID, versions and start time. Clients find the daemon through it. |
-| `.resonance/daemon.log` | The daemon's diagnostics. Look here first when the daemon won't start. |
-| `.resonance/cookies/` | Short-lived marker files the daemon uses to know it has seen every change made before a request. |
+| `.resonance/local/daemon.lock` | Held by the running daemon. |
+| `.resonance/local/daemon.json` | The running daemon's socket, process ID, versions and start time. Clients find the daemon through it. |
+| `.resonance/local/daemon.log` | The daemon's diagnostics. Look here first when the daemon won't start. |
+| `.resonance/local/cookies/` | Short-lived marker files the daemon uses to know it has seen every change made before a request. |
 | runtime directory | The daemons' sockets (`<hash>.sock`) and the registry's (`registry.sock`). |
 | `~/.resonance/known-roots` | Repositories that have run a daemon. |
 

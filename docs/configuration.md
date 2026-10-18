@@ -1,10 +1,16 @@
 # Configuration
 
-Resonance works without any configuration. When you need to change something, settings live in `.resonance/config.toml`, which `resonance init` writes with comments explaining each one. The daemon notices changes to this file and applies them right away.
+Resonance works without any configuration. When you need to change something, settings live in `.resonance/config.toml`, which `resonance init` writes with comments explaining each one. The daemon notices changes to this file and applies them right away. Once the graph is shared, `config.toml` is committed, so its settings apply to the whole team.
 
 ## Settings
 
 ```toml
+[repository]
+# The adoption stage: 1 offline, 2 shared (written by `resonance share`).
+stage = 1
+# The oldest resonance version that may write this repository's data.
+minVersion = ""
+
 [intent]
 # Requirement documents imported with `resonance import`.
 sources = []
@@ -15,6 +21,8 @@ sources = []
 ignore = []
 # Files larger than this are recorded by hash and size only.
 maxBlobBytes = 5242880
+# Read `@satisfies FR-042` / `@verifies FR-042` tags from file text.
+sourceTags = false
 
 [test]
 # Fallback for tests declared without --run; {name}, {path} and {address} are substituted.
@@ -27,17 +35,38 @@ timeoutSeconds = 600
 [daemon]
 # The daemon exits after this many seconds without requests.
 idleSeconds = 1800
+
+[compaction]
+# Compact when the trunk has this many sealed deltas.
+maxDeltas = 100
+# The trunk; empty means the remote's default branch, else main, else master.
+trunk = ""
+
+[governance]
+# Path globs Resonance governs; empty means everything.
+paths = []
+
+[changes]
+# Also log changes made by agents in the change log.
+includeAgents = false
 ```
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `repository.stage` | `1` | The adoption stage. `resonance share` sets it to 2; don't change it by hand. See [Sharing the graph](sharing.md). |
+| `repository.minVersion` | `""` | The oldest Resonance version that may write this repository's data. Written by `share`. |
 | `intent.sources` | `[]` | Imported requirement documents, in import order. `resonance import` adds to it. Remove a path to stop importing that document. |
 | `ingest.ignore` | `[]` | Extra glob patterns of files and directories not to read, for example `["vendor/**", "*.min.js"]`. |
 | `ingest.maxBlobBytes` | `5242880` (5 MiB) | Larger files are recorded by hash and size only, with no copy of their content. |
+| `ingest.sourceTags` | `false` | Create links from tags in code comments: `// @satisfies FR-003` links the innermost code unit around the tag. Removing the tag removes the link. |
 | `test.command` | `""` | The run command for tests declared without `--run`. `{name}`, `{path}` and `{address}` are replaced with the test's name, file path and address. |
 | `test.zeroTestsPattern` | `"running 0 tests"` | If a test's output contains this text, the run is recorded as `error`, because nothing actually ran. Set it to what your test runner prints when a filter matches nothing (for pytest, `"no tests ran"`). |
 | `test.timeoutSeconds` | `600` | A test still running after this is stopped and recorded as `error`. |
 | `daemon.idleSeconds` | `1800` | The daemon exits after this many seconds without requests. |
+| `compaction.maxDeltas` | `100` | On the trunk, compact automatically past this many sealed deltas. |
+| `compaction.trunk` | `""` | The branch compactions happen on. Empty: the remote's default branch, else `main`, else `master`. |
+| `governance.paths` | `[]` | Globs of paths Resonance governs when you've opted in: edits there made while Resonance wasn't running are restored from the graph (`C3`), and uncovered changes there are reported by `check`. Empty means everything. |
+| `changes.includeAgents` | `false` | Also record agents' changes to spec items in the [change log](tui-and-change-log.md). |
 
 ## Environment variables
 
@@ -66,6 +95,8 @@ Two more variables control how Resonance runs rather than what it does:
 | --- | --- |
 | `RESONANCE_NO_DAEMON=1` | Run every command in its own process instead of through the daemon, like `--no-daemon`. |
 | `RESONANCE_RUNTIME_DIR` | Where daemon sockets go (see [The daemon](daemon.md#files)). Keep it short: socket paths are limited to about 100 characters. |
+| `RESONANCE_ACTOR` | Who is running the command: `agent:<name>` for an agent (the agent kit sets `agent:claude-code` for Claude Code), or `human:<email>`. Without it, you are identified by `git config user.email`. Agent changes aren't recorded in the change log by default. |
+| `RESONANCE_OVERRIDE=1` | Before a git command, tells the [agent gate](agents.md#the-agent-gate) that you told the agent to proceed. |
 
 Precedence, from highest to lowest: command-line flags, environment variables, `.resonance/config.toml`, built-in defaults.
 

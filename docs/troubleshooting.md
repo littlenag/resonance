@@ -7,7 +7,7 @@ resonance doctor
 resonance status
 ```
 
-`doctor` checks the graph and the daemons; `status` shows the repair list. If the daemon is involved, its log is `.resonance/daemon.log`.
+`doctor` checks the graph and the daemons; `status` shows the repair list. If the daemon is involved, its log is `.resonance/local/daemon.log`.
 
 ## Common problems
 
@@ -60,7 +60,7 @@ Tests run in the daemon, from the repository root, with the environment of the c
 
 ### The daemon won't start
 
-The error includes the end of `.resonance/daemon.log`. Common causes:
+The error includes the end of `.resonance/local/daemon.log`. Common causes:
 
 - **"path must be shorter than SUN_LEN"**: the socket path is too long. This happens when `RESONANCE_RUNTIME_DIR` (or `XDG_RUNTIME_DIR`) points to a deeply nested directory. Unset it, or point it at a short path such as `/tmp/resonance-$USER`.
 - **The runtime directory isn't writable.** Check its permissions, or set `RESONANCE_RUNTIME_DIR` to a directory you own.
@@ -73,7 +73,7 @@ Run `resonance daemon` to see the last error. The most common cause is a `.git/i
 
 ### Answers seem out of date
 
-They shouldn't be: every answer waits until the daemon has applied every change made before the request. Check that you didn't use `--cached`. If an answer is still wrong, compare it with `resonance --no-daemon <command>`, which re-reads the disk itself. If the two differ, run `resonance reconcile --full` and report the problem, with `.resonance/daemon.log`.
+They shouldn't be: every answer waits until the daemon has applied every change made before the request. Check that you didn't use `--cached`. If an answer is still wrong, compare it with `resonance --no-daemon <command>`, which re-reads the disk itself. If the two differ, run `resonance reconcile --full` and report the problem, with `.resonance/local/daemon.log`.
 
 ### `git status` shows `.resonance/`
 
@@ -87,13 +87,18 @@ Units whose code doesn't exist on the current branch are orphaned until you swit
 
 | Location | What |
 | --- | --- |
-| `.resonance/graph.db` | The graph. A SQLite database, excluded from git. |
+| `.resonance/local/state.db` | The live graph. A SQLite database, never committed. |
 | `.resonance/config.toml` | This repository's settings. |
-| `.resonance/daemon.*`, `.resonance/cookies/` | The daemon's lock, endpoint, log and markers. |
+| `.resonance/graph.db`, `.resonance/deltas/` | Once the graph is shared: the committed snapshot and the change files. |
+| `.resonance/local/private/` | Offline history, and annotations kept private when sharing. |
+| `.resonance/local/journal/`, `.resonance/local/recovery/` | Every graph operation, and what recoveries displaced. |
+| `.resonance/local/daemon.*`, `.resonance/local/cookies/` | The daemon's lock, endpoint, log and markers. |
+| `.resonance/local/agent-kit.json` | The installed agent kit. |
 | `.git/info/exclude` | One line, `/.resonance/`, so git ignores the directory. |
 | runtime directory | Daemon sockets (see [The daemon](daemon.md#files)). |
 | `~/.resonance/known-roots` | Repositories that have run a daemon. |
-| `~/.resonance/exports/` | Exports written by `resonance eject`. |
+| `~/.resonance/exports/` | Exports written by `resonance eject`, `unshare` and `recover drop`. |
+| `~/.resonance/backups/` | Backups of `.resonance/`, written by `resonance backup`, `share` and layout migrations. |
 
 Resonance never writes anywhere else. It never changes your source files or their timestamps, never holds locks on them, installs no git hooks, and has no telemetry or network listener. `resonance agent install` and `resonance registry install` are the only commands that change anything outside the repository, and both ask first.
 

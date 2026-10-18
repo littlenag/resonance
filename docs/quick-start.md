@@ -115,7 +115,7 @@ Code units: 0   Tests: 0   Annotations: 0   Test runs recorded: 0
 Links: 0 asserted, 0 verified, 0 stale, 0 orphaned
 ```
 
-`init` creates `.resonance/` beside your code, adds it to `.git/info/exclude` so git never sees it, and reads every file. It may ask whether to register Resonance with Claude Code; answer no for now (step 10 covers it).
+`init` creates `.resonance/` beside your code, adds it to `.git/info/exclude` so git never sees it, and reads every file. It may offer to install the agent kit for Claude Code; answer no for now (step 10 covers it).
 
 Check that git sees nothing:
 
@@ -332,11 +332,20 @@ When you're done experimenting, rename the file back with `git mv stock.py inven
 $ resonance agent install
 ```
 
-This registers Resonance's MCP server with Claude Code for this project only (Claude Code's *local* scope). It shows the command it will run and asks first; nothing in your repository changes. Start Claude Code in the repository and your agent can trace requirements, ask why code exists, declare and link what it writes, and run linked tests. See [Working with agents](agents.md).
+This installs the agent kit: Resonance's MCP server for this project only (Claude Code's *local* scope), a skill, a hook that checks your agent's own git commands, and a short `CLAUDE.local.md` section. It shows what it will write and asks first; no tracked file changes. Start Claude Code in the repository and ask it for the Resonance orientation. Your agent can then trace requirements, ask why code exists, declare and link what it writes, and run linked tests. See [Working with agents](agents.md).
+
+## 11. Browse the spec
+
+```
+$ resonance tui
+```
+
+lists your requirements and decisions; `enter` shows one, `a` adds one, and `l` shows the change log, which records your spec edits for your agent to pick up. See [The TUI and the change log](tui-and-change-log.md).
 
 ## Where to go next
 
 - [Concepts](concepts.md): the ideas behind what you just did.
 - [Code units and tests](code-units-and-tests.md): how anchors follow edits, and what to do when they can't.
+- [Sharing the graph](sharing.md): when your team is ready, commit the graph with the code.
 - [CLI reference](cli-reference.md): every command and option.
 - [Removing Resonance](troubleshooting.md#removing-resonance-from-a-repository): `resonance eject` exports your graph, then removes every trace from the repository.

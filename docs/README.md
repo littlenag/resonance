@@ -4,7 +4,7 @@ Resonance keeps a private graph beside your git repository. It records why your 
 
 Resonance parses no source code, so it works with every language and any text file. You or your agent declare the regions of files that matter, and Resonance keeps them attached as the files change, whatever tool changes them.
 
-Everything stays on your machine. The graph lives in `.resonance/` at the root of your repository, which is excluded from git, so nothing is committed and `git status` never changes. Your teammates, CI and build tools see no difference.
+Resonance starts offline: the graph lives in `.resonance/` at the root of your repository, excluded from git, so nothing is committed and `git status` never changes. Your teammates, CI and build tools see no difference. When your team is ready, you can share the graph, so that it's committed, reviewed and merged with the code.
 
 ## Start here
 
@@ -19,7 +19,10 @@ Everything stays on your machine. The graph lives in `.resonance/` at the root o
 - [Annotations](annotations.md): notes, warnings, call-outs and instructions attached to code.
 - [The repair list](repair-list.md): what needs attention after code or requirements change, and how to resolve each item.
 - [Queries](queries.md): `trace`, `why`, `context`, `search`, `show` and `unverified`.
-- [Working with agents](agents.md): connect Claude Code or another MCP client, and what your agent does with Resonance.
+- [Working with agents](agents.md): the agent kit, what your agent is told, and the gate on its git commands.
+- [The TUI and the change log](tui-and-change-log.md): browse and edit spec items in a terminal UI, and the log of changes your agent picks up.
+- [Sharing the graph](sharing.md): stages, `share`, joining, the git hooks, checks, pull request reviews, merging and compaction.
+- [Recovery](recovery.md): when git, the files and the graph diverge, and how to undo a repair.
 - [The daemon](daemon.md): the background process that keeps the graph current, `doctor`, and the optional registry.
 - [Configuration](configuration.md): `.resonance/config.toml`, environment variables, and which files are read.
 

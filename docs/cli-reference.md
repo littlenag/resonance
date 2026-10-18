@@ -24,6 +24,7 @@ resonance [GLOBAL OPTIONS] <COMMAND> [ARGS]
 | `0` | Success. |
 | `1` | An error, including a reference that matched nothing or several things, and any test run that didn't pass. |
 | `2` | A usage error: a missing or invalid argument. |
+| `3` | `check` (or a git hook) found a consistency error. |
 
 ## References
 
@@ -55,12 +56,14 @@ Where a command takes a `<region>`:
 ### init
 
 ```
-resonance init [--agent | --no-agent]
+resonance init [--agent | --no-agent] [--offline]
 ```
 
-Sets up Resonance in the current repository: creates `.resonance/` (the graph and `config.toml`), adds `/.resonance/` to `.git/info/exclude`, and reads every file. It changes no tracked file. Running it again changes nothing.
+Sets up Resonance in the current repository: creates `.resonance/` (`config.toml`, and the graph in `.resonance/local/`), adds `/.resonance/` to `.git/info/exclude`, and reads every file. It changes no tracked file. Running it again changes nothing.
 
-In a terminal, it offers to register the MCP server with Claude Code. `--agent` registers it without asking; `--no-agent` doesn't offer.
+In a repository whose graph is shared, `init` **joins** it instead: it rebuilds the graph from the committed snapshot and deltas, and opts you in. `--offline` tries Resonance privately over the shared graph instead. See [Sharing the graph](sharing.md).
+
+In a terminal, it offers to install the [agent kit](agents.md). `--agent` installs it without asking; `--no-agent` doesn't offer.
 
 ### status
 
@@ -77,6 +80,31 @@ resonance reconcile [--full]
 ```
 
 Brings the graph up to date with the disk now. Every command already does this, so you rarely need it. `--full` re-reads every file, ignoring sizes and modification times.
+
+### rebuild
+
+```
+resonance rebuild
+```
+
+Re-folds the graph from its snapshot and deltas, then brings it up to date with the disk. Use it after a `C6` hold (see [Recovery](recovery.md)).
+
+### restore
+
+```
+resonance restore <file>
+```
+
+Restores authored data from an export written by `export`, `eject` or `leave --export`. Operations for things that already exist are skipped.
+
+### backup
+
+```
+resonance backup [--list]
+resonance backup --restore [--from DIR]
+```
+
+Backs up `.resonance/` to `~/.resonance/backups/`, lists backups, or restores a missing `.resonance/` from the newest backup (or from `DIR`).
 
 ### rebuild-derived
 
@@ -123,7 +151,135 @@ The binary's version, the graph's schema version, and the MCP protocol versions 
 resonance doctor
 ```
 
-Checks this repository (the graph's integrity and schema version, and the git exclusion) and the health of every Resonance daemon on this machine. See [The daemon](daemon.md#health-of-every-daemon-doctor).
+Checks this repository (the graph's integrity and schema version, the git exclusion, and the agent kit) and the health of every Resonance daemon on this machine. See [The daemon](daemon.md#health-of-every-daemon-doctor).
+
+---
+
+## Sharing and git
+
+See [Sharing the graph](sharing.md).
+
+### share
+
+```
+resonance share [--dry-run] [--yes] [--keep-local <annotation>…]
+```
+
+Shares the graph with the team (stage 1 to stage 2): shows everything that would be committed, then writes the snapshot and the shared files under `.resonance/`, opts you in, and installs the git hooks and drivers. It commits nothing. `--keep-local` keeps annotations private.
+
+### leave
+
+```
+resonance leave [--export FILE]
+```
+
+Stops being a Resonance user in this clone: removes the hook blocks, the agent kit and your opt-in. The open delta must be committed, or written to `FILE` first.
+
+### unshare
+
+```
+resonance unshare [--yes] [--out FILE]
+```
+
+Takes the repository back to stage 1: exports the graph, leaves the removal of the committed `.resonance/` files for you to commit, and restores the local exclusion.
+
+### compact
+
+```
+resonance compact [--commit] [--anywhere]
+```
+
+Folds the sealed deltas into a new snapshot. Only on the trunk, unless `--anywhere`. `--commit` commits the compaction on its own.
+
+### check
+
+```
+resonance check --staged
+resonance check --range <a>..<b>
+```
+
+Consistency checks, with findings `R001` to `R010`. Exits with 3 when any finding is an error. The `pre-commit` and `pre-push` hooks run these.
+
+### review
+
+```
+resonance review <a>..<b> [--markdown]
+```
+
+The graph changes in a range, for pull request descriptions.
+
+### show-delta
+
+```
+resonance show-delta <file>
+```
+
+A delta file for people. Git uses it to show deltas in diffs.
+
+---
+
+## Recovery
+
+See [Recovery](recovery.md).
+
+### recover
+
+```
+resonance recover
+resonance recover undo <id>
+resonance recover dismiss <id> [--note TEXT]
+resonance recover attach <delta>
+resonance recover drop <delta> [--yes]
+resonance recover repair-snapshot
+```
+
+Lists divergences, the detached pool and recovery records; puts back what a resolution displaced; marks a divergence handled; attaches or drops a detached offline delta; or repairs a conflicted snapshot after a merge.
+
+### value
+
+```
+resonance value
+```
+
+What Resonance did for you, locally, including the agent kit's effectiveness.
+
+---
+
+## Spec items and the change log
+
+### tui
+
+```
+resonance tui
+```
+
+A terminal UI to list, view, edit, add and retire spec items, and to see the change log. See [The TUI and the change log](tui-and-change-log.md).
+
+### changes
+
+```
+resonance changes [--since SEQ]
+resonance changes show <seq>
+resonance changes done <seq>… [--note TEXT]
+```
+
+The change log: people's changes to spec items that no agent has handled yet.
+
+### spec list
+
+```
+resonance spec list [--type TYPE] [--status STATUS] [--text TEXT]
+```
+
+Requirements, decisions, designs and constraints, with their keys, statuses and titles.
+
+### spec show
+
+```
+resonance spec show <ref>
+```
+
+One spec item, with every field.
 
 ---
 
@@ -132,26 +288,34 @@ Checks this repository (the graph's integrity and schema version, and the git ex
 ### import
 
 ```
-resonance import <paths…>
+resonance import <paths…> [--format FORMAT]
 ```
 
-Imports requirements from Markdown documents and keeps them in sync from then on. See [Requirements and decisions](requirements-and-decisions.md).
+Imports intent from documents and keeps it in sync from then on: Markdown requirement lists and tables, Spec Kit `spec.md` files, Kiro `requirements.md` and `design.md`, EARS statements, and ADR directories. `--format` (`markdown`, `speckit`, `kiro`, `kiro-design`, `ears` or `adr`) names the format when it can't be told from the path. See [Requirements and decisions](requirements-and-decisions.md).
 
 ### req add
 
 ```
-resonance req add <KEY> --text TEXT [--kind functional|non-functional]
+resonance req add <KEY> --text TEXT [--kind functional|non-functional] [--priority P] [--status draft|active]
 ```
 
-Creates a requirement. The kind defaults from the key: `NFR-` keys are non-functional.
+Creates a requirement. The kind defaults from the key: `NFR-` keys are non-functional. An existing key is refused.
 
 ### req edit
 
 ```
-resonance req edit <ref> --text TEXT
+resonance req edit <ref> [--text TEXT] [--kind K] [--priority P] [--status S]
 ```
 
-Changes the text of a requirement created with `req add`. Its links become stale. Imported requirements are edited in their documents.
+Changes a requirement created with `req add`. If its text changes, its links become stale. Imported requirements are edited in their documents.
+
+### req supersede
+
+```
+resonance req supersede <ref> --by <ref>
+```
+
+Records that one requirement replaces another: a `supersedes` link, and the old one becomes `superseded`, so its links become stale.
 
 ### req retire
 
@@ -175,7 +339,35 @@ Records a decision, with the status `accepted`.
 resonance decision edit <ref> [--title T] [--decision D] [--context C] [--consequences X] [--status S]
 ```
 
-Changes any field of a decision, including its status (for example `superseded` or `rejected`).
+Changes any field of a decision, including its status (for example `superseded` or `deprecated`).
+
+### design, constraint
+
+```
+resonance design add [--key KEY] --title TITLE [--text TEXT] [--status draft|active]
+resonance constraint add [--key KEY] [--title TITLE] --text TEXT [--scope SCOPE] [--status draft|active]
+resonance design|constraint edit <ref> [--title T] [--text X] [--scope S] [--status S]
+resonance design|constraint retire <ref>
+resonance design|constraint supersede <ref> --by <ref>
+```
+
+Designs describe how something is built; constraints limit how (`--scope` says where one applies). Code `realizes` a design; a constraint `constrains` what it applies to.
+
+### ext add
+
+```
+resonance ext add <namespace:Name> --name NAME [--text TEXT] [--prop KEY=VALUE]…
+```
+
+Creates a node of an extension type, such as `acme:Service`. Link to it with a namespaced relation, such as `acme:runsIn`.
+
+### intent project
+
+```
+resonance intent project <dir> [--dry-run] [--yes]
+```
+
+Writes the graph-native requirements as Markdown under `<dir>`. The document then owns them: edits there flow back into the graph.
 
 ---
 
@@ -251,7 +443,7 @@ Declares that several units became one. Their links and annotations are copied t
 resonance link <source> <type> <target> [--confidence N]
 ```
 
-Creates a link. `<type>` is `satisfies`, `verifies` or `constrains`. `--confidence` is between 0 and 1. See [Links and verification](links-and-verification.md).
+Creates a link. `<type>` is `satisfies`, `verifies`, `constrains`, `realizes`, `derivedFrom` or `supersedes`, or a namespaced extension relation. `--confidence` is between 0 and 1. See [Links and verification](links-and-verification.md).
 
 ### unlink
 
@@ -356,10 +548,19 @@ Runs tests and records the results as evidence. `<ref>` is a requirement or code
 ### agent install
 
 ```
-resonance agent install [--dry-run] [--yes]
+resonance agent install [--dry-run] [--yes] [--shared] [--generic] [--no-mcp]
 ```
 
-Registers the Resonance MCP server with Claude Code for this project, in Claude Code's local scope. See [Working with agents](agents.md).
+Installs the agent kit: the MCP server in Claude Code's local scope, a skill, a harness hook that checks the agent's own git commands, and an instructions section. `--shared` (stage 2) puts the section in the shared `CLAUDE.md` or `AGENTS.md`; `--generic` prints a section and the MCP command for other agents. See [Working with agents](agents.md).
+
+### agent status, agent update
+
+```
+resonance agent status
+resonance agent update
+```
+
+The installed kit, whether it's stale, and the orientation; or refresh it for this version, stage and participation.
 
 ### mcp
 

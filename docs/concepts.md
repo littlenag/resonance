@@ -6,7 +6,7 @@ Resonance keeps a **graph**: a set of things (nodes) and typed links between the
 
 Your files on disk and your git history are always the source of truth. The graph follows them: whenever a file changes, Resonance updates its copy, works out where your declared code now is, and updates link statuses. Resonance never writes to your source files.
 
-The graph is stored in `.resonance/graph.db` at the root of the repository. `resonance init` adds `/.resonance/` to `.git/info/exclude`, a local ignore file that git never shares, so the graph is never committed and `git status` is unchanged.
+The graph is stored in `.resonance/` at the root of the repository. `resonance init` adds `/.resonance/` to `.git/info/exclude`, a local ignore file that git never shares, so the graph is never committed and `git status` is unchanged, until you choose to [share it](sharing.md).
 
 This is **offline mode**: the graph is private to you, on your machine. Nothing is shared with teammates, and nothing in the repository reveals that you use Resonance.
 
@@ -27,6 +27,10 @@ See [Requirements and decisions](requirements-and-decisions.md).
 ### Decisions
 
 A decision records a choice and its reasons: a title, what was decided, and optionally its context and consequences. A decision can **constrain** requirements, code units, tests, files or other decisions, and then appears whenever someone asks why that code exists.
+
+### Designs and constraints
+
+A design says how something is built, and code **realizes** it. A constraint limits how, and **constrains** the things it applies to. Like requirements and decisions, they can be retired and superseded, never deleted.
 
 ### Files
 
@@ -65,7 +69,10 @@ An **annotation** is a note attached to a code unit, a file or another node. Its
 | --- | --- | --- | --- |
 | `satisfies` | code unit, test or file | requirement | this code implements that requirement |
 | `verifies` | test | requirement or code unit | this test checks that requirement or code |
-| `constrains` | decision | requirement, code unit, test, file or decision | this decision limits that thing |
+| `constrains` | decision or constraint | requirement, code unit, test, file or decision | this limits that thing |
+| `realizes` | code unit or file | design | this code builds that design |
+| `derivedFrom` | requirement | requirement | this requirement refines that one |
+| `supersedes` | spec item | spec item of the same kind | this replaces that; links to the old one become stale |
 | `annotates` | annotation | any node | this note is about that thing |
 
 You create `satisfies`, `verifies` and `constrains` links with `resonance link`; `annotates` links are created by `resonance annotate`. When displayed from the other end, links use reverse names: *satisfied by*, *verified by*, *constrained by*.

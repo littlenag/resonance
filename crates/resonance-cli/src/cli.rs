@@ -68,6 +68,7 @@ pub enum Command {
     },
     /// Stop sharing the graph (stage 2 to stage 1): export, then stage the removal of .resonance/.
     Unshare {
+        /// Do not ask for confirmation.
         #[arg(long)]
         yes: bool,
         /// Where to write the export (default: ~/.resonance/exports/<repo>-<time>.jsonl).

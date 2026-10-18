@@ -87,7 +87,7 @@ resonance decision add \
   --consequences "Restarting the service loses the inventory"
 ```
 
-A new decision has the status `accepted`. Change any field later, including the status (for example `superseded` or `rejected`):
+A new decision has the status `accepted`. Change any field later, including the status (`proposed`, `accepted`, `superseded`, `deprecated` or `retired`):
 
 ```
 resonance decision edit "Store items in memory" --status superseded
@@ -100,3 +100,33 @@ resonance link "Store items in memory" constrains record
 ```
 
 Decisions that constrain a code unit, or any unit or file that contains it, appear in `resonance why` for that unit and in context packs. Refer to a decision by its title (ignoring case) or by its ID.
+
+## Designs and constraints
+
+Two more kinds of intent sit beside requirements and decisions:
+
+- A **design** says how something is built: `resonance design add --key DES-001 --title "Storage layer" --text "One SQLite file per repository"`. Code `realizes` a design: `resonance link open realizes DES-001`.
+- A **constraint** limits how: `resonance constraint add --key CON-001 --text "Opening takes under 10 ms" --scope src/store.rs`. It `constrains` what it applies to: `resonance link CON-001 constrains open`.
+
+Both have `edit`, `retire` and `supersede` subcommands, like requirements. Requirements can also be derived from others (`resonance link FR-010 derivedFrom FR-001`), and one item can replace another (`resonance req supersede FR-001 --by FR-011`), which makes links to the old one stale.
+
+Requirements created with `req add` can carry a priority and a status (`--priority high --status draft`). `resonance spec list` shows every spec item, with filters by type, status and text; `resonance tui` does the same interactively (see [The TUI and the change log](tui-and-change-log.md)).
+
+## Other document formats
+
+`resonance import` also reads:
+
+| Format | What it looks like |
+| --- | --- |
+| Spec Kit | `specs/<feature>/spec.md`, with `- **FR-001**: System MUST …` items. |
+| Kiro | `.kiro/specs/<feature>/requirements.md` (user stories with acceptance criteria, keyed `<FEATURE>-<n>`) and `design.md` (each section becomes a design). |
+| EARS | `- REQ-1: When …, the system shall …`. Statements without a key are reported, not imported. |
+| ADR | A directory of numbered records such as `docs/adr/0001-use-sqlite.md`; each becomes a decision keyed `ADR-0001`, with its status, context and consequences. |
+
+The format is recognized from the path; when it can't be, name it with `--format markdown|speckit|kiro|kiro-design|ears|adr`. As with Markdown, the documents own what they define: edit them, and Resonance follows; remove an item, and it's retired.
+
+To go the other way, `resonance intent project docs/intent` writes the requirements you created in the graph as a Markdown document. From then on the document owns them.
+
+## Tags in code
+
+With `ingest.sourceTags = true` in the configuration, a comment such as `// @satisfies FR-003` or `# @verifies FR-003` links the innermost code unit around it (or the file) to the requirement. Removing the tag removes the link.
