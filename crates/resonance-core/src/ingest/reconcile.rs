@@ -76,9 +76,16 @@ pub struct ReconcileReport {
     pub intent: IntentReport,
     pub operations: usize,
     pub duration_ms: u64,
+    /// Files whose content changed, with their previous and new content hashes (for
+    /// classification, MVP-031). Not serialized.
+    #[serde(skip)]
+    pub changed: Vec<ChangedFile>,
     /// What catching up with git and the delta history did first (FR-068, FR-195).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<crate::history::fold::CatchUp>,
+    /// Divergences classified from what this reconcile observed (MVP-031).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub divergences: Vec<crate::recovery::Divergence>,
 }
 
 impl ReconcileReport {
@@ -86,6 +93,14 @@ impl ReconcileReport {
     pub fn changed_anything(&self) -> bool {
         self.operations > 0
     }
+}
+
+/// A file whose content changed in a reconcile.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChangedFile {
+    pub path: String,
+    pub old_blob: Option<String>,
+    pub new_blob: Option<String>,
 }
 
 struct Hashed {
@@ -370,6 +385,11 @@ fn apply(
         if stored && let Ok(text) = std::str::from_utf8(&h.bytes) {
             texts.insert(h.path.clone(), text.to_string());
         }
+        report.changed.push(ChangedFile {
+            path: h.path.clone(),
+            old_blob: old_blob.clone(),
+            new_blob: Some(h.hash.clone()),
+        });
         changes.push(ContentChange {
             path: h.path.clone(),
             old_blob,
@@ -416,6 +436,11 @@ fn apply(
             report.files_removed += 1;
             report.links += links::orphan_links(tx, &id)?;
         }
+        report.changed.push(ChangedFile {
+            path: path.clone(),
+            old_blob: old_blob.clone(),
+            new_blob: None,
+        });
         changes.push(ContentChange {
             path: path.clone(),
             old_blob,

@@ -144,6 +144,8 @@ fn initialize_list_tools_and_trace() {
         "resonance_confirm",
         "resonance_annotate",
         "resonance_reattach",
+        "resonance_recover",
+        "resonance_value",
         "resonance_test",
         "resonance_split_unit",
         "resonance_merge_unit",

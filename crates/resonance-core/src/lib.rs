@@ -17,6 +17,7 @@ pub mod mcp;
 pub mod model;
 pub mod ops;
 pub mod query;
+pub mod recovery;
 pub mod registry;
 pub mod repo;
 pub mod service;

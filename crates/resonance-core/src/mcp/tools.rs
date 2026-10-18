@@ -177,7 +177,11 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "resonance_confirm",
             "Return a stale link to asserted after checking that it still holds.",
-            json!({"link": s("A link ID.")}),
+            json!({
+                "link": s("A link ID."),
+                "costTokens": i("Optional: tokens this repair cost you, for `resonance value`."),
+                "costSeconds": i("Optional: seconds this repair took."),
+            }),
             &["link"],
         ),
         tool(
@@ -194,8 +198,29 @@ pub fn definitions() -> Vec<Value> {
         tool(
             "resonance_reattach",
             "Re-attach an orphaned or wrongly attached link or annotation to a new target.",
-            json!({"ref": s("A link ID or annotation ID."), "target": s(reference)}),
+            json!({
+                "ref": s("A link ID or annotation ID."),
+                "target": s(reference),
+                "costTokens": i("Optional: tokens this repair cost you, for `resonance value`."),
+                "costSeconds": i("Optional: seconds this repair took."),
+            }),
             &["ref", "target"],
+        ),
+        tool(
+            "resonance_recover",
+            "Divergences between git, the files and the graph (classified C1-C9 from git evidence), the detached pool and recovery records. action: list (default), undo <recovery id> (puts back what a resolution displaced), dismiss <divergence id>, attach <delta id> (detached delta onto HEAD), drop <delta id> (exports, then removes). Get the developer's confirmation before anything that cannot be undone.",
+            json!({
+                "action": s("list, undo, dismiss, attach or drop."),
+                "id": s("The recovery record, divergence or delta ID (a unique prefix is enough)."),
+                "note": s("For dismiss: what was done."),
+            }),
+            &[],
+        ),
+        tool(
+            "resonance_value",
+            "What Resonance did for this developer, locally: traces, context packs, anchors that followed edits, repairs and their cost.",
+            json!({}),
+            &[],
         ),
         tool(
             "resonance_test",
@@ -338,7 +363,10 @@ pub fn to_call(name: &str, args: &Value) -> Result<Call> {
             }),
         ),
         "resonance_unlink" => ("unlink", json!({"ref": req(args, "link")?})),
-        "resonance_confirm" => ("confirm", json!({"ref": req(args, "link")?})),
+        "resonance_confirm" => (
+            "confirm",
+            json!({"ref": req(args, "link")?, "costTokens": args.get("costTokens"), "costSeconds": args.get("costSeconds")}),
+        ),
         "resonance_annotate" => (
             "annotate",
             json!({
@@ -350,8 +378,13 @@ pub fn to_call(name: &str, args: &Value) -> Result<Call> {
         ),
         "resonance_reattach" => (
             "reattach",
-            json!({"ref": req(args, "ref")?, "target": req(args, "target")?}),
+            json!({"ref": req(args, "ref")?, "target": req(args, "target")?, "costTokens": args.get("costTokens"), "costSeconds": args.get("costSeconds")}),
         ),
+        "resonance_recover" => (
+            "recover",
+            json!({"action": arg(args, "action"), "id": arg(args, "id"), "note": arg(args, "note")}),
+        ),
+        "resonance_value" => ("value", json!({})),
         "resonance_test" => ("test", json!({"ref": req(args, "ref")?})),
         "resonance_split_unit" => (
             "unit_split",

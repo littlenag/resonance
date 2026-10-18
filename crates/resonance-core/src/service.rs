@@ -80,6 +80,7 @@ pub const MUTATIONS: &[&str] = &[
     "rebuild_derived",
     "rebuild",
     "restore",
+    "recover",
 ];
 
 /// Every method `dispatch` understands.
@@ -90,6 +91,8 @@ pub const METHODS: &[&str] = &[
     "rebuild_derived",
     "rebuild",
     "restore",
+    "recover",
+    "value",
     "export",
     "import",
     "req_add",
@@ -268,7 +271,29 @@ pub fn dispatch(engine: &mut Engine, call: &Call) -> Result<Value> {
     result
 }
 
+/// Record the cost an agent reports for a repair (FR-239).
+fn count_repair(engine: &mut Engine, a: &Value) -> Result<()> {
+    let n = |k: &str| a.get(k).and_then(Value::as_u64).unwrap_or(0);
+    engine.count(&[
+        ("repair.count", 1),
+        ("repair.tokens", n("costTokens")),
+        ("repair.seconds", n("costSeconds")),
+    ])
+}
+
+/// Methods whose use `resonance value` reports (FR-240).
+const SERVED: &[&str] = &["trace", "why", "context", "search", "test"];
+
 fn dispatch_inner(engine: &mut Engine, call: &Call) -> Result<Value> {
+    let result = dispatch_method(engine, call)?;
+    if SERVED.contains(&call.method.as_str()) {
+        let name = format!("served.{}", call.method);
+        engine.count(&[(name.as_str(), 1)])?;
+    }
+    Ok(result)
+}
+
+fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
     let root = engine.repo.root.clone();
     engine.set_cwd(call.cwd.clone().unwrap_or(root));
     if let Some(actor) = &call.actor {
@@ -385,7 +410,9 @@ fn dispatch_inner(engine: &mut Engine, call: &Call) -> Result<Value> {
         }
         "confirm" => {
             let r: Ref = args(m, a)?;
-            out(engine.confirm(&r.reference)?)
+            let result = out(engine.confirm(&r.reference)?);
+            count_repair(engine, a)?;
+            result
         }
         "annotate" => {
             let n: Annotate = args(m, a)?;
@@ -393,8 +420,40 @@ fn dispatch_inner(engine: &mut Engine, call: &Call) -> Result<Value> {
         }
         "reattach" => {
             let r: Reattach = args(m, a)?;
-            out(engine.reattach(&r.reference, &r.target)?)
+            let result = out(engine.reattach(&r.reference, &r.target)?);
+            count_repair(engine, a)?;
+            result
         }
+        "recover" => {
+            #[derive(Deserialize, Default)]
+            #[serde(default)]
+            struct Recover {
+                action: Option<String>,
+                id: Option<String>,
+                note: Option<String>,
+            }
+            let r: Recover = args(m, a)?;
+            let id = || {
+                r.id.clone()
+                    .ok_or_else(|| Error::Usage("recover: give the ID to act on".into()))
+            };
+            match r.action.as_deref().unwrap_or("list") {
+                "list" => out(engine.recover_list()?),
+                "undo" => out(engine.recover_undo(&id()?)?),
+                "dismiss" => out(engine.recover_dismiss(&id()?, r.note.as_deref().unwrap_or(""))?),
+                "attach" => out(engine.recover_attach(&id()?)?),
+                "drop" => {
+                    let home = std::env::var_os("HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_default();
+                    out(json!({"exported": engine.recover_drop(&id()?, &home)?}))
+                }
+                other => Err(Error::Usage(format!(
+                    "recover: unknown action `{other}` (expected list, undo, dismiss, attach or drop)"
+                ))),
+            }
+        }
+        "value" => out(engine.value()?),
         "show" => {
             let r: Ref = args(m, a)?;
             out(engine.show(&r.reference)?)

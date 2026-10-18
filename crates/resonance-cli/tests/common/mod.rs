@@ -57,6 +57,37 @@ impl TestRepo {
         repo
     }
 
+    /// A clone of `source` (a teammate's working tree), not initialized.
+    pub fn clone_of(source: &Path) -> TestRepo {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = TestRepo {
+            dir,
+            home: tempfile::tempdir().expect("home"),
+            runtime: tempfile::Builder::new()
+                .prefix("rr")
+                .tempdir_in("/tmp")
+                .expect("runtime dir"),
+            extra_path: None,
+            force_daemon: false,
+        };
+        let out = Command::new("git")
+            .args(["clone", "-q"])
+            .arg(source)
+            .arg(repo.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .expect("git clone");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        repo.git(&["config", "user.email", "mate@example.com"]);
+        repo.git(&["config", "user.name", "Mate"]);
+        repo.git(&["config", "commit.gpgsign", "false"]);
+        repo
+    }
+
     /// A repository with a small Rust-like project, a spec, and Resonance initialized.
     pub fn with_project() -> TestRepo {
         Self::project(false)

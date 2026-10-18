@@ -4,6 +4,8 @@
 
 mod intent;
 mod links;
+mod recover;
+pub use recover::divergence_line as recover_line;
 mod read;
 pub mod services;
 mod setup;
@@ -202,6 +204,8 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::RebuildDerived => setup::rebuild_derived(&ctx),
         Command::Rebuild => setup::rebuild(&ctx),
         Command::Restore { file } => setup::restore(&ctx, &file),
+        Command::Recover { action } => recover::recover(&ctx, action),
+        Command::Value => recover::value(&ctx),
         Command::Backup {
             restore,
             from,

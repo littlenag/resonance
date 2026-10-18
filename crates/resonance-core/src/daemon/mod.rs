@@ -490,6 +490,8 @@ impl Owner {
     fn run(mut self, rx: Receiver<Job>) -> Result<()> {
         // FR-047: reconcile before serving anything (P4).
         self.set_state("reconciling");
+        // Changes found now were made while no daemon was running (C3, MVP-031).
+        self.engine.set_startup(true);
         let report = self.engine.reconcile(ReconcileOptions::default())?;
         self.after_ingest(&report);
         self.set_state(if self.watch.is_some() {

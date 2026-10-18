@@ -62,6 +62,10 @@ pub struct Engine {
     writer: String,
     /// The open delta as last written, for self-write suppression (FR-044).
     synced: history::Synced,
+    /// The next reconcile is a daemon's first: changes it finds are C3 (MVP-031).
+    startup: bool,
+    /// This developer's email, to tell their commits from others' (C2).
+    me: String,
 }
 
 /// Counts for `status`.
@@ -92,6 +96,55 @@ pub struct StatusView {
     pub counts: Counts,
     pub repair: Vec<RepairItem>,
     pub history: HistoryStatus,
+    /// Unresolved divergences (§8.18).
+    pub divergences: Vec<crate::recovery::Divergence>,
+}
+
+/// `recover` with no action (FR-196).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverView {
+    pub divergences: Vec<crate::recovery::Divergence>,
+    pub detached: Vec<DetachedDelta>,
+    pub held: Option<fold::Held>,
+    pub records: Vec<crate::recovery::RecoveryRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetachedDelta {
+    pub id: String,
+    pub commit: Option<String>,
+    pub operations: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoView {
+    pub record: crate::recovery::RecoveryRecord,
+    /// The version that was in place, kept so that the undo can be undone.
+    pub saved: crate::recovery::RecoveryRecord,
+    pub reconcile: ReconcileReport,
+}
+
+/// `resonance value` (FR-240).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValueView {
+    pub traces: u64,
+    pub whys: u64,
+    pub context_packs: u64,
+    pub searches: u64,
+    pub test_runs: u64,
+    /// Anchors that followed edits, moves and renames on their own.
+    pub anchors_followed: u64,
+    pub repairs: u64,
+    pub repair_tokens: u64,
+    pub repair_seconds: u64,
+    pub divergences: std::collections::BTreeMap<String, u64>,
+    pub counters: std::collections::BTreeMap<String, u64>,
+    /// What improves on sharing or joining, in offline mode.
+    pub upgrade: Option<String>,
 }
 
 /// The delta history, for `status` (MVP-026–MVP-030).
@@ -325,6 +378,7 @@ impl Engine {
         let config = Config::load(&repo.config_path())?;
         let mode = history::mode(&repo, &config);
         let writer = actor.to_string();
+        let me = repo.git(&["config", "user.email"]).unwrap_or_default();
         Ok(Engine {
             repo,
             config,
@@ -335,7 +389,42 @@ impl Engine {
             mode,
             writer,
             synced: history::Synced::default(),
+            startup: false,
+            me,
         })
+    }
+
+    /// Mark the next reconcile as a daemon's start-up reconcile (C3, MVP-031).
+    pub fn set_startup(&mut self, startup: bool) {
+        self.startup = startup;
+    }
+
+    /// Classify what a reconcile observed and record it (FR-190, FR-198).
+    fn classify(&mut self, cu: &fold::CatchUp, report: &mut ReconcileReport) -> Result<()> {
+        let observed = crate::recovery::Observed {
+            catch_up: cu,
+            changed: &report.changed,
+            startup: std::mem::take(&mut self.startup),
+            mode: self.mode,
+            me: &self.me,
+        };
+        let divs = crate::recovery::classify(&self.repo, self.reader(), &observed)?;
+        crate::recovery::record(&mut *self.store, &divs)?;
+        let a = &report.anchors;
+        crate::recovery::count(
+            &mut *self.store,
+            &[(
+                "anchors.followed",
+                (a.relocated + a.moved + a.approximate + a.restored) as u64,
+            )],
+        )?;
+        report.divergences = divs;
+        Ok(())
+    }
+
+    /// Add to local counters (MVP-039, FR-240).
+    pub fn count(&mut self, items: &[(&str, u64)]) -> Result<()> {
+        crate::recovery::count(&mut *self.store, items)
     }
 
     /// The repository's stage and this working tree's participation.
@@ -431,6 +520,7 @@ impl Engine {
             &mut self.index,
         )?;
         self.after_write()?;
+        self.classify(&cu, &mut report)?;
         if cu != fold::CatchUp::default() {
             report.history = Some(cu);
         }
@@ -459,6 +549,7 @@ impl Engine {
             )?
         };
         self.after_write()?;
+        self.classify(&cu, &mut report)?;
         if cu != fold::CatchUp::default() {
             report.history = Some(cu);
         }
@@ -569,12 +660,15 @@ impl Engine {
                 evidence: count(NodeType::Evidence)?,
                 links,
             },
-            repair: query::repair::repair_list(r)?,
+            repair: self.repair_list()?,
+            divergences: crate::recovery::list(r, false)?,
         })
     }
 
     pub fn repair_list(&self) -> Result<Vec<RepairItem>> {
-        query::repair::repair_list(self.reader())
+        let mut items = query::repair::repair_list(self.reader())?;
+        self.prioritize(&mut items);
+        Ok(items)
     }
 
     // ----- Intent ---------------------------------------------------------------------------
@@ -1623,6 +1717,185 @@ impl Engine {
             ..Default::default()
         })?);
         Ok(report)
+    }
+
+    // ----- Recovery and value (§8.18, FR-196, FR-240) ---------------------------------------
+
+    /// Unresolved divergences, the detached pool, a held re-fold and recent recovery records.
+    pub fn recover_list(&self) -> Result<RecoverView> {
+        let r = self.reader();
+        let mut detached = Vec::new();
+        for (id, rec) in history::detached(r)? {
+            let ops = history::find_delta(&self.repo, &id)
+                .and_then(|p| history::Delta::read(&p).ok())
+                .map(|d| d.ops.len())
+                .unwrap_or(0);
+            detached.push(DetachedDelta {
+                id,
+                commit: rec.commit,
+                operations: ops,
+            });
+        }
+        Ok(RecoverView {
+            divergences: crate::recovery::list(r, false)?,
+            detached,
+            held: fold::held(r)?,
+            records: crate::recovery::records(&self.repo)
+                .into_iter()
+                .take(20)
+                .collect(),
+        })
+    }
+
+    /// Put back what a resolution displaced (FR-192).
+    pub fn recover_undo(&mut self, id: &str) -> Result<UndoView> {
+        let (record, saved) = crate::recovery::undo(&self.repo, id)?;
+        for d in crate::recovery::list(self.reader(), true)? {
+            if d.recovery.as_deref() == Some(record.id.as_str()) && !d.resolved {
+                crate::recovery::resolve(&mut *self.store, &d.id, "undone")?;
+            }
+        }
+        let reconcile = self.reconcile(ReconcileOptions::default())?;
+        Ok(UndoView {
+            record,
+            saved,
+            reconcile,
+        })
+    }
+
+    /// Mark a divergence handled.
+    pub fn recover_dismiss(&mut self, id: &str, note: &str) -> Result<crate::recovery::Divergence> {
+        let how = if note.is_empty() {
+            format!("dismissed by {}", self.actor)
+        } else {
+            format!("dismissed by {}: {note}", self.actor)
+        };
+        crate::recovery::resolve(&mut *self.store, id, &how)
+    }
+
+    /// Attach a detached offline delta to `HEAD` (MVP-030).
+    pub fn recover_attach(&mut self, delta: &str) -> Result<ReconcileReport> {
+        let (id, mut rec) = self.detached_delta(delta)?;
+        rec.commit = self.repo.head_commit();
+        rec.detached = false;
+        let key = format!("{}{id}", history::keys::DELTA_PREFIX);
+        let text = serde_json::to_string(&rec)?;
+        self.store
+            .write(GraphScope::Primary, &mut |w| w.set_meta(&key, &text))?;
+        self.after_write()?;
+        let (cu, _) = self.catch_up(true)?;
+        let mut report = reconcile(
+            &mut *self.store,
+            &self.repo.root,
+            &self.config,
+            ReconcileOptions::default(),
+            &mut self.index,
+        )?;
+        self.after_write()?;
+        report.history = Some(cu);
+        Ok(report)
+    }
+
+    /// Drop a detached offline delta after exporting it outside the repository.
+    pub fn recover_drop(&mut self, delta: &str, home: &Path) -> Result<PathBuf> {
+        let (id, _) = self.detached_delta(delta)?;
+        let path = history::find_delta(&self.repo, &id)
+            .ok_or_else(|| Error::NotFound(format!("the file of delta {id}")))?;
+        let dest = home
+            .join(".resonance")
+            .join("exports")
+            .join(format!("{}-{id}.delta", self.repo.name()));
+        if let Some(d) = dest.parent() {
+            fs::create_dir_all(d).map_err(|e| Error::io("creating the exports directory", e))?;
+        }
+        fs::copy(&path, &dest).map_err(|e| Error::io("exporting the delta", e))?;
+        fs::remove_file(&path).map_err(|e| Error::io("removing the delta", e))?;
+        let key = format!("{}{id}", history::keys::DELTA_PREFIX);
+        self.store
+            .write(GraphScope::Primary, &mut |w| w.delete_meta(&key))?;
+        Ok(dest)
+    }
+
+    fn detached_delta(&self, delta: &str) -> Result<(String, history::DeltaRecord)> {
+        let matches: Vec<(String, history::DeltaRecord)> = history::detached(self.reader())?
+            .into_iter()
+            .filter(|(id, _)| id.starts_with(delta))
+            .collect();
+        match matches.len() {
+            1 => Ok(matches.into_iter().next().expect("one")),
+            0 => Err(Error::NotFound(format!("a detached delta {delta}"))),
+            _ => Err(Error::Invalid(format!(
+                "{delta} matches several detached deltas; give more of the ID"
+            ))),
+        }
+    }
+
+    /// What Resonance did for this developer, locally (FR-240, MVP-039).
+    pub fn value(&self) -> Result<ValueView> {
+        let counters = crate::recovery::counters(self.reader())?;
+        let get = |k: &str| counters.get(k).copied().unwrap_or(0);
+        let upgrade = if self.mode.shared() {
+            None
+        } else {
+            Some(
+                "Offline, you repair the graph yourself after teammates' changes. When you share \
+                 it (`resonance share`) or join a shared graph (`resonance init` in a shared \
+                 repository), their renames arrive as identity operations, annotations are \
+                 shared, and your commits are checked for consistency."
+                    .to_string(),
+            )
+        };
+        Ok(ValueView {
+            traces: get("served.trace"),
+            whys: get("served.why"),
+            context_packs: get("served.context"),
+            searches: get("served.search"),
+            test_runs: get("served.test"),
+            anchors_followed: get("anchors.followed"),
+            repairs: get("repair.count"),
+            repair_tokens: get("repair.tokens"),
+            repair_seconds: get("repair.seconds"),
+            divergences: counters
+                .iter()
+                .filter(|(k, _)| k.starts_with("divergence."))
+                .map(|(k, v)| (k["divergence.".len()..].to_string(), *v))
+                .collect(),
+            counters,
+            upgrade,
+        })
+    }
+
+    /// Order the repair list by relevance to current work (FR-239): items in files changed in
+    /// the working tree first, then the rest, each group in its original order.
+    fn prioritize(&self, items: &mut [RepairItem]) {
+        let Ok(st) = self
+            .repo
+            .git(&["status", "--porcelain", "--untracked-files=all"])
+        else {
+            return;
+        };
+        let changed: BTreeSet<String> = st
+            .lines()
+            .filter_map(|l| l.get(3..))
+            .map(|p| {
+                p.rsplit(" -> ")
+                    .next()
+                    .unwrap_or(p)
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        items.sort_by_key(|i| {
+            let path = i
+                .location
+                .as_ref()
+                .map(|l| l.path.clone())
+                .unwrap_or_default();
+            !changed.contains(&path)
+        });
     }
 
     pub fn intent_sources(&self) -> &[String] {

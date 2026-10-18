@@ -62,6 +62,13 @@ pub enum Command {
         /// The export file (JSON Lines).
         file: PathBuf,
     },
+    /// Divergences between git, the files and the graph, and how to recover (§8.18).
+    Recover {
+        #[command(subcommand)]
+        action: Option<RecoverCommand>,
+    },
+    /// What Resonance did for you, locally: traces, context packs, anchors followed, repairs (FR-240).
+    Value,
     /// Back up .resonance/ outside the repository, or restore a missing .resonance/ (FR-184).
     Backup {
         /// Restore .resonance/ from the newest backup (or from --from) when it is missing.
@@ -212,6 +219,36 @@ pub enum Command {
         /// Include call-outs made for this task label.
         #[arg(long)]
         task: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RecoverCommand {
+    /// Put back what an automatic resolution displaced.
+    Undo {
+        /// A recovery record ID (a unique prefix is enough).
+        id: String,
+    },
+    /// Mark a divergence as handled.
+    Dismiss {
+        /// A divergence ID (a unique prefix is enough).
+        id: String,
+        /// What was done.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Attach a detached offline delta to the current commit.
+    Attach {
+        /// A delta ID from the detached pool.
+        delta: String,
+    },
+    /// Export a detached offline delta outside the repository, then remove it.
+    Drop {
+        /// A delta ID from the detached pool.
+        delta: String,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
     },
 }
 

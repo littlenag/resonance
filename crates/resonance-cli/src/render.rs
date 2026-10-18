@@ -181,6 +181,17 @@ pub fn status(s: &StatusView) -> String {
     out.push_str(&counts(&s.counts));
     out.push('\n');
     out.push_str(&history(&s.history));
+    if !s.divergences.is_empty() {
+        let _ = writeln!(
+            out,
+            "Divergences needing a look ({}; details with `resonance recover`):",
+            s.divergences.len()
+        );
+        for d in &s.divergences {
+            let _ = writeln!(out, "  {}", crate::commands::recover_line(d));
+        }
+        out.push('\n');
+    }
     out.push_str(&repair(&s.repair));
     out
 }
