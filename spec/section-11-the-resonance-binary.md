@@ -1,8 +1,10 @@
 ## 11. The `resonance` binary
 
-Everything Resonance does on a developer's machine is delivered by **one executable, `resonance`**. It is a CLI, a per-repository daemon, an MCP server, the system-wide registry, the quiet participant's helper, the git plumbing that hooks and drivers call, and the CI checker. These are subcommands of the same program, built from one Cargo workspace (MVP-001), so there is one thing to install, version, pin and trust. Separate deliverables (the IntelliJ plugin, CI wrappers, graph adapters) come later and sit on top of this binary (§13). [Decided]
+Everything Resonance does on a developer's machine is delivered by **one executable, `resonance`**. It is a small operations CLI, a per-repository daemon, an MCP server, the system-wide registry, the quiet participant's helper, the git plumbing that hooks and drivers call, and the CI checker. These are subcommands of the same program, built from one Cargo workspace (MVP-001), so there is one thing to install, version, pin and trust. Separate deliverables (the IntelliJ plugin, CI wrappers, graph adapters) come later and sit on top of this binary (§13). [Decided]
 
-This section is the reference for the binary: what it is responsible for, how it runs, and its complete command surface. Commands are specified in detail where their requirements live; this section collects them and records the conventions they share. The **Available** column says whether a command is in the MVP (`spec/mvp.md`) or which backlog increment (`spec/backlog.md`) adds it.
+Resonance's primary user is the agent, which works through the MCP server; for developers Resonance runs in the background (G16). The binary's command surface reflects that: graph work is MCP tools, and people get the spec TUI plus a few commands to set up, run and repair Resonance (FR-259).
+
+This section is the reference for the binary: what it is responsible for, how it runs, and its complete command and tool surface. Commands are specified in detail where their requirements live; this section collects them and records the conventions they share. The **Available** column says whether a command is in the MVP (`spec/mvp.md`) or which backlog increment (`spec/backlog.md`) adds it.
 
 ### 11.1 Responsibilities
 
@@ -10,11 +12,11 @@ This section is the reference for the binary: what it is responsible for, how it
 | --- | --- | --- |
 | **Graph owner** | Holds the repository's graph through the store API; applies every change as an edit-algebra change set; runs schema migrations. | §8.2, §8.2.1, §9 |
 | **Ingest and anchor tracking** | Keeps the graph in step with the file tree; re-locates code-unit anchors after each change. | §8.3, §8.4 |
-| **Intent import** | Turns requirement documents into `Requirement` nodes, and keeps them in sync with their sources. | §8.10 |
+| **Intent authoring** | Validates and applies the spec items agents bring in from documents (batch, with a dry run), and links them back to their source regions. It parses no documents. | §8.10 |
 | **Query and mutation API** | Navigation, search, trace, why, impact, context packs, linking, annotation, verification. | §8.8 |
 | **Verification** | Runs linked tests and records evidence. | §6.5, FR-135 |
 | **MCP server** | Exposes the API and the agent kit's conventions to agents. | §8.11, §8.20 |
-| **Agent kit installer** | Installs, updates and reports on the agent kit; carries its content. | §8.20 |
+| **Agent kit installer** | Installs the agent kit as part of `init`, refreshes it when `init` runs again, and reports on it in `status` and `doctor`; carries its content. | §8.20 |
 | **Daemon** | Watches the working tree, maintains the ingest watermark, serves the API over a socket. | §8.4, §8.7 |
 | **Registry** | System-wide discovery and health for daemons. | §8.7 |
 | **Git integration** | Git monitor; open and sealed deltas; compaction; hooks; merge and diff drivers. | §8.6, §8.6.1, §9.6 |
@@ -32,9 +34,10 @@ This section is the reference for the binary: what it is responsible for, how it
 
 | Mode | Started by | Lifetime | Notes |
 | --- | --- | --- | --- |
-| **CLI** | A person, a script or an agent's shell | One command | In the MVP each command reconciles and answers directly (MVP-002). Once the daemon exists, the CLI is a client of it and starts it on demand (FR-084). |
-| **MCP server** (`resonance mcp`) | The agent harness | One agent session | Speaks MCP over stdio. Direct in the MVP; a client of the daemon later. |
-| **Daemon** (`resonance daemon`) | The CLI or the MCP server, on demand | Until idle (FR-084) | One per repository root (FR-082). Never started by users directly, except for debugging. |
+| **CLI** | A person (setup, operation, repair) or an agent's shell (`check`, `status`, `recover`) | One command | A client of the daemon, which it starts on demand (FR-084). No graph work: that is MCP (FR-259). |
+| **TUI** (`resonance tui`) | A person | One session | The spec TUI (§8.22), a client of the daemon. |
+| **MCP server** (`resonance mcp`) | The agent harness | One agent session | Speaks MCP over stdio; a client of the daemon. Carries all graph work. |
+| **Daemon** (`resonance daemon run`) | The CLI, TUI or MCP server, on demand | Until idle (FR-084) | One per repository root (FR-082). People start, stop and restart it with `resonance daemon start\|stop\|restart` when needed. |
 | **Registry** (`resonance registry run`) | launchd or `systemd --user` | Always on | Discovery and health only (FR-088). |
 | **Quiet** (`resonance quiet …`) | The quiet bootstrap script, or a quiet participant's agent | One command | Restricted capabilities, enforced in code: no daemon, no projection, no compaction, no stage changes, writes only to `.resonance/deltas/` and its own working area (FR-234, FR-257). |
 | **Plumbing** (`resonance hook …`, `resonance agent-hook …`, `resonance git-driver …`) | Git, or the agent harness | One invocation | Machine-facing entry points. Not intended for people to call. |
@@ -45,98 +48,48 @@ This section is the reference for the binary: what it is responsible for, how it
 
 The **Available** column gives *MVP*, or a backlog increment (B8–B19), or both when the MVP provides a narrower form that a later increment completes.
 
+- **FR-259** The CLI is an operations surface: setting up a repository, starting, stopping and restarting the daemon, status and health, consistency checks, and repair. Graph work (bringing in intent from documents, declaring code units and tests, linking, annotating, tracing, searching, verifying, reading and clearing the change log, reviewing) MUST be offered through the API, as MCP tools for agents and in the spec TUI for people, and MUST NOT be offered as CLI commands. A person who wants graph work done asks their agent. [Decided]
+
 **Setup and lifecycle**
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `init` | Offline: create `.resonance/`, exclude it locally, run the first reconcile, and offer agent onboarding. In a shared repository: join the committed graph as a Resonance user. | FR-172, FR-180 | MVP |
-| `status` | Counts, repair list, and later the stage, participation, unresolved divergences and governed paths. | FR-171, FR-238 | MVP |
+| `init` | Mirror the repository into the graph, install the git hooks for the stage, and install the agent kit. Offline by default; in a shared repository, join the committed graph as a Resonance user. Running it again refreshes hooks and kit. Reads no requirements (S1). | FR-172, FR-180, FR-210 | MVP |
+| `status` | Stage, participation, counts, unresolved divergences, the repair list, pending change-log entries, and the agent kit's state. | FR-171, FR-238 | MVP |
 | `doctor` | Health of daemons and the registry, adoption health, integrity checks, version skew. | FR-096, FR-207 | MVP; B8 |
-| `reconcile [--full]` | Bring the graph in step with the disk now. | FR-047 | MVP |
-| `rebuild-derived` | Drop and rebuild derived data. | FR-023 | MVP |
-| `rebuild` | Rebuild authored state by folding the operation log. | FR-150 | MVP |
-| `export [--out]` | Engine-neutral export of authored and identity data. | FR-166 | MVP |
-| `restore <file>` | Restore authored and identity data from an engine-neutral export. | FR-166 | MVP |
-| `backup` | Local backup outside the repository; restore when `.resonance/` has gone missing. | FR-184 | MVP |
-| `value` | Local report of what Resonance did for the developer, and the upgrade path. | FR-240 | MVP |
 | `share` / `unshare` | Move between offline (stage 1) and shared (stage 2). | FR-185, FR-172 | MVP |
 | `leave` | Stop being a Resonance user, without loss. | FR-172, FR-173 | MVP |
 | `enforce on\|off` | Move between shared (stage 2) and enforced (stage 3). | FR-172 | B11 |
 | `eject` | Export, then remove Resonance from the repository. | FR-173 | MVP |
-| `agent install` | Install the agent kit for the developer's harness (local scope in offline mode). | FR-132, FR-210 | MVP |
-| `agent update` / `agent status` | Refresh the kit; report a stale or missing kit. | FR-214 | MVP |
 | `quiet setup` | Opt in to quiet participation locally. | FR-232 | B9 |
 | `version [--json]` | Binary version, supported schema and delta formats, MCP protocol version. | FR-256 | MVP |
 | `tui` | Terminal UI over spec items: list, view, edit, add, retire; the change log. | FR-270–FR-279 | MVP |
 
-**Intent**
+**Daemon**
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `import <paths…>` | Import requirement documents and keep them in sync. | FR-122, MVP-011 | MVP |
-| `req add\|edit\|retire` | Author requirements. | FR-120 | MVP |
-| `decision add\|edit` | Author decisions. | FR-120 | MVP |
-| `design …`, `constraint …`, `req supersede` | Further intent types and lifecycle. | §6.2, FR-120 | MVP |
+| `daemon [status]` | The repository's daemon and its health. | §8.7 | MVP |
+| `daemon start\|stop\|restart` | Start, stop or restart it. Clients also start it on demand. | FR-084 | MVP |
 
-**Code units and tests**
+**Repair**
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `unit add\|edit\|remove\|list` | Declare, re-anchor, remove and list code units (textual anchors). | FR-110, MVP-013 | MVP |
-| `test add … --run CMD` | Declare a test and how to run it alone. | MVP-017 | MVP |
-| `unit split\|merge` | Declare splits and merges. | FR-033 | MVP |
+| `recover` | List unresolved divergences, the detached pool and recovery records. | FR-196 | MVP |
+| `recover undo\|dismiss\|attach\|drop\|repair-snapshot` | Undo an automatic resolution, mark a divergence handled, attach or drop a detached delta, repair a conflicted snapshot. | FR-192, FR-157 | MVP |
+| `reconcile [--full]` | Bring the graph in step with the disk now. | FR-047 | MVP |
+| `rebuild` | Rebuild authored state by folding the operation log. | FR-150 | MVP |
+| `rebuild-derived` | Drop and rebuild derived data. | FR-023 | MVP |
+| `export [--out]` / `restore <file>` | Engine-neutral export of authored and identity data, and restoring from one. | FR-166 | MVP |
+| `backup` | Local backup outside the repository; restore when `.resonance/` has gone missing. | FR-184 | MVP |
 
-**Links and annotations**
-
-| Command | Purpose | Spec | Available |
-| --- | --- | --- | --- |
-| `link <src> <type> <dst>` / `unlink` | Create and remove edges. | §6.3, FR-134 | MVP |
-| `confirm <edge>` | Return a stale edge to `asserted`. | MVP-012 | MVP |
-| `annotate <target> --kind --text [--task]` | Annotate or call out code. | S4, FR-123 | MVP |
-| `reattach <edge\|annotation> <target>` | Re-anchor after orphaning. | FR-037 | MVP |
-
-**Reading**
-
-| Command | Purpose | Spec | Available |
-| --- | --- | --- | --- |
-| `show <ref>` | One node with its edges. | §8.8 | MVP |
-| `trace <req>` | Requirement → code → tests, with statuses and evidence. | S2 | MVP |
-| `why <unit>` | Code → requirements, decisions, tests, annotations. | S3 | MVP |
-| `search <text> [--type] [--status]` | Search by text, type, key or status. | §8.8 | MVP |
-| `unverified` | Requirements with no verified test. | FR-005 | MVP |
-| `context <req…> [--task]` | Context pack for an agent task. | FR-133 | MVP |
-| `impact <ref>` | What a change to this node affects. | §8.8 | B12 |
-
-**Verification**
-
-| Command | Purpose | Spec | Available |
-| --- | --- | --- | --- |
-| `test <req\|test\|edge>` | Run linked tests; record evidence. | FR-135 | MVP |
-
-**Change log**
-
-| Command | Purpose | Spec | Available |
-| --- | --- | --- | --- |
-| `changes [--since <seq>]` | List pending change-log entries, optionally after a remembered sequence number. | FR-274–FR-276 | MVP |
-| `changes show <seq>` | The full before and after of one entry. | FR-275 | MVP |
-| `changes done <seq>… [--note TEXT]` | Remove handled entries. | FR-276 | MVP |
-
-**Recovery**
-
-| Command | Purpose | Spec | Available |
-| --- | --- | --- | --- |
-| `recover` | List unresolved divergences and apply resolutions. | FR-196 | MVP |
-| `recover undo <id>` | Undo an automatic resolution. | FR-192 | MVP |
-
-**Git, review and CI**
+**Git and CI**
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
 | `check --staged` | Pre-commit consistency check, with suggested fixes. | FR-215, FR-221 | MVP |
 | `check --range <base>..HEAD` | Pre-PR and CI consistency check. | FR-176, FR-216 | MVP |
-| `review <range>` | Readable summary of graph changes for a pull request. | FR-066 | MVP |
-| `compact [--commit]` | Fold sealed deltas into a new snapshot (trunk only by default). | FR-154–FR-156 | MVP |
-| `show-delta <file>` | Readable rendering of a delta file; also used as git's textconv driver. | FR-066 | MVP |
 
 **Parallel graphs**
 
@@ -149,18 +102,38 @@ The **Available** column gives *MVP*, or a backlog increment (B8–B19), or both
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
-| `mcp` | MCP server over stdio. | FR-130, MVP-003 | MVP |
-| `daemon [--foreground]` | Per-repository daemon. | §8.7 | MVP |
+| `mcp` | MCP server over stdio, started by the agent harness. | FR-130, MVP-003 | MVP |
 | `registry run\|install\|uninstall` | Run the registry, or install and remove its launchd or systemd user service. | FR-088–FR-094 | MVP |
 | `uninstall --user` | Remove user-level installs: registry service, agent registrations, caches. | FR-266 | B18 |
 
-**Plumbing** (called by git and agent harnesses, not by people)
+**Plumbing** (called by git, agent harnesses and Resonance itself, not by people)
 
 | Command | Purpose | Spec | Available |
 | --- | --- | --- | --- |
 | `hook <git-hook-name> [args…]` | Entry point for every git hook Resonance installs; chained after existing hooks. | FR-069, FR-177 | MVP |
 | `agent-hook <event>` | Entry point for agent-harness hooks that gate the agent's git commands. | FR-222 | MVP |
 | `git-driver merge <base> <ours> <theirs>` | Merge driver for `graph.db`: mechanical union-and-refold. | FR-157 | MVP |
+| `git-driver textconv <file>` | Readable rendering of a delta file, as git's textconv driver. | FR-066 | MVP |
+| `daemon run` | The daemon itself, in the foreground. | §8.7 | MVP |
+
+**Graph work: MCP tools** (agents; there are no CLI equivalents, FR-259)
+
+| Tools | Purpose | Spec | Available |
+| --- | --- | --- | --- |
+| `resonance_conventions` | The conventions for this working tree, the kit's state and the orientation. | FR-212, FR-225 | MVP |
+| `resonance_status`, `resonance_repair_list` | Counts, divergences and the repair list. | FR-171, FR-238 | MVP |
+| `resonance_import_items` | Bring spec items in from a document, linked to their regions, with a dry run for the preview. | FR-122, FR-124 | MVP |
+| `resonance_list_items`, `resonance_create_item`, `resonance_edit_item`, `resonance_retire_item`, `resonance_supersede` | Spec items of every type. | FR-120 | MVP |
+| `resonance_create_requirement`, `resonance_create_decision`, `resonance_create_extension` | Shortcuts and extension types. | FR-120, §6.6 | MVP |
+| `resonance_declare_unit`, `resonance_declare_test`, `resonance_edit_unit`, `resonance_remove_unit`, `resonance_split_unit`, `resonance_merge_unit`, `resonance_list_units` | Code units and tests (textual anchors). | FR-110, FR-033, MVP-013, MVP-017 | MVP |
+| `resonance_link`, `resonance_unlink`, `resonance_confirm`, `resonance_reattach`, `resonance_annotate` | Links and annotations. | §6.3, FR-037, FR-134, S4 | MVP |
+| `resonance_show`, `resonance_search`, `resonance_trace`, `resonance_why`, `resonance_unverified`, `resonance_context` | Reading. | §8.8, S2, S3, FR-005, FR-133 | MVP |
+| `resonance_impact` | What a change to this node affects. | §8.8 | B12 |
+| `resonance_test` | Run linked tests; record evidence. | FR-135 | MVP |
+| `resonance_changes`, `resonance_changes_show`, `resonance_changes_done` | Read and clear the change log. | FR-274–FR-276 | MVP |
+| `resonance_check`, `resonance_review` | Consistency checks; the graph changes in a range, for pull requests. | FR-221, FR-066 | MVP |
+| `resonance_compact` | Fold sealed deltas into a new snapshot (on the trunk; only when the developer asks, FR-218). | FR-154–FR-156 | MVP |
+| `resonance_recover`, `resonance_value` | Divergences and recovery; what Resonance did for the developer. | FR-196, FR-240 | MVP |
 
 ### 11.4 Conventions shared by all commands
 
@@ -170,7 +143,7 @@ The **Available** column gives *MVP*, or a backlog increment (B8–B19), or both
   - **Safety.** Anything that changes tracked files, hooks, git configuration or user-level installs previews by default and needs `--yes` to proceed non-interactively (FR-172, FR-204). `--dry-run` is accepted everywhere a change could happen.
   - **Exit codes.** `0` success; `1` error; `2` usage error; `3` a check found problems (for `check` and hooks); `4` waiting on an *action required* decision (FR-201).
   - **Configuration precedence**, highest first: command-line flags; environment variables (`RESONANCE_*`); `.resonance/config.toml`; user configuration (`~/.config/resonance/config.toml`); built-in defaults.
-- **FR-254** The command surface is a public, versioned interface. CLI commands, JSON output schemas and MCP tool names are versioned together with the binary (semantic versioning, FR-264). MCP tools mirror CLI commands (`resonance_<command>`) wherever an equivalent exists, so that agents and people use the same vocabulary. Plumbing commands may change between minor versions, because only Resonance installs their callers. [Proposed]
+- **FR-254** The command and tool surface is a public, versioned interface. CLI commands, MCP tool names and schemas, and JSON output schemas are versioned together with the binary (semantic versioning, FR-264). The MCP tools are the primary surface and are designed for agents; they are not a mirror of the CLI, which is a separate, small operations surface (FR-259). Where both offer the same operation (`check`, `status`, `recover`), they share its name and its JSON. Plumbing commands may change between minor versions, because only Resonance installs their callers. [Proposed]
 - **FR-255** Everything the binary installs or writes from templates ships inside it: the agent kit content, git hook shims, `.resonance/README.md`, `.resonance/.gitattributes`, service definitions, schema migrations and the import-format schema. The binary never downloads anything at run time. The only download in the whole system is the quiet bootstrap fetching the binary itself (FR-231). [Proposed]
 - **FR-256** `resonance version --json` MUST report the binary version, the store schema versions it can read and write, the delta and snapshot format versions, the parallel-graph import format version, and the MCP protocol version. `doctor`, the registry (version skew, FR-091) and quiet pinning (FR-231) rely on it. [Proposed]
 - **FR-257** Quiet mode is the same binary with a restricted capability set, enforced in code rather than by instructions. Commands outside quiet mode's capabilities fail with an explanation. That keeps one build, one release and one checksum for everyone (FR-231). [Proposed]

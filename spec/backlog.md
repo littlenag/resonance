@@ -30,7 +30,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 ## B4 — Breadth of intent and ontology
 *Moved into the MVP (mvp.md, "3.1 Model and link lifecycle" and "3.6 Intent").*
 
-- **FR-121** (remainder) [intent] Continuous, opt-in projection of intent documents, kept in step by the projection writer (with B10). The MVP has the one-shot `resonance intent project` (OQ-12).
+- **FR-121** (remainder) [intent] Continuous, opt-in projection of intent documents by Resonance, kept in step by the projection writer (with B10). In the MVP projection is an agent workflow (OQ-12).
 
 ## B5 — Storage maturity
 *Moved into the MVP (mvp.md, "3.5 Storage and the store API"; MVP-026–MVP-028). What remains is research.*
@@ -42,7 +42,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 
 - **FR-010** (remainder) [truth] Hold the bytes of large and binary files for opted-in developers, so that they can be restored from the graph too (MVP-016 revisited).
 - **FR-050** (remainder) [projection] The projection writer's atomic writes for graph-to-disk code mutations (with B10).
-- **FR-066** (remainder) [git] An optional CI step that posts the `resonance review` summary on the pull request (with the CI wrappers of §13.3).
+- **FR-066** (remainder) [git] An optional CI step that posts the review summary (`resonance_review`) on the pull request (with the CI wrappers of §13.3).
 - **FR-071** (remainder) [git] Resonance's own repository developed this way, adopting Resonance through the same stages (with B17's self-dogfood).
 - **FR-158** [git] Pruning of folded operations from snapshots (OQ-16). The MVP never prunes.
 - **FR-170** (remainder) [adoption] Stage 3 (with B11).
@@ -179,7 +179,7 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 *Not product code. The MVP can serve as arm C's intent server.*
 
 - **§12.1–§12.6** [eval] Hypotheses H1 and H2, tasks, arms A–D, metrics, protocol, decision gates.
-- **Self-dogfood** [eval] Run Resonance on its own repository: `resonance import spec/section-*.md spec/mvp.md` imports every FR and NFR item; the MVP's own main code units and tests are declared and linked to the requirements they satisfy and verify; `resonance unverified` shows what remains; a Claude Code session answers "why does `SqliteStore` exist?" using the MCP tools. Done only after the MVP has passed field tests on other repositories (`mvp.md` §5) and Mark judges it reliable.
+- **Self-dogfood** [eval] Run Resonance on its own repository: `resonance init`, then a Claude Code session brings every FR and NFR item in `spec/section-*.md` and `spec/mvp.md` into the graph (S26), declares the MVP's own main code units and tests and links them to the requirements they satisfy and verify, and reports what remains unverified (`resonance_unverified`); a Claude Code session answers "why does `SqliteStore` exist?" using the MCP tools. Done only after the MVP has passed field tests on other repositories (`mvp.md` §5) and Mark judges it reliable.
 
 ## Long term
 - **G15** [model] An alternative to files: languages may store their source in Resonance in another format; Resonance stores and renders it, the language understands it (§2.5, §8.1 rationale).

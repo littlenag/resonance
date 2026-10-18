@@ -37,7 +37,7 @@ Keep the core small. Everything else goes through namespaced extensions (§6.6).
 | --- | --- | --- | --- |
 | `satisfies` | CodeUnit → Requirement | This code implements (part of) the requirement | Indirectly, through tests that verify both |
 | `verifies` | Test → Requirement or CodeUnit | This test checks the requirement or unit | Yes |
-| `derivedFrom` | Requirement/Design → Requirement | Refinement or decomposition | No |
+| `derivedFrom` | Requirement/Design → Requirement; any spec item → CodeUnit or File | Refinement or decomposition; or, to a region of a document, the text an agent imported the item from (FR-124) | No; becomes stale when either end changes |
 | `constrains` | Decision/Constraint → any | This decision or constraint limits the target | Sometimes (for example, with architecture rules) |
 | `supersedes` | Requirement/Decision → same type | Replaces an earlier version | No |
 | `realizes` | CodeUnit → Design | This code is the current realization of a design element | No |

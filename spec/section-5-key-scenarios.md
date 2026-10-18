@@ -4,19 +4,19 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 
 **S1 — Onboard an existing repository.** A developer runs `resonance init` in an existing git repository.
 - AC1: No existing file is modified, moved or reformatted.
-- AC2: The graph is populated with files and with any requirements it can import (§8.10). Code units appear as people and agents declare them; nothing is parsed.
+- AC2: `init` mirrors the repository into the graph (its files), installs the git hooks for the stage, and installs the agent kit. It reads no requirements: spec documents become graph items when the agent imports them (S26). Code units appear as agents declare them; nothing is parsed.
 - AC3: Build, test and IDE behavior are unchanged.
 - AC4: Removing Resonance (deleting `.resonance/`) leaves a working project.
 - AC5: In a repository with no committed Resonance data, `init` starts in offline mode, and `git status` is unchanged afterwards (S15, FR-180).
 
-**S2 — Trace forward from a requirement.** Given requirement `FR-042`, the developer asks what satisfies and verifies it.
+**S2 — Trace forward from a requirement.** Given requirement `FR-042`, the developer asks their agent what satisfies and verifies it, and the agent answers from the graph.
 - AC1: One query returns the code units linked by `satisfies`, the tests linked by `verifies`, and each link's status (asserted, verified, stale, orphaned).
 - AC2: Requirements with no verifying test are identifiable in one query.
 
-**S3 — Trace backward from code.** Given a function, the developer or agent asks why it exists.
+**S3 — Trace backward from code.** Given a function, the agent asks why it exists, before changing it or because the developer asked.
 - AC1: One query returns the requirements it satisfies, the decisions that constrain it, the tests that cover it, and annotations on it.
 
-**S4 — Annotate code for an agent.** A code-fluent developer marks a function ("do not change the signature; external callers depend on it") or calls out a set of functions as relevant to a task.
+**S4 — Annotate code for an agent.** A code-fluent developer marks a function ("do not change the signature; external callers depend on it") or calls out a set of functions as relevant to a task, by telling their agent (or, later, in the IDE plugin).
 - AC1: The annotation is attached to the code unit, not to a line number.
 - AC2: It survives edits elsewhere in the file, edits inside the region, and moves or renames of the file (§8.3). A region rewritten beyond recognition is orphaned and goes on the repair list for the agent to re-anchor; it is never silently re-attached.
 - AC3: If its anchor disappears, the annotation becomes *orphaned* and is surfaced, never silently lost. If implemented correctly, we would be able to ask where that annotation used to be anchored in a previous version, and surface that as helpful context.
@@ -69,11 +69,11 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 
 **S15 — Try Resonance offline.** A developer wants to try Resonance on a team repository without committing anything or letting teammates know.
 - AC1: `resonance init` modifies no tracked file; `git status` is unchanged. `init` explains plainly what offline mode cannot do and what repair will cost (FR-180).
-- AC2: Every local feature works: import, trace, annotate, verify, MCP (FR-181).
+- AC2: Every local feature works: the agent's import of spec documents, trace, annotate and verify through MCP, and the spec TUI (FR-181).
 - AC3: Branch switches, pulls and rebases keep the developer's local graph data attached to the right code (FR-183).
 - AC4: Teammates see no trace of Resonance: nothing in commits, branches, pull requests or code (FR-189).
 - AC5: After a teammate renames an annotated function, the next pull produces a repair list; the agent re-anchors the annotation, asking when unsure; and the cost is shown (FR-238, FR-239).
-- AC6: `resonance value` shows what Resonance did for the developer, and how to upgrade (FR-240).
+- AC6: Asked, the agent shows what Resonance did for the developer, and how to upgrade (`resonance_value`, FR-240).
 - AC7: Leaving is clean: `resonance eject` offers an export, then removes `.resonance/` and every local hook and exclusion it added.
 
 **S16 — Share the graph (offline → stage 2).** The offline developer decides to buy in and commit the graph.
@@ -118,8 +118,14 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 - AC1: Before the push leaves the machine, Resonance detects that the commit is inconsistent with the graph and explains how (C8).
 - AC2: The agent repairs it by amending or adding a follow-up delta, with the developer's confirmation, and nothing is lost (FR-192, FR-203).
 
-**S25 — A person edits the spec; the agent picks it up.** A developer changes requirements in `resonance tui` (or in an imported spec document), and later asks their agent to carry on.
+**S25 — A person edits the spec; the agent picks it up.** A developer changes requirements in `resonance tui` (or in a spec document an agent imported), and later asks their agent to carry on.
 - AC1: Each change is an ordinary graph change attributed to the person, and appears in the change log as one concise entry per item (FR-274, FR-275).
 - AC2: The agent reads the entries after its remembered cursor, acts on each, and removes the handled ones (FR-276).
 - AC3: Before the agent commits, pushes or pulls, the change log is empty, or the developer has told the agent to proceed anyway (FR-277).
-- AC4: Retiring an item in the TUI never deletes it, and editing an imported item opens the source document at the right line (FR-271, FR-272).
+- AC4: Retiring an item in the TUI never deletes it (FR-271). Editing an item that came from a document makes its link to that document stale, and the agent brings the document back in step; editing the document makes the same link stale, and the agent proposes the change to the item (FR-272).
+
+**S26 — The agent imports spec documents.** A developer asks their agent to bring the project's requirements into Resonance, from Markdown, a Spec Kit or Kiro spec, EARS statements or ADRs.
+- AC1: Resonance parses nothing; the agent reads the documents itself and works through the API (NG6, FR-122).
+- AC2: Before anything is written, the developer sees a preview: the items the agent will create or update, with keys, types and text, any key that clashes, and any reformatting it proposes for the documents (FR-122).
+- AC3: Each item is linked to the region of the document it came from (`derivedFrom`), so that later edits on either side make the link stale (FR-124).
+- AC4: Documents are kept. They are reformatted only with confirmation, so that each item is clearly delimited and carries its key. Afterwards the graph is the source of truth.

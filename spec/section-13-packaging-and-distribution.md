@@ -18,7 +18,7 @@ Resonance is distributed as **one binary** (§11). Everything a developer, an ag
 - **FR-262** Every release artifact MUST have a published SHA-256 checksum and a signature (for example minisign or Sigstore). The quiet bootstrap and CI wrappers verify both. Releases are built reproducibly from a tagged commit by CI, never from a developer's machine. [Proposed]
 - **FR-263** Installing or upgrading the binary MUST NOT modify any repository, git configuration or agent configuration. User-level installs happen only through explicit, previewed commands, and each has an inverse:
   - the registry service: `registry install` / `registry uninstall`;
-  - agent registrations: `agent install`;
+  - agent registrations: `init` installs them with the agent kit, and `leave` and `eject` remove them;
   - everything user-level at once: `uninstall --user`.
 
   [Proposed]
@@ -31,8 +31,8 @@ Resonance is distributed as **one binary** (§11). Everything a developer, an ag
 | Item | Delivered as | Spec |
 | --- | --- | --- |
 | CLI, daemon, MCP server, registry, quiet mode, plumbing | Subcommands | §11 |
-| Agent kit (instructions text, skill, harness hook definitions, conventions) | Embedded content, installed by `agent install` and served over MCP | §8.20 |
-| Git hook shims, `graph.db` merge driver, delta textconv | Embedded templates calling `resonance hook …`, `resonance git-driver …`, `resonance show-delta` | FR-069, FR-079, FR-157 |
+| Agent kit (instructions text, skill, harness hook definitions, conventions) | Embedded content, installed by `init` and served over MCP | §8.20 |
+| Git hook shims, `graph.db` merge driver, delta textconv | Embedded templates calling `resonance hook …` and `resonance git-driver …` | FR-069, FR-079, FR-157 |
 | `.resonance/README.md`, `.resonance/.gitattributes`, `.resonance/.gitignore` | Embedded templates written by `init` and `share` | FR-025, FR-079 |
 | Quiet bootstrap script (`.resonance/bin/resonance-quiet`) | Embedded template written by `share`; fetches and verifies the pinned binary, then runs `resonance quiet …` | FR-231, FR-257 |
 | launchd and systemd user units | Embedded templates written by `registry install` | FR-093 |
@@ -44,7 +44,7 @@ These come after the MVP has matured. Each depends on the binary and adds no loc
 
 | Deliverable | Purpose | Packaging | When |
 | --- | --- | --- | --- |
-| **CI wrappers** | Run `resonance check` and `resonance review` in CI; post PR summaries; quiet bookkeeping bot at stage 3 | A GitHub Action, plus documented snippets for other CI systems; each fetches the pinned, verified binary | With B6 and B11 |
+| **CI wrappers** | Run `resonance check` in CI; post the review summary on pull requests (through the MCP server's `resonance_review`); quiet bookkeeping bot at stage 3 | A GitHub Action, plus documented snippets for other CI systems; each fetches the pinned, verified binary | With B6 and B11 |
 | **IntelliJ plugin** | Gutter markers, navigation, annotation UI, stale and orphan warnings | JetBrains Marketplace plugin, talking to the daemon API | B14 |
 | **Agent kit as a harness plugin** | The same kit packaged for one-step installation in harnesses that support plugins | For example a Claude Code plugin; content generated from the binary's embedded kit | With B7, optional |
 | **Graph adapters** | Turn existing tools' output (for example Mache) into parallel or disconnected graphs | Small separate tools or upstream changes; output loaded with `resonance graph load` | B13 |
@@ -58,7 +58,7 @@ rust-toolchain.toml              # pinned stable toolchain
 justfile                         # deterministic, repeatable tasks: build, test, lint, boundary and spec checks
 scripts/                         # helpers called by the justfile (for example spec_check.py)
 crates/
-  resonance-core/                # library: model, store trait, queries, anchors, import, MCP/CLI logic
+  resonance-core/                # library: model, store trait, queries, anchors, MCP and CLI logic
     assets/                      # embedded templates: agent kit, default config (later: hooks, README, service units, schemas)
   resonance-store-sqlite/        # library: the SQLite adapter (only crate that depends on rusqlite)
     migrations/                  # embedded schema migrations
