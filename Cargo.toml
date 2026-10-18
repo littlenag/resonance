@@ -24,6 +24,8 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 globset = "0.4.20"
 notify = "8.2.0"
+# The TUI (MVP-041); crossterm comes through `ratatui::crossterm`.
+ratatui = "0.30.2"
 ignore = "0.4.33"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }

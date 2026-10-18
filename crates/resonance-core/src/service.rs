@@ -121,6 +121,7 @@ pub const METHODS: &[&str] = &[
     "spec_retire",
     "spec_list",
     "spec_show",
+    "spec_suggest_key",
     "supersede",
     "ext_add",
     "intent_project",
@@ -528,6 +529,19 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             }
             let a: Done = args(m, a)?;
             out(engine.changes_done(&a.seqs, a.note.as_deref())?)
+        }
+        "spec_suggest_key" => {
+            #[derive(Deserialize)]
+            struct T {
+                #[serde(rename = "type")]
+                ntype: String,
+            }
+            let t: T = args(m, a)?;
+            let ntype: NodeType = t
+                .ntype
+                .parse()
+                .map_err(|_| Error::Usage(format!("`{}` is not a spec item type", t.ntype)))?;
+            out(json!({"key": engine.suggest_key(ntype)?}))
         }
         "spec_add" => {
             #[derive(Deserialize)]

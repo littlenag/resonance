@@ -168,6 +168,11 @@ pub struct SpecItemView {
     pub source: Option<Value>,
     /// Every property, for editors.
     pub props: Value,
+    /// Links to and from the item, and how many of them are stale (lists only).
+    #[serde(default)]
+    pub links: usize,
+    #[serde(default)]
+    pub stale_links: usize,
 }
 
 /// The spec-item view of a node.
@@ -192,6 +197,8 @@ pub fn spec_item_view(node: &Node) -> SpecItemView {
         origin: node.str_prop("origin").unwrap_or("authored").to_string(),
         source: node.props.get("source").cloned().filter(|v| !v.is_null()),
         props: Value::Object(node.props.clone()),
+        links: 0,
+        stale_links: 0,
     }
 }
 

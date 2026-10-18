@@ -142,6 +142,8 @@ pub enum Command {
     },
     /// What Resonance did for you, locally: traces, context packs, anchors followed, repairs (FR-240).
     Value,
+    /// Browse and edit spec items in a terminal UI; edits land in the change log (MVP-041).
+    Tui,
     /// The change log: people's changes to spec items that agents have not handled yet (MVP-040).
     Changes {
         #[command(subcommand)]

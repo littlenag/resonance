@@ -3,6 +3,7 @@
 mod cli;
 mod commands;
 mod render;
+mod tui;
 
 use clap::Parser;
 

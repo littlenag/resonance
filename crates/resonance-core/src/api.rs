@@ -4,7 +4,7 @@
 //! MVP-002), then call one operation, which returns a serializable view. Mutations are
 //! applied as one batch of edit-algebra operations (FR-103).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1974,6 +1974,11 @@ impl Engine {
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
         };
+        if let Some(k) = key
+            && self.key_taken(k.trim())?
+        {
+            return Err(Error::Invalid(format!("{} already exists", k.trim())));
+        }
         let id = match ntype {
             NodeType::Requirement => {
                 let key = key.ok_or_else(|| {
@@ -2067,6 +2072,69 @@ impl Engine {
         self.spec_item(&id)
     }
 
+    /// The next free key for new items of a type (FR-273): the most used prefix among existing
+    /// keys of that type (or a default), with the next number, padded like the others.
+    pub fn suggest_key(&self, ntype: NodeType) -> Result<String> {
+        let default = match ntype {
+            NodeType::Requirement => "FR",
+            NodeType::Decision => "ADR",
+            NodeType::Design => "DES",
+            NodeType::Constraint => "CON",
+            _ => return Err(Error::Usage(format!("a {ntype} is not a spec item"))),
+        };
+        let mut all_keys: BTreeSet<String> = BTreeSet::new();
+        let mut prefixes: BTreeMap<String, (usize, u64, usize)> = BTreeMap::new();
+        for t in NodeType::SPEC_ITEMS {
+            for n in self
+                .reader()
+                .find_nodes(&NodeQuery::of_type(t).including_retired())?
+            {
+                let Some(k) = n.str_prop("key") else { continue };
+                all_keys.insert(k.to_string());
+                if t != ntype {
+                    continue;
+                }
+                if let Some((p, num)) = k.rsplit_once('-')
+                    && !p.is_empty()
+                    && let Ok(v) = num.parse::<u64>()
+                {
+                    let e = prefixes.entry(p.to_string()).or_insert((0, 0, 0));
+                    e.0 += 1;
+                    e.1 = e.1.max(v);
+                    e.2 = e.2.max(num.len());
+                }
+            }
+        }
+        let (prefix, (_, max, width)) = prefixes
+            .iter()
+            .max_by_key(|(p, (count, _, _))| (*count, std::cmp::Reverse((*p).clone())))
+            .map(|(p, v)| (p.clone(), *v))
+            .unwrap_or_else(|| (default.to_string(), (0, 0, 3)));
+        let mut n = max + 1;
+        loop {
+            let key = format!("{prefix}-{n:0width$}");
+            if !all_keys.contains(&key) {
+                return Ok(key);
+            }
+            n += 1;
+        }
+    }
+
+    /// Whether any spec item already has `key` (FR-273).
+    fn key_taken(&self, key: &str) -> Result<bool> {
+        for t in NodeType::SPEC_ITEMS {
+            if self
+                .reader()
+                .find_nodes(&NodeQuery::of_type(t).including_retired())?
+                .iter()
+                .any(|n| n.str_prop("key") == Some(key))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// One spec item.
     pub fn spec_item(&self, reference: &str) -> Result<query::SpecItemView> {
         let n = match self.reader().get_node(reference)? {
@@ -2100,7 +2168,7 @@ impl Engine {
                 .reader()
                 .find_nodes(&NodeQuery::of_type(t).including_retired())?
             {
-                let v = query::spec_item_view(&n);
+                let mut v = query::spec_item_view(&n);
                 if status.is_some_and(|s| s != v.status) {
                     continue;
                 }
@@ -2116,6 +2184,12 @@ impl Engine {
                         continue;
                     }
                 }
+                let links = links::links_of(self.reader(), &v.id)?;
+                v.links = links.len();
+                v.stale_links = links
+                    .iter()
+                    .filter(|e| e.status == LinkStatus::Stale)
+                    .count();
                 out.push(v);
             }
         }

@@ -236,6 +236,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Recover { action } => recover::recover(&ctx, action),
         Command::Value => recover::value(&ctx),
         Command::Changes { action, since } => changes::changes(&ctx, action, since),
+        Command::Tui => crate::tui::run(&ctx),
         Command::Backup {
             restore,
             from,
