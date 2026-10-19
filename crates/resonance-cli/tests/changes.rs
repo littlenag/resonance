@@ -1,7 +1,8 @@
 //! The change log (MVP-040, mvp.md §5 "S25 / TUI and change log"), read and cleared by agents
 //! through MCP: entries for spec changes that arrive with a pull; none for agents' own changes
-//! by default; one pending entry per item; `since`, `show` and `done`. People's TUI edits are
-//! covered by the TUI's own tests.
+//! by default; one pending entry per item; `since`, `show` and `done`; the pending flag on
+//! items; the reminder on MCP results and the notice with every prompt (FR-283); and that the
+//! log is never committed. People's TUI edits and clearing are covered by the TUI's own tests.
 
 mod common;
 
@@ -173,4 +174,93 @@ fn spec_changes_arriving_through_a_pull_are_logged() {
     assert_eq!(keys(&e), ["FR-300"], "{e:?}");
     assert_eq!(e[0]["origin"], "git");
     assert_eq!(e[0]["actor"], "agent:test-agent");
+}
+
+#[test]
+fn pending_changes_reach_the_agent_without_asking_and_never_get_committed() {
+    let repo = TestRepo::with_project();
+    repo.import_sample();
+    // Nothing pending: no reminder, no notice.
+    let body = repo.tool_body("resonance_status", json!({}));
+    assert!(body.get("pendingChanges").is_none(), "{body}");
+    assert_eq!(prompt_hook(&repo), "", "silent when the log is empty");
+
+    include_agents(&repo);
+    repo.tool(
+        "resonance_edit_item",
+        json!({"ref": "FR-002", "fields": {"text": "The store closes cleanly."}}),
+    );
+    repo.tool("resonance_retire_item", json!({"ref": "FR-003"}));
+
+    // The flag: items with a pending change say so, removals included.
+    let item = repo.tool("resonance_show_item", json!({"ref": "FR-002"}));
+    assert_eq!(item["pendingChange"]["kind"], "edited", "{item}");
+    let retired = repo.tool("resonance_show_item", json!({"ref": "FR-003"}));
+    assert_eq!(retired["pendingChange"]["kind"], "retired", "{retired}");
+    assert!(
+        repo.tool("resonance_show_item", json!({"ref": "FR-001"}))
+            .get("pendingChange")
+            .is_none()
+    );
+
+    // Every other tool result carries a reminder.
+    let body = repo.tool_body("resonance_search", json!({"text": "store"}));
+    let reminder = body["pendingChanges"].as_str().unwrap();
+    assert!(
+        reminder.starts_with("2 pending change-log entries"),
+        "{reminder}"
+    );
+
+    // With every prompt, the harness hook puts the entries in front of the agent.
+    let out = prompt_hook(&repo);
+    let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    assert_eq!(v["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit");
+    let context = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        context.contains("FR-002 edited") && context.contains("FR-003 retired"),
+        "{context}"
+    );
+    assert!(context.contains("resonance_changes_done"), "{context}");
+
+    // Transient: the log is local state, never in what git sees.
+    let seqs: Vec<u64> = entries(&repo)
+        .iter()
+        .map(|e| e["seq"].as_u64().unwrap())
+        .collect();
+    assert_eq!(repo.git_status(), "", "offline: nothing for git");
+    done(&repo, &seqs);
+    assert!(
+        repo.tool_body("resonance_search", json!({"text": "store"}))
+            .get("pendingChanges")
+            .is_none()
+    );
+    assert_eq!(prompt_hook(&repo), "");
+}
+
+/// Run the prompt hook as Claude Code does when the developer sends a prompt.
+fn prompt_hook(repo: &TestRepo) -> String {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = repo
+        .command(&["agent-hook", "prompt"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(br#"{"hook_event_name":"UserPromptSubmit","prompt":"carry on"}"#)
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
 }

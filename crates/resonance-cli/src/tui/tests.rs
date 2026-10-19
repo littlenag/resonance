@@ -248,6 +248,60 @@ fn adds_with_a_suggested_key_and_refuses_a_duplicate() {
 }
 
 #[test]
+fn pending_changes_are_marked_and_the_person_can_clear_them() {
+    let (_dir, mut app) = setup();
+    // A person edits one item and retires another.
+    call(
+        &mut app,
+        "spec_edit",
+        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+    );
+    call(&mut app, "spec_retire", json!({"ref": "FR-002"}));
+    app.refresh();
+    let screen = render(&mut app);
+    assert!(
+        screen.contains("• FR-001") && screen.contains("• FR-002"),
+        "{screen}"
+    );
+    select(&mut app, "FR-001");
+    app.on_key(key(KeyCode::Enter));
+    let screen = render(&mut app);
+    assert!(
+        screen.contains("Pending change #") && screen.contains("edited: priority"),
+        "{screen}"
+    );
+    app.on_key(key(KeyCode::Esc));
+
+    // `d` clears the selected entry.
+    press(&mut app, 'l');
+    assert_eq!(app.log.len(), 2);
+    let first = app.log[0].item.key.clone();
+    press(&mut app, 'd');
+    assert_eq!(app.screen, Screen::Log);
+    assert_eq!(app.log.len(), 1);
+    assert_ne!(app.log[0].item.key, first);
+    assert!(app.message.as_ref().unwrap().0.contains("Cleared 1 entry"));
+
+    // `D` asks first; anything but y keeps the log.
+    press(&mut app, 'D');
+    assert_eq!(app.screen, Screen::Confirm);
+    assert!(render(&mut app).contains("Clear all 1 change-log entries?"));
+    press(&mut app, 'n');
+    assert_eq!(app.screen, Screen::Log);
+    assert_eq!(app.log.len(), 1);
+    press(&mut app, 'D');
+    press(&mut app, 'y');
+    assert_eq!(app.screen, Screen::Log);
+    assert!(app.log.is_empty());
+    assert!(render(&mut app).contains("The change log is empty"));
+    app.on_key(key(KeyCode::Esc));
+    assert!(
+        !render(&mut app).contains("• FR-"),
+        "no item is marked any more"
+    );
+}
+
+#[test]
 fn edits_and_retires_graph_native_items_in_place() {
     let (_dir, mut app) = setup();
     call(
@@ -454,10 +508,7 @@ fn detail_and_change_log_scroll() {
         !log.contains("FR-040 created"),
         "j scrolls the change log:\n{log}"
     );
-    assert!(
-        log.contains("decision 8") || log.contains("decision 11"),
-        "{log}"
-    );
+    assert!(log.contains("decision 7"), "{log}");
     // A key that is not a log command stays on the log.
     press(&mut app, 'x');
     assert_eq!(app.screen, Screen::Log);

@@ -108,6 +108,45 @@ pub fn get(r: &dyn GraphRead, seq: u64) -> Result<Entry> {
         })
 }
 
+/// What the agent is told about pending entries with every prompt (FR-283): who changed which
+/// spec item, and what to do about it. `None` when the log is empty.
+pub fn notice(entries: &[Entry], max: usize) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let mut out = format!(
+        "Resonance change log: {} spec change(s) made by people that you have not handled yet:\n",
+        entries.len()
+    );
+    for e in entries.iter().take(max) {
+        out.push_str(&format!(
+            "- #{} {} ({}, {})\n",
+            e.seq, e.summary, e.actor, e.origin
+        ));
+    }
+    if entries.len() > max {
+        out.push_str(&format!(
+            "- and {} more (resonance_changes)\n",
+            entries.len() - max
+        ));
+    }
+    out.push_str(
+        "Take them into account in this task: resonance_changes_show gives an entry's fields before and after. \
+         Once you have handled an entry (implemented it, updated links and tests, updated the document it came from, \
+         or judged that nothing is needed), clear it with resonance_changes_done, so that it does not linger as \
+         unfinished work. Do not clear entries you have not handled.",
+    );
+    Some(out)
+}
+
+/// A one-line reminder for MCP results while entries are pending (FR-283).
+pub fn reminder(count: usize, latest: u64) -> String {
+    format!(
+        "{count} pending change-log entr{} (people's spec edits, latest #{latest}): read them with resonance_changes, handle them, then clear them with resonance_changes_done.",
+        if count == 1 { "y" } else { "ies" }
+    )
+}
+
 /// The number of pending entries.
 pub fn pending_count(r: &dyn GraphRead) -> Result<usize> {
     Ok(r.meta_prefix(PREFIX)?.len())

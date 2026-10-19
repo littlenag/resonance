@@ -125,7 +125,12 @@ impl Server {
                     call.origin = Some(crate::changes::origin::MCP.to_string());
                     self.backend.call(call)
                 });
-                jsonrpc::result(id, tool_result(outcome))
+                let reminder = if name.starts_with("resonance_changes") {
+                    None
+                } else {
+                    self.pending_reminder()
+                };
+                jsonrpc::result(id, tool_result(outcome, reminder))
             }
             other => jsonrpc::error(
                 id,
@@ -136,10 +141,26 @@ impl Server {
     }
 }
 
-fn tool_result(outcome: Result<Value>) -> Value {
+impl Server {
+    /// While people's spec edits are pending, every tool result says so (FR-283), so that the
+    /// agent sees them without having to look.
+    fn pending_reminder(&mut self) -> Option<String> {
+        let mut call = crate::service::Call::new("changes", json!({}));
+        call.cached = true;
+        let entries = self.backend.call(call).ok()?;
+        let list = entries.as_array()?;
+        let latest = list.last()?["seq"].as_u64()?;
+        Some(crate::changes::reminder(list.len(), latest))
+    }
+}
+
+fn tool_result(outcome: Result<Value>, reminder: Option<String>) -> Value {
     match outcome {
         Ok(data) => {
-            let body = json!({"data": data, "note": DATA_NOTE});
+            let mut body = json!({"data": data, "note": DATA_NOTE});
+            if let Some(r) = reminder {
+                body["pendingChanges"] = json!(r);
+            }
             json!({
                 "content": [{"type": "text", "text": serde_json::to_string_pretty(&body).unwrap_or_default()}],
                 "isError": false,

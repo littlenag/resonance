@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use serde_json::Value;
 
-use super::app::{App, FormRow, Screen};
+use super::app::{App, Confirm, FormRow, Screen};
 
 const HELP: &str = "\
 List
@@ -22,7 +22,8 @@ Details
   pgup/pgdn      scroll a page            esc     back
 
 Change log
-  up/down, j/k   scroll                   pgup/pgdn  scroll a page
+  up/down, j/k   select an entry          pgup/pgdn  move a page
+  d              clear the selected entry D          clear them all (asks first)
   esc            back
 
 Edit and add
@@ -33,7 +34,8 @@ Edit and add
 
 Items your agent brought in from a document show where they came from; editing one marks
 the document for your agent to update.
-Changes you make here are recorded in the change log (l) for your agent to pick up.
+Changes you make here are recorded in the change log (l) for your agent to pick up; items
+with a pending change are marked •. Clear an entry yourself when nothing more is needed.
 
 Press any key to go back.";
 
@@ -57,6 +59,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     .areas(f.area());
     draw_header(f, app, header);
     match app.screen {
+        Screen::Confirm if matches!(app.confirm, Some(Confirm::ClearLog { .. })) => {
+            draw_log(f, app, body)
+        }
         Screen::List | Screen::Confirm => draw_list(f, app, body),
         Screen::Detail => draw_detail(f, app, body),
         Screen::Form => draw_form(f, app, body),
@@ -103,8 +108,11 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         (Screen::Form, _) => {
             "tab/↑↓ move · type to edit · enter: long field in $EDITOR · ctrl-s save · esc cancel"
         }
-        (Screen::Confirm, _) => "y retire · any other key: keep",
-        (Screen::Log, _) => "j/k scroll · pgup/pgdn page · esc back · q quit",
+        (Screen::Confirm, _) => match app.confirm {
+            Some(Confirm::ClearLog { .. }) => "y clear them all · any other key: keep",
+            _ => "y retire · any other key: keep",
+        },
+        (Screen::Log, _) => "j/k select · d clear the entry · D clear all · esc back · q quit",
         (Screen::Help, _) => "any key: back",
     };
     let mut lines = vec![Line::from(Span::styled(
@@ -143,7 +151,16 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default()
             };
             Row::new(vec![
-                Cell::from(i.key.clone().unwrap_or_default()),
+                // • marks an item whose change your agent has not handled yet (MVP-040).
+                Cell::from(format!(
+                    "{}{}",
+                    if i.pending_change.is_some() {
+                        "• "
+                    } else {
+                        "  "
+                    },
+                    i.key.clone().unwrap_or_default()
+                )),
                 Cell::from(i.ntype.to_string()),
                 Cell::from(i.status.clone()),
                 Cell::from(one_line(&i.title, 200)),
@@ -156,7 +173,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Length(14),
+            Constraint::Length(16),
             Constraint::Length(11),
             Constraint::Length(11),
             Constraint::Min(20),
@@ -165,7 +182,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         ],
     )
     .header(
-        Row::new(["Key", "Type", "Status", "Title", "Links", "Src"])
+        Row::new(["  Key", "Type", "Status", "Title", "Links", "Src"])
             .style(Style::default().add_modifier(Modifier::BOLD)),
     )
     .block(Block::default().borders(Borders::ALL))
@@ -224,6 +241,29 @@ fn detail_lines(d: &Value) -> Vec<Line<'static>> {
         )),
     ]));
     let props = d["properties"].as_object().cloned().unwrap_or_default();
+    if let Some(p) = d.get("pendingChange").filter(|p| !p.is_null()) {
+        let fields: Vec<String> = p["fields"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|f| f.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        lines.push(Line::from(Span::styled(
+            format!(
+                "• Pending change #{} ({}{}): not handled by your agent yet",
+                value_text(&p["seq"]),
+                value_text(&p["kind"]),
+                if fields.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", fields.join(", "))
+                }
+            ),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
     if let Some(src) = d.get("source").filter(|s| !s.is_null()) {
         lines.push(Line::from(format!(
             "From: {}:{} (edits here mark the document for your agent to update)",
@@ -359,6 +399,20 @@ fn draw_form(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_confirm(f: &mut Frame, app: &App, area: Rect) {
     let Some(c) = &app.confirm else { return };
+    let lines = match c {
+        Confirm::Retire { label, links, .. } => vec![
+            Line::from(format!("Retire {label}?")),
+            Line::from(format!(
+                "It has {links} link(s); they stay, and it is never deleted."
+            )),
+            Line::from("y: retire · any other key: keep"),
+        ],
+        Confirm::ClearLog { count } => vec![
+            Line::from(format!("Clear all {count} change-log entries?")),
+            Line::from("Your agent will not see them. The changes themselves stay."),
+            Line::from("y: clear them all · any other key: keep"),
+        ],
+    };
     let w = area.width.min(64);
     let popup = Rect {
         x: area.x + (area.width - w) / 2,
@@ -368,16 +422,9 @@ fn draw_confirm(f: &mut Frame, app: &App, area: Rect) {
     };
     f.render_widget(Clear, popup);
     f.render_widget(
-        Paragraph::new(vec![
-            Line::from(format!("Retire {}?", c.label)),
-            Line::from(format!(
-                "It has {} link(s); they stay, and it is never deleted.",
-                c.links
-            )),
-            Line::from("y: retire · any other key: keep"),
-        ])
-        .wrap(Wrap { trim: true })
-        .block(Block::default().borders(Borders::ALL).title(" Confirm ")),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().borders(Borders::ALL).title(" Confirm ")),
         popup,
     );
 }
@@ -393,7 +440,10 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let max = app.log.len().saturating_sub(1);
     app.log_offset = app.log_offset.min(max);
-    let mut state = TableState::new().with_offset(app.log_offset);
+    app.log_cursor = app.log_cursor.min(max);
+    let mut state = TableState::new()
+        .with_offset(app.log_offset)
+        .with_selected(Some(app.log_cursor));
     let rows: Vec<Row> = app
         .log
         .iter()
@@ -426,7 +476,8 @@ fn draw_log(f: &mut Frame, app: &mut App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .title(format!(" Change log: {} pending ", app.log.len())),
-        ),
+        )
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
         area,
         &mut state,
     );

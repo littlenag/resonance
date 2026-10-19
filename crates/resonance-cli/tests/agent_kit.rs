@@ -148,6 +148,14 @@ fn init_writes_the_offline_kit_locally() {
             .ends_with(" agent-hook pre-git"),
         "{settings}"
     );
+    let prompt = &settings["hooks"]["UserPromptSubmit"][0];
+    assert!(
+        prompt["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with(" agent-hook prompt"),
+        "the change log reaches the agent with every prompt: {settings}"
+    );
     let section = repo.read("CLAUDE.local.md");
     assert!(section.contains("<!-- >>> resonance >>> -->"), "{section}");
     assert!(
@@ -173,6 +181,13 @@ fn init_writes_the_offline_kit_locally() {
     );
     let settings: Value = serde_json::from_str(&repo.read(".claude/settings.local.json")).unwrap();
     assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        settings["hooks"]["UserPromptSubmit"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 
     let st = repo.tool("resonance_conventions", json!({}));
     assert_eq!(st["kit"]["installed"], true);

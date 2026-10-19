@@ -2099,7 +2099,20 @@ impl Engine {
         if let Some(src) = self.source_of(&v.id)? {
             v.source = Some(src);
         }
+        v.pending_change = self.pending_changes_by_item()?.remove(&v.id);
         Ok(v)
+    }
+
+    /// Pending change-log entries by item ID, as the flag on spec item views (MVP-040).
+    fn pending_changes_by_item(&self) -> Result<BTreeMap<String, Value>> {
+        Ok(crate::changes::list(self.reader(), None)?
+            .into_iter()
+            .map(|e| {
+                let flag =
+                    json!({"seq": e.seq, "kind": e.kind, "fields": e.fields, "origin": e.origin});
+                (e.item.id, flag)
+            })
+            .collect())
     }
 
     /// Spec items, filtered by type, status and text (for the TUI and `spec list`).
@@ -2114,6 +2127,7 @@ impl Engine {
             None => NodeType::SPEC_ITEMS.to_vec(),
         };
         let needle = text.map(str::to_lowercase).filter(|t| !t.is_empty());
+        let mut pending = self.pending_changes_by_item()?;
         let mut out = Vec::new();
         for t in types {
             for n in self
@@ -2139,6 +2153,7 @@ impl Engine {
                 if let Some(src) = self.source_of(&v.id)? {
                     v.source = Some(src);
                 }
+                v.pending_change = pending.remove(&v.id);
                 let links = links::links_of(self.reader(), &v.id)?;
                 v.links = links.len();
                 v.stale_links = links

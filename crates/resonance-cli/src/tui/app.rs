@@ -103,12 +103,17 @@ pub enum FormRow {
     Field(usize),
 }
 
-/// Retiring needs confirmation, with the item's link count (FR-271).
+/// What needs confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Confirm {
-    pub id: String,
-    pub label: String,
-    pub links: usize,
+pub enum Confirm {
+    /// Retiring an item, with its link count (FR-271).
+    Retire {
+        id: String,
+        label: String,
+        links: usize,
+    },
+    /// Clearing the whole change log (FR-276).
+    ClearLog { count: usize },
 }
 
 /// A one-line text input (the `/` filter).
@@ -173,6 +178,8 @@ pub struct App {
     pub log: Vec<Entry>,
     /// First visible change-log row. `j`/`k` move it; the log is read-only.
     pub log_offset: usize,
+    /// The selected change-log entry.
+    pub log_cursor: usize,
     /// Lines scrolled off the top of the detail screen.
     pub detail_scroll: u16,
     /// Item whose detail is open, so a reload of the same item keeps the scroll position.
@@ -201,6 +208,7 @@ impl App {
             confirm: None,
             log: Vec::new(),
             log_offset: 0,
+            log_cursor: 0,
             detail_scroll: 0,
             detail_for: None,
             message: None,
@@ -281,6 +289,9 @@ impl App {
                 if let Some(src) = self.selected().and_then(|i| i.source.clone()) {
                     d["source"] = src;
                 }
+                if let Some(p) = self.selected().and_then(|i| i.pending_change.clone()) {
+                    d["pendingChange"] = p;
+                }
                 Some(d)
             }
             None => None,
@@ -292,6 +303,7 @@ impl App {
         self.log = serde_json::from_value(self.client.call("changes", json!({}))?)?;
         let max = self.log.len().saturating_sub(1);
         self.log_offset = self.log_offset.min(max);
+        self.log_cursor = self.log_cursor.min(max);
         Ok(())
     }
 
@@ -302,13 +314,30 @@ impl App {
 
     fn scroll_log(&mut self, delta: isize) {
         if self.log.is_empty() {
-            self.log_offset = 0;
+            self.log_cursor = 0;
             return;
         }
         let max = self.log.len() as isize - 1;
-        self.log_offset = (self.log_offset as isize)
+        self.log_cursor = (self.log_cursor as isize)
             .saturating_add(delta)
             .clamp(0, max) as usize;
+    }
+
+    /// Clear change-log entries as handled (FR-276): the person decides nothing more is needed.
+    fn clear_log_entries(&mut self, seqs: Vec<u64>) -> Result<()> {
+        let n = seqs.len();
+        self.client.call(
+            "changes_done",
+            json!({"seqs": seqs, "note": "cleared in the TUI"}),
+        )?;
+        self.load_log()?;
+        self.reload()?;
+        self.info(format!(
+            "Cleared {n} entr{} from the change log; your agent will not see {}.",
+            if n == 1 { "y" } else { "ies" },
+            if n == 1 { "it" } else { "them" }
+        ));
+        Ok(())
     }
 
     /// Handle one key; returns what the run loop must do next.
@@ -380,6 +409,7 @@ impl App {
             }
             KeyCode::Char('l') => {
                 self.log_offset = 0;
+                self.log_cursor = 0;
                 self.load_log()?;
                 self.back = self.screen;
                 self.screen = Screen::Log;
@@ -485,6 +515,16 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => self.scroll_log(-1),
             KeyCode::PageDown => self.scroll_log(10),
             KeyCode::PageUp => self.scroll_log(-10),
+            KeyCode::Char('d') if self.log_cursor < self.log.len() => {
+                let seq = self.log[self.log_cursor].seq;
+                self.clear_log_entries(vec![seq])?;
+            }
+            KeyCode::Char('D') if !self.log.is_empty() => {
+                self.confirm = Some(Confirm::ClearLog {
+                    count: self.log.len(),
+                });
+                self.screen = Screen::Confirm;
+            }
             _ => {}
         }
         Ok(Effect::None)
@@ -561,7 +601,7 @@ impl App {
             self.info("Already retired.");
             return Ok(Effect::None);
         }
-        self.confirm = Some(Confirm {
+        self.confirm = Some(Confirm::Retire {
             id: item.id.clone(),
             label: item.key.clone().unwrap_or(item.title.clone()),
             links: item.links,
@@ -572,17 +612,27 @@ impl App {
     }
 
     fn on_confirm_key(&mut self, key: KeyEvent) -> Result<Effect> {
-        let c = self.confirm.take().expect("a confirmation");
-        self.screen = self.back;
-        if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
-            self.client.call("spec_retire", json!({"ref": c.id}))?;
-            self.reload()?;
-            self.info(format!(
-                "Retired {} (its {} link(s) were kept).",
-                c.label, c.links
-            ));
-        } else {
-            self.info("Not retired.");
+        let yes = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
+        match self.confirm.take().expect("a confirmation") {
+            Confirm::Retire { id, label, links } => {
+                self.screen = self.back;
+                if yes {
+                    self.client.call("spec_retire", json!({"ref": id}))?;
+                    self.reload()?;
+                    self.info(format!("Retired {label} (its {links} link(s) were kept)."));
+                } else {
+                    self.info("Not retired.");
+                }
+            }
+            Confirm::ClearLog { .. } => {
+                self.screen = Screen::Log;
+                if yes {
+                    let seqs = self.log.iter().map(|e| e.seq).collect();
+                    self.clear_log_entries(seqs)?;
+                } else {
+                    self.info("The change log is unchanged.");
+                }
+            }
         }
         Ok(Effect::None)
     }

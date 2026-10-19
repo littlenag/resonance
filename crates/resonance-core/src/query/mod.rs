@@ -165,6 +165,10 @@ pub struct SpecItemView {
     pub source: Option<Value>,
     /// Every property, for editors.
     pub props: Value,
+    /// The item's pending change-log entry, if a change to it has not been handled yet
+    /// (MVP-040). Derived from the log, never stored on the item, so that it is never committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_change: Option<Value>,
     /// Links to and from the item, and how many of them are stale (lists only).
     #[serde(default)]
     pub links: usize,
@@ -193,6 +197,7 @@ pub fn spec_item_view(node: &Node) -> SpecItemView {
         priority: node.str_prop("priority").map(String::from),
         source: node.props.get("source").cloned().filter(|v| !v.is_null()),
         props: Value::Object(node.props.clone()),
+        pending_change: None,
         links: 0,
         stale_links: 0,
     }

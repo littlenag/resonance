@@ -286,6 +286,21 @@ impl TestRepo {
     /// Call MCP tools in one `resonance mcp` session, as an agent would. Returns each call's
     /// `data`, or its error text.
     pub fn tools(&self, calls: &[(&str, Value)]) -> Vec<Result<Value, String>> {
+        self.tool_bodies(calls)
+            .into_iter()
+            .map(|r| r.map(|body| body["data"].clone()))
+            .collect()
+    }
+
+    /// One tool's whole result body: `data`, `note`, and any `pendingChanges` reminder.
+    pub fn tool_body(&self, name: &str, args: Value) -> Value {
+        self.tool_bodies(&[(name, args.clone())])
+            .remove(0)
+            .unwrap_or_else(|e| panic!("{name} {args}: {e}"))
+    }
+
+    /// [`TestRepo::tools`], returning each result's whole body.
+    pub fn tool_bodies(&self, calls: &[(&str, Value)]) -> Vec<Result<Value, String>> {
         use std::io::Write;
         use std::process::Stdio;
         let mut child = self
@@ -331,8 +346,7 @@ impl TestRepo {
                 if r["result"]["isError"] == true {
                     Err(text)
                 } else {
-                    let body: Value = serde_json::from_str(&text).unwrap();
-                    Ok(body["data"].clone())
+                    Ok(serde_json::from_str(&text).unwrap())
                 }
             })
             .collect()

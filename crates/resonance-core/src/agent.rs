@@ -37,7 +37,7 @@ const SECTION_END: &str = "<!-- <<< resonance <<< -->";
 pub const ACTOR_ENV: &str = "RESONANCE_ACTOR";
 pub const CLAUDE_ACTOR: &str = "agent:claude-code";
 /// What marks the harness hook as Resonance's.
-const HOOK_MARK: &str = " agent-hook pre-git";
+const HOOK_MARK: &str = " agent-hook ";
 
 /// The name the MCP server is registered under.
 pub const SERVER_NAME: &str = "resonance";
@@ -350,37 +350,52 @@ fn with_section(text: &str, section: &str) -> String {
 }
 
 /// The harness hook command.
-fn hook_command(exe: &Path) -> String {
-    format!("\"{}\"{HOOK_MARK}", exe.display())
+fn hook_command(exe: &Path, event: &str) -> String {
+    format!("\"{}\"{HOOK_MARK}{event}", exe.display())
 }
 
-/// `settings` with Resonance's PreToolUse hook and actor setting (or without them).
+/// The harness hooks the kit installs: the gate on the agent's git commands (FR-222), and the
+/// pending change log put in front of the agent with every prompt (FR-283).
+fn kit_hooks(exe: &Path) -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "PreToolUse",
+            json!({"matcher": "Bash", "hooks": [{"type": "command", "command": hook_command(exe, "pre-git")}]}),
+        ),
+        (
+            "UserPromptSubmit",
+            json!({"hooks": [{"type": "command", "command": hook_command(exe, "prompt")}]}),
+        ),
+    ]
+}
+
+/// `settings` with Resonance's harness hooks and actor setting (or without them).
 fn with_settings(mut settings: Value, exe: Option<&Path>) -> Value {
     if !settings.is_object() {
         settings = json!({});
     }
     let obj = settings.as_object_mut().expect("an object");
-    // Drop Resonance's own hook entries, then add the current one.
+    // Drop Resonance's own hook entries from every event, then add the current ones.
     let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
     if let Some(h) = hooks.as_object_mut() {
-        let pre = h.entry("PreToolUse").or_insert_with(|| json!([]));
-        if let Some(list) = pre.as_array_mut() {
-            list.retain(|entry| {
-                !entry["hooks"].as_array().is_some_and(|hs| {
-                    hs.iter()
-                        .any(|x| x["command"].as_str().is_some_and(|c| c.contains(HOOK_MARK)))
-                })
-            });
-            if let Some(exe) = exe {
-                list.push(json!({
-                    "matcher": "Bash",
-                    "hooks": [{"type": "command", "command": hook_command(exe)}],
-                }));
-            }
-            if list.is_empty() {
-                h.remove("PreToolUse");
+        for list in h.values_mut() {
+            if let Some(list) = list.as_array_mut() {
+                list.retain(|entry| {
+                    !entry["hooks"].as_array().is_some_and(|hs| {
+                        hs.iter()
+                            .any(|x| x["command"].as_str().is_some_and(|c| c.contains(HOOK_MARK)))
+                    })
+                });
             }
         }
+        if let Some(exe) = exe {
+            for (event, entry) in kit_hooks(exe) {
+                if let Some(list) = h.entry(event).or_insert_with(|| json!([])).as_array_mut() {
+                    list.push(entry);
+                }
+            }
+        }
+        h.retain(|_, v| v.as_array().is_none_or(|l| !l.is_empty()));
         if h.is_empty() {
             obj.remove("hooks");
         }
@@ -500,7 +515,7 @@ pub fn install_kit(repo: &Repo, mode: Mode, opts: &KitOptions) -> Result<KitRepo
             .unwrap_or_else(|| json!({}));
         let next = pretty(&with_settings(current, Some(&opts.exe)));
         report.steps.push(KitStep {
-            what: "harness hook and RESONANCE_ACTOR".into(),
+            what: "harness hooks and RESONANCE_ACTOR".into(),
             path: rel(repo, &settings_path),
             action: put(&settings_path, &next, opts.dry_run)?,
         });

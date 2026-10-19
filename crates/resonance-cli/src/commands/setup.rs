@@ -181,10 +181,14 @@ pub fn refresh_kit(repo: &Repo) -> Result<Option<KitReport>> {
 /// `resonance agent-hook pre-git` (FR-222): the harness hook. Reads Claude Code's hook input
 /// on standard input and, to stop the command, prints a `deny` decision with the reason.
 pub fn agent_hook(ctx: &Ctx, event: &str) -> Result<()> {
-    if event != "pre-git" {
-        return Err(Error::Usage(format!(
-            "unknown agent hook event `{event}` (expected pre-git)"
-        )));
+    match event {
+        "pre-git" => {}
+        "prompt" => return prompt_hook(ctx),
+        _ => {
+            return Err(Error::Usage(format!(
+                "unknown agent hook event `{event}` (expected pre-git or prompt)"
+            )));
+        }
     }
     let mut input = String::new();
     let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
@@ -227,6 +231,34 @@ pub fn agent_hook(ctx: &Ctx, event: &str) -> Result<()> {
         ctx.note("resonance: the developer overrode the agent gate; the git hooks still check.");
     }
     Ok(())
+}
+
+/// `resonance agent-hook prompt` (FR-283): with every prompt, put the pending change log in
+/// front of the agent, so that it sees people's spec edits without having to look for them.
+/// Prints nothing when the log is empty, and never fails the prompt.
+fn prompt_hook(ctx: &Ctx) -> Result<()> {
+    let mut input = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut input);
+    if !Repo::discover(&ctx.cwd).is_ok_and(|r| r.is_initialized()) {
+        return Ok(());
+    }
+    let entries: Vec<resonance_core::changes::Entry> = match ctx.run("changes", json!({})) {
+        Ok(e) => e,
+        Err(e) => {
+            ctx.note(&format!("resonance: could not read the change log ({e})"));
+            return Ok(());
+        }
+    };
+    let Some(text) = resonance_core::changes::notice(&entries, 12) else {
+        return Ok(());
+    };
+    let out = json!({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": text,
+        }
+    });
+    ctx.emit(&out, |o| format!("{o}\n"))
 }
 
 pub fn status(ctx: &Ctx) -> Result<()> {

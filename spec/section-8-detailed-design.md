@@ -541,7 +541,7 @@ People need a direct way to work with the spec held in the graph, and agents nee
 - **FR-271** Removing a spec item MUST retire it, never delete it (FR-003). Retiring asks for confirmation and says how many links the item has. [Proposed]
 - **FR-272** Every item is edited in place, since the graph is the source of truth. For an item that came from a document (FR-124), the TUI shows the document and line, and editing the item makes its `derivedFrom` link stale, so that the agent brings the document back in step. Resonance writes no project files for TUI edits (FR-014). [Proposed]
 - **FR-273** New graph-native items need a key. The TUI MUST suggest the next free key for the chosen prefix (for example, the next unused `FR-` number), accept a different one, and refuse a key that already exists. Keys are unique across spec items, whoever creates them; the agent's batch import reports a clash in its preview (FR-122). [Proposed]
-- **FR-279** The TUI MUST stay deliberately simple: listing, viewing, editing, adding and retiring spec items, the change log, and (later) architectural summaries (FR-280). Richer interaction belongs in the JetBrains plugin (FR-141). [Decided]
+- **FR-279** The TUI MUST stay deliberately simple: listing, viewing, editing, adding and retiring spec items, viewing and clearing the change log (FR-285), and (later) architectural summaries (FR-280). Richer interaction belongs in the JetBrains plugin (FR-141). [Decided]
 
 **The change log**
 
@@ -560,6 +560,9 @@ People need a direct way to work with the spec held in the graph, and agents nee
   - The agent-side hooks (FR-222) stop the agent's own `git commit`, `git push` and `git pull` while entries are pending, unless the developer tells the agent to proceed.
   - Git hooks for people only warn, because a person may deliberately commit spec changes before an agent implements them.
 - **FR-278** The change log is local to a working tree and never committed. It should be empty at commit time anyway, and teammates' changes reach each working tree through git and are logged there (FR-274). [Proposed]
+- **FR-283** **The agent sees people's edits without looking for them.** A person's spec edit usually comes with a prompt to the agent, and it does not necessarily show up in git, so the change log MUST be put in front of the agent rather than wait to be read: where the harness supports it, the agent kit installs a hook that adds the pending entries, with what to do about them, to the agent's context with every prompt (for Claude Code, a `UserPromptSubmit` hook); and while entries are pending, every MCP tool result carries a one-line reminder. Both say plainly that handled entries are to be cleared, so that they do not linger as a confusing signal of unfinished work in later sessions. [Decided: the goal. Proposed: mechanism]
+- **FR-284** A spec item with a pending change-log entry MUST be marked as such wherever it is shown (MCP item views, the TUI list and detail), including retired items, so that removals are as visible as edits. The mark is derived from the log, never stored on the item, so that nothing transient enters the authored data that git carries (FR-278). [Proposed]
+- **FR-285** People MUST be able to clear change-log entries in the TUI: one entry, or all of them after a confirmation, for example when they judge that nothing more is needed. Clearing deletes entries from the log only, as for agents (FR-276). [Decided]
 
 **Architectural summaries (a later TUI iteration)**
 
