@@ -1,6 +1,6 @@
 # Resonance MVP — Backlog
 
-These are the items from the full specification (`spec/section-*.md`) that are **not yet** in the working spec, [`mvp.md`](mvp.md). The full text of each item is in the full spec under the same ID. The lines here are pointers with a one-line summary.
+These are the items from the full specification (`spec/section-*.md`) that are **not yet** in the working spec, `mvp.md`. The full text of each item is in the full spec under the same ID. The lines here are pointers with a one-line summary.
 
 **Moving an item into the MVP**
 
