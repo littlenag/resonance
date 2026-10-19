@@ -59,12 +59,13 @@ $dest
 
 A fresh fixture repository. Try:
   cd $dest
-  resonance init --no-agent
-  resonance import spec/requirements.md
-  resonance unit add src/lib.rs:15-24 --name record --kind function
-  resonance test add tests/run_test.sh:7-10 --name normalize --run "sh tests/run_test.sh normalize"
-  resonance link record satisfies FR-001
-  resonance link normalize verifies FR-003
-  resonance test FR-003
-  resonance trace FR-001
+  resonance init          # mirrors the repository, installs hooks and the agent kit
+  claude                  # then, in the agent session:
+    > Give me the Resonance orientation.
+    > Bring spec/requirements.md into Resonance.
+    > Declare record (src/lib.rs) and the normalize test, link them to FR-001 and FR-003,
+      and run the tests.
+    > What implements FR-001?
+  resonance tui           # browse and edit the spec yourself
+  resonance status
 MSG

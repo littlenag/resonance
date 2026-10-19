@@ -64,7 +64,6 @@ impl Call {
 
 /// Methods that change the graph (and so notify subscribers, FR-104).
 pub const MUTATIONS: &[&str] = &[
-    "import",
     "req_add",
     "req_edit",
     "req_retire",
@@ -91,7 +90,6 @@ pub const MUTATIONS: &[&str] = &[
     "spec_retire",
     "supersede",
     "ext_add",
-    "intent_project",
     "share",
     "join",
     "leave",
@@ -99,6 +97,7 @@ pub const MUTATIONS: &[&str] = &[
     "compact",
     "repair_snapshot",
     "changes_done",
+    "import_items",
 ];
 
 /// Every method `dispatch` understands.
@@ -122,9 +121,9 @@ pub const METHODS: &[&str] = &[
     "spec_list",
     "spec_show",
     "spec_suggest_key",
+    "import_items",
     "supersede",
     "ext_add",
-    "intent_project",
     "share",
     "join",
     "leave",
@@ -136,7 +135,6 @@ pub const METHODS: &[&str] = &[
     "repair_snapshot",
     "install_hooks",
     "export",
-    "import",
     "req_add",
     "req_edit",
     "req_retire",
@@ -181,13 +179,6 @@ struct Ref {
 struct Full {
     #[serde(default)]
     full: bool,
-}
-
-#[derive(Deserialize)]
-struct Paths {
-    paths: Vec<String>,
-    #[serde(default)]
-    format: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -325,7 +316,7 @@ fn count_repair(engine: &mut Engine, a: &Value) -> Result<()> {
     ])
 }
 
-/// Methods whose use `resonance value` reports (FR-240).
+/// Methods whose use `resonance_value` reports (FR-240).
 const SERVED: &[&str] = &["trace", "why", "context", "search", "test"];
 
 fn dispatch_inner(engine: &mut Engine, call: &Call) -> Result<Value> {
@@ -374,10 +365,6 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             let mut buf = Vec::new();
             let operations = engine.export(&mut buf)?;
             out(json!({"operations": operations, "jsonl": String::from_utf8_lossy(&buf)}))
-        }
-        "import" => {
-            let p: Paths = args(m, a)?;
-            out(engine.import(&p.paths, p.format.as_deref())?)
         }
         "req_add" => {
             let r: ReqAdd = args(m, a)?;
@@ -530,6 +517,18 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             let a: Done = args(m, a)?;
             out(engine.changes_done(&a.seqs, a.note.as_deref())?)
         }
+        "import_items" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Import {
+                document: String,
+                items: Vec<crate::api::ImportItem>,
+                #[serde(default)]
+                dry_run: bool,
+            }
+            let r: Import = args(m, a)?;
+            out(engine.import_items(&r.document, &r.items, r.dry_run)?)
+        }
         "spec_suggest_key" => {
             #[derive(Deserialize)]
             struct T {
@@ -668,16 +667,6 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             }
             let r: Install = args(m, a)?;
             out(engine.install_hooks(&r.exe, r.dry_run)?)
-        }
-        "intent_project" => {
-            #[derive(Deserialize)]
-            struct Project {
-                dir: String,
-                #[serde(default)]
-                apply: bool,
-            }
-            let r: Project = args(m, a)?;
-            out(engine.intent_project(&r.dir, r.apply)?)
         }
         "spec_retire" => {
             let r: Ref = args(m, a)?;

@@ -1,13 +1,13 @@
-//! The shared graph: share, leave, unshare, compact, check, review, show-delta, and the git
-//! plumbing (hooks and the snapshot merge driver).
+//! The shared graph: share, leave, unshare and check, and the git plumbing (hooks, the
+//! snapshot merge driver and the delta textconv driver).
 
 use std::fmt::Write as _;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use resonance_core::api::{CheckReport, LeaveView, ReviewView, ShareView, render_delta};
+use resonance_core::api::{CheckReport, LeaveView, ShareView, render_delta};
 use resonance_core::error::{Error, Result};
-use resonance_core::history::compact::{self, Compaction};
+use resonance_core::history::compact;
 use resonance_core::store::GraphStore;
 use resonance_store_sqlite::SqliteStore;
 use serde_json::json;
@@ -77,11 +77,26 @@ pub fn share(ctx: &Ctx, keep_local: &[String], dry_run: bool, yes: bool) -> Resu
         "share",
         json!({"exe": exe, "keepLocal": keep_local, "apply": false}),
     )?;
+    let repo = ctx.repo()?;
+    let section = resonance_core::agent::write_shared_section(&repo, true)?;
+    let preview = |v: &ShareView| {
+        let mut out = render_share(v);
+        if section.action != "unchanged" {
+            let _ = writeln!(
+                out,
+                "It also adds the agent kit's section to {} (FR-213), worded for teammates whether or not they use Resonance.",
+                section.path
+            );
+        }
+        out
+    };
     if dry_run {
-        return ctx.emit(&plan, render_share);
+        return ctx.emit(&json!({"share": plan, "instructions": section}), |_| {
+            preview(&plan)
+        });
     }
     let go = yes || {
-        eprint!("{}", render_share(&plan));
+        eprint!("{}", preview(&plan));
         confirm("Share the graph now?").unwrap_or(false)
     };
     if !go {
@@ -93,15 +108,26 @@ pub fn share(ctx: &Ctx, keep_local: &[String], dry_run: bool, yes: bool) -> Resu
         "share",
         json!({"exe": exe, "keepLocal": keep_local, "apply": true}),
     )?;
-    let kit = super::setup::refresh_kit(&ctx.repo()?)?;
-    ctx.emit(&done, |d| {
-        let mut out = render_share(d);
-        out.push_str(match kit {
-            Some(_) => "Refreshed the agent kit for stage 2 (`resonance agent install --shared` also adds a section to the shared CLAUDE.md).\n",
-            None => "Onboard your agent for stage 2 with `resonance agent install` (FR-210).\n",
-        });
-        out
-    })
+    let section = resonance_core::agent::write_shared_section(&repo, false)?;
+    let kit = super::setup::refresh_kit(&repo)?;
+    ctx.emit(
+        &json!({"share": done, "instructions": section, "agent": kit}),
+        |_| {
+            let mut out = render_share(&done);
+            if section.action != "unchanged" {
+                let _ = writeln!(
+                    out,
+                    "Added the agent kit's section to {}; commit it with .resonance/.",
+                    section.path
+                );
+            }
+            out.push_str(match kit {
+                Some(_) => "Refreshed your agent kit for stage 2.\n",
+                None => "Onboard your agent with `resonance init` (FR-210).\n",
+            });
+            out
+        },
+    )
 }
 
 pub fn leave(ctx: &Ctx, export: Option<PathBuf>) -> Result<()> {
@@ -143,28 +169,6 @@ pub fn unshare(ctx: &Ctx, yes: bool, out: Option<PathBuf>) -> Result<()> {
     })
 }
 
-pub fn compact(ctx: &Ctx, commit: bool, anywhere: bool) -> Result<()> {
-    let c: Compaction = ctx.run("compact", json!({"commit": commit, "anywhere": anywhere}))?;
-    ctx.emit(&c, |c| {
-        if c.folded.is_empty() {
-            return "Nothing to compact: no sealed deltas in effect.\n".into();
-        }
-        let mut out = format!(
-            "Compacted {} delta(s) into a new snapshot ({} operation(s), epoch {}).\n",
-            c.folded.len(),
-            c.operations,
-            &c.epoch[..c.epoch.len().min(12)]
-        );
-        match &c.committed {
-            Some(h) => {
-                let _ = writeln!(out, "Committed as {}.", &h[..h.len().min(10)]);
-            }
-            None => out.push_str("Commit .resonance/graph.db and the removed delta files.\n"),
-        }
-        out
-    })
-}
-
 pub fn render_check(r: &CheckReport) -> String {
     let mut out = String::new();
     if r.findings.is_empty() {
@@ -202,62 +206,8 @@ pub fn check(ctx: &Ctx, staged: bool, range: Option<String>) -> Result<()> {
     fail_on_errors(ctx, &r)
 }
 
-pub fn render_review(v: &ReviewView, markdown: bool) -> String {
-    let mut out = String::new();
-    let (h, b) = if markdown { ("### ", "- ") } else { ("", "  ") };
-    let _ = writeln!(out, "{h}Resonance graph changes ({})", v.range);
-    let section = |out: &mut String, title: &str, items: &[String]| {
-        if items.is_empty() {
-            return;
-        }
-        let _ = writeln!(
-            out,
-            "\n{}{title} ({})",
-            if markdown { "**" } else { "" },
-            items.len()
-        );
-        if markdown {
-            out.pop();
-            out.push_str("**\n");
-        }
-        for i in items {
-            let _ = writeln!(out, "{b}{i}");
-        }
-    };
-    section(&mut out, "Intent added", &v.intent_added);
-    section(&mut out, "Intent changed", &v.intent_changed);
-    section(&mut out, "Intent retired", &v.intent_retired);
-    section(&mut out, "Links added", &v.links_added);
-    section(&mut out, "Links removed", &v.links_removed);
-    section(&mut out, "Annotations", &v.annotations);
-    section(&mut out, "Conflicts", &v.conflicts);
-    section(
-        &mut out,
-        "Files changed without Resonance",
-        &v.files_outside_resonance,
-    );
-    if v.link_status_changes > 0 || v.identity_operations > 0 {
-        let _ = writeln!(
-            out,
-            "\n{b}{} link status change(s), {} identity operation(s)",
-            v.link_status_changes, v.identity_operations
-        );
-    }
-    if v.compacted {
-        let _ = writeln!(out, "{b}the snapshot was compacted");
-    }
-    if v.deltas.is_empty() && !v.compacted {
-        let _ = writeln!(out, "{b}no graph changes");
-    }
-    out
-}
-
-pub fn review(ctx: &Ctx, range: &str, markdown: bool) -> Result<()> {
-    let v: ReviewView = ctx.run("review", json!({"range": range}))?;
-    ctx.emit(&v, |v| render_review(v, markdown))
-}
-
-pub fn show_delta(ctx: &Ctx, file: &Path) -> Result<()> {
+/// Git's textconv driver for `*.delta`: a delta file for people (FR-066).
+fn textconv(ctx: &Ctx, file: &Path) -> Result<()> {
     let path = if file.is_absolute() {
         file.to_path_buf()
     } else {
@@ -295,12 +245,15 @@ pub fn hook(ctx: &Ctx, name: &str, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-pub fn git_driver(cmd: GitDriverCommand) -> Result<()> {
-    let GitDriverCommand::Merge {
-        base: _,
-        ours,
-        theirs,
-    } = cmd;
+pub fn git_driver(ctx: &Ctx, cmd: GitDriverCommand) -> Result<()> {
+    let (ours, theirs) = match cmd {
+        GitDriverCommand::Merge {
+            base: _,
+            ours,
+            theirs,
+        } => (ours, theirs),
+        GitDriverCommand::Textconv { file } => return textconv(ctx, &file),
+    };
     let store = SqliteStore::open_in_memory()?;
     let merged = compact::merge_files(&store as &dyn GraphStore, &ours, &theirs)?;
     eprintln!(

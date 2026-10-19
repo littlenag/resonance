@@ -7,20 +7,14 @@ stage = 1
 # The oldest resonance version that may write this repository's data (FR-264).
 minVersion = ""
 
-[intent]
-# Requirement documents imported with `resonance import` (MVP-011).
-sources = []
-
 [ingest]
 # Extra ignore patterns, on top of .gitignore and the built-in defaults (FR-046).
 ignore = []
 # Files larger than this are recorded by hash and size only (MVP-016).
 maxBlobBytes = 5242880
-# Read `@satisfies FR-042` / `@verifies FR-042` tags from file text (FR-123).
-sourceTags = false
 
 [test]
-# Fallback for tests declared without --run; {name}, {path} and {address} are substituted (MVP-017).
+# Fallback for tests declared without a run command; {name}, {path} and {address} are substituted (MVP-017).
 command = ""
 # Output that means no test actually ran; such a run is recorded as `error`, never `pass`.
 zeroTestsPattern = "running 0 tests"

@@ -1,7 +1,8 @@
 //! The TUI driven through ratatui's test backend (mvp.md §5 "S25 / TUI and change log"):
 //! listing, filtering, viewing, editing a graph-native item, adding one with a suggested key
-//! and refusing a duplicate key, retiring with confirmation, and opening an imported item's
-//! source at its line. Changes carry the person's identity and `origin = tui`.
+//! and refusing a duplicate key, retiring with confirmation, and editing an item an agent
+//! brought in from a document in place, which marks the document for the agent to update
+//! (FR-272). Changes carry the person's identity and `origin = tui`.
 
 use std::path::Path;
 use std::process::Command;
@@ -36,7 +37,8 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// A repository with Resonance initialized and a spec imported, and an app over it.
+/// A repository with Resonance initialized, the spec brought in as an agent would (MVP-042),
+/// and an app over it.
 fn setup() -> (tempfile::TempDir, App) {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
@@ -60,7 +62,13 @@ fn setup() -> (tempfile::TempDir, App) {
     .unwrap();
     let mut client = BackendClient(Box::new(Direct { engine }));
     client
-        .call("import", json!({"paths": ["spec/requirements.md"]}))
+        .call(
+            "import_items",
+            json!({"document": "spec/requirements.md", "items": [
+                {"type": "Requirement", "key": "FR-001", "fields": {"text": "The store opens a database at a path."}, "region": {"startLine": 3}},
+                {"type": "Requirement", "key": "FR-002", "fields": {"text": "Saving is atomic."}, "region": {"startLine": 4}},
+            ]}),
+        )
         .unwrap();
     client
         .call("changes_done", json!({"seqs": [1, 2]}))
@@ -162,11 +170,11 @@ fn lists_filters_and_shows_items() {
     app.on_key(key(KeyCode::Enter));
     assert_eq!(app.screen, Screen::Detail);
     let screen = render(&mut app);
+    assert!(screen.contains("From: spec/requirements.md:3"), "{screen}");
     assert!(
-        screen.contains("Source: spec/requirements.md:3"),
+        screen.contains("Links (1)") && screen.contains("derived from"),
         "{screen}"
     );
-    assert!(screen.contains("Links (0)"), "{screen}");
     app.on_key(key(KeyCode::Esc));
     assert_eq!(app.screen, Screen::List);
 
@@ -293,26 +301,41 @@ fn edits_and_retires_graph_native_items_in_place() {
 }
 
 #[test]
-fn imported_items_open_their_source_document() {
-    let (dir, mut app) = setup();
+fn items_from_a_document_are_edited_in_place_and_mark_the_document() {
+    let (_dir, mut app) = setup();
     select(&mut app, "FR-002");
-    let effect = press(&mut app, 'e');
-    let root = std::fs::canonicalize(dir.path()).unwrap();
-    match effect {
-        Effect::EditFile { path, line } => {
-            assert_eq!(
-                std::fs::canonicalize(path).unwrap(),
-                root.join("spec/requirements.md")
-            );
-            assert_eq!(line, 4);
-        }
-        other => panic!("{other:?}"),
-    }
-    assert!(matches!(
-        press(&mut app, 'r'),
-        Effect::EditFile { line: 4, .. }
-    ));
-    assert_eq!(app.screen, Screen::List, "nothing is retired here");
+    assert_eq!(
+        press(&mut app, 'e'),
+        Effect::None,
+        "edited here, not in the document"
+    );
+    assert_eq!(app.screen, Screen::Form);
+    let effect = app.on_key(key(KeyCode::Enter));
+    assert!(matches!(effect, Effect::EditText { .. }), "{effect:?}");
+    app.finish_text("text", "Saving is atomic and durable.\n");
+    save(&mut app);
+    assert_eq!(app.screen, Screen::List, "{:?}", app.message);
+    let item = call(&mut app, "spec_show", json!({"ref": "FR-002"}));
+    assert_eq!(item["text"], "Saving is atomic and durable.");
+    assert_eq!(item["source"]["path"], "spec/requirements.md");
+    // The link to the document is stale: the agent brings the document back in step (FR-124).
+    let show = call(&mut app, "show", json!({"ref": "FR-002"}));
+    let link = show["links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["type"] == "derivedFrom")
+        .cloned()
+        .unwrap();
+    assert_eq!(link["status"], "stale", "{show}");
+
+    // `n` moves to the next item and starts it at the top.
+    select(&mut app, "FR-001");
+    app.on_key(key(KeyCode::Enter));
+    press(&mut app, 'j');
+    press(&mut app, 'n');
+    assert_eq!(app.detail_scroll, 0);
+    assert!(render(&mut app).contains("FR-002"));
 
     let cmd = editor_command("code -w", Path::new("/x/spec.md"), Some(4));
     let args: Vec<String> = cmd
@@ -321,46 +344,6 @@ fn imported_items_open_their_source_document() {
         .collect();
     assert_eq!(cmd.get_program(), "sh");
     assert_eq!(args, ["-c", "code -w \"$@\"", "sh", "+4", "/x/spec.md"]);
-}
-
-#[test]
-fn detail_shows_spec_status_and_other_definitions() {
-    let (dir, mut app) = setup();
-    std::fs::write(
-        dir.path().join("spec/requirements.md"),
-        "# Requirements\n\n- **FR-001** The store opens a database at a path. [Decided]\n- **FR-002** Saving is atomic.\n",
-    )
-    .unwrap();
-    std::fs::write(
-        dir.path().join("spec/also.md"),
-        "- **FR-001** A second definition of the same key.\n",
-    )
-    .unwrap();
-    call(
-        &mut app,
-        "import",
-        json!({"paths": ["spec/requirements.md", "spec/also.md"]}),
-    );
-    app.refresh();
-    select(&mut app, "FR-001");
-    app.on_key(key(KeyCode::Enter));
-    let screen = render(&mut app);
-    assert!(
-        screen.contains("specStatus: Decided"),
-        "the trailing status label is a field of the item:\n{screen}"
-    );
-    assert!(
-        screen.contains("alsoDefinedIn:") && screen.contains("spec/also.md:1"),
-        "a later source of the same key is listed:\n{screen}"
-    );
-    // `n` moves to the next item and starts that item at the top.
-    press(&mut app, 'j');
-    press(&mut app, 'j');
-    press(&mut app, 'n');
-    assert_eq!(app.detail_scroll, 0);
-    let screen = render(&mut app);
-    assert!(screen.contains("FR-002"), "{screen}");
-    assert!(!screen.contains("specStatus: Decided"), "{screen}");
 }
 
 #[test]

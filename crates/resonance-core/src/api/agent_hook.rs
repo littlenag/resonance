@@ -131,7 +131,7 @@ impl Engine {
                 "R009",
                 "error",
                 format!("{pending} change-log entr(ies) are pending"),
-                "read them (`resonance changes`), act on each, and clear them with `resonance changes done <seq>…`",
+                "read them (resonance_changes), act on each, and clear them with resonance_changes_done",
             ));
         }
         if self.mode.opted_in() {

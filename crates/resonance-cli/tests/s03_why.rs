@@ -4,61 +4,23 @@
 mod common;
 
 use common::TestRepo;
+use serde_json::json;
 
 #[test]
 fn why_returns_requirements_decisions_tests_and_annotations() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    let decision = repo.json(&[
-        "decision",
-        "add",
-        "--title",
-        "SQLite for the store",
-        "--decision",
-        "Use SQLite behind the store API",
-        "--context",
-        "embedded, robust",
-    ]);
+    let decision = repo.tool("resonance_create_decision", json!({"title": "SQLite for the store", "decision": "Use SQLite behind the store API", "context": "embedded, robust"}));
     let decision_id = decision["id"].as_str().unwrap();
-    repo.ok(&["link", decision_id, "constrains", "open"]);
-    repo.ok(&[
-        "test",
-        "add",
-        "tests/store_test.sh:4",
-        "--name",
-        "open_case",
-        "--run",
-        "sh tests/store_test.sh open",
-    ]);
-    repo.ok(&["link", "open_case", "verifies", "open"]);
+    repo.link(decision_id, "constrains", "open");
+    repo.tool("resonance_declare_test", json!({"path": "tests/store_test.sh", "startLine": 4, "endLine": 4, "name": "open_case", "run": "sh tests/store_test.sh open"}));
+    repo.link("open_case", "verifies", "open");
     // A unit inside `open`, and annotations on `open` and on the file.
-    repo.ok(&[
-        "unit",
-        "add",
-        "src/store.rs:5-6",
-        "--name",
-        "connect_and_migrate",
-        "--kind",
-        "block",
-    ]);
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "instruction",
-        "--text",
-        "do not change the open() signature",
-    ]);
-    repo.ok(&[
-        "annotate",
-        "src/store.rs",
-        "--kind",
-        "note",
-        "--text",
-        "store module",
-    ]);
+    repo.tool("resonance_declare_unit", json!({"path": "src/store.rs", "startLine": 5, "endLine": 6, "name": "connect_and_migrate", "kind": "block"}));
+    repo.annotate("open", "instruction", "do not change the open() signature");
+    repo.annotate("src/store.rs", "note", "store module");
 
-    let why = repo.json(&["why", "open"]);
+    let why = repo.tool("resonance_why", json!({"ref": "open"}));
     assert_eq!(why["unit"]["address"], "src/store.rs::open");
     assert_eq!(why["requirements"][0]["requirement"]["key"], "FR-001");
     assert_eq!(why["requirements"][0]["link"]["status"], "asserted");
@@ -82,7 +44,7 @@ fn why_returns_requirements_decisions_tests_and_annotations() {
     );
 
     // The inner unit inherits annotations and decisions from what contains it.
-    let inner = repo.json(&["why", "connect_and_migrate"]);
+    let inner = repo.tool("resonance_why", json!({"ref": "connect_and_migrate"}));
     let inherited: Vec<(&str, bool)> = inner["annotations"]
         .as_array()
         .unwrap()
@@ -110,12 +72,14 @@ fn why_returns_requirements_decisions_tests_and_annotations() {
         .collect();
     assert_eq!(enclosed, ["src/store.rs::open", "src/store.rs"]);
 
-    let text = repo.ok(&["why", "open"]);
+    let text = repo
+        .tool("resonance_why", json!({"ref": "open"}))
+        .to_string();
     for needle in [
-        "Satisfies:",
+        "satisfies",
         "FR-001",
-        "Constrained by:",
-        "Covered by tests:",
+        "constrained by",
+        "verified by",
         "do not change",
     ] {
         assert!(text.contains(needle), "{needle} missing from:\n{text}");
@@ -125,39 +89,19 @@ fn why_returns_requirements_decisions_tests_and_annotations() {
 #[test]
 fn units_are_addressed_by_path_name_or_id_and_duplicates_get_numbers() {
     let repo = TestRepo::with_project();
-    repo.ok(&[
-        "unit",
-        "add",
-        "src/store.rs:4-9",
-        "--name",
-        "fn",
-        "--kind",
-        "function",
-    ]);
-    repo.ok(&[
-        "unit",
-        "add",
-        "src/store.rs:11-14",
-        "--name",
-        "fn",
-        "--kind",
-        "function",
-    ]);
-    let second = repo.json(&["show", "src/store.rs::fn#2"]);
+    repo.tool("resonance_declare_unit", json!({"path": "src/store.rs", "startLine": 4, "endLine": 9, "name": "fn", "kind": "function"}));
+    repo.tool("resonance_declare_unit", json!({"path": "src/store.rs", "startLine": 11, "endLine": 14, "name": "fn", "kind": "function"}));
+    let second = repo.tool("resonance_show", json!({"ref": "src/store.rs::fn#2"}));
     assert_eq!(second["location"]["startLine"], 11);
-    let err = repo.fails(&["show", "fn"], 1);
+    let err = repo.tool_err("resonance_show", json!({"ref": "fn"}));
     assert!(
         err.contains("ambiguous") && err.contains("src/store.rs::fn#2"),
         "{err}"
     );
     let id = second["node"]["id"].as_str().unwrap();
-    let by_prefix = repo.json(&["show", &id[..12]]);
+    let by_prefix = repo.tool("resonance_show", json!({"ref": &id[..12]}));
     assert_eq!(by_prefix["node"]["id"], id);
-    // A path relative to the current directory works too.
-    let out = repo.run(&["-C", "src", "--json", "show", "store.rs::fn"]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    // A unit address works too.
+    let first = repo.tool("resonance_show", json!({"ref": "src/store.rs::fn"}));
+    assert_eq!(first["node"]["type"], "CodeUnit");
 }

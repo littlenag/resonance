@@ -1,5 +1,5 @@
 //! The shared graph and opting in (§8.6.1, §8.16, §8.17, MVP-033–MVP-037): `share`, joining,
-//! `leave`, `unshare`, compaction, hooks and drivers, `check`, `review` and `show-delta`.
+//! `leave`, `unshare`, compaction, hooks and drivers, `check`, and the review summary.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -123,7 +123,7 @@ pub struct LeaveView {
     pub kit: Vec<crate::agent::KitStep>,
 }
 
-/// A delta rendered for people (`show-delta`, `review`).
+/// The graph changes in a range, for people and pull requests (`resonance_review`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewView {
@@ -140,6 +140,9 @@ pub struct ReviewView {
     pub conflicts: Vec<String>,
     pub compacted: bool,
     pub files_outside_resonance: Vec<String>,
+    /// The summary in Markdown, for a pull request description.
+    #[serde(default)]
+    pub markdown: String,
 }
 
 fn write_text(path: &Path, text: &str) -> Result<()> {
@@ -170,7 +173,7 @@ impl Engine {
             "config",
             "--local",
             "diff.resonance-delta.textconv",
-            &format!("\"{e}\" show-delta"),
+            &format!("\"{e}\" git-driver textconv"),
         ])?;
         Ok(())
     }
@@ -515,7 +518,7 @@ impl Engine {
         Ok(view)
     }
 
-    /// `resonance compact` (FR-154–FR-156).
+    /// `resonance_compact` (FR-154–FR-156).
     pub fn compact(&mut self, anywhere: bool, commit: bool) -> Result<compact::Compaction> {
         self.after_write()?;
         let mode = self.mode;
@@ -563,7 +566,7 @@ impl Engine {
                 out.folded.len()
             ),
         );
-        d.resolution = "commit .resonance/graph.db and the removed delta files (`resonance compact --commit` does it in its own commit)".into();
+        d.resolution = "commit .resonance/graph.db and the removed delta files (or ask your agent to compact with a commit of its own)".into();
         recovery::record(&mut *self.store, &[d])?;
         Ok(Some(out))
     }
@@ -619,7 +622,7 @@ impl Engine {
                 "R009",
                 "attention",
                 format!("{n} change-log entr(ies) are pending: people changed spec items that no agent has handled yet"),
-                "handle them and remove them with `resonance changes done <seq>` (FR-277)",
+                "your agent handles them and removes them with resonance_changes_done (FR-277)",
             ));
         }
         let kit = crate::agent::kit_status(&self.repo, self.mode);
@@ -628,7 +631,7 @@ impl Engine {
                 "R010",
                 "info",
                 "the agent kit is not installed for this working tree",
-                "`resonance agent install` (FR-210)",
+                "run `resonance init` to install it (FR-210)",
             ));
         } else if kit.stale {
             out.push(Finding::new(
@@ -638,7 +641,7 @@ impl Engine {
                     "the agent kit is stale (installed by {} for another version, stage or participation)",
                     kit.version.as_deref().unwrap_or("?")
                 ),
-                "`resonance agent update` (FR-214)",
+                "run `resonance init` again to refresh it (FR-214)",
             ));
         }
         Ok(())
@@ -897,7 +900,7 @@ impl Engine {
         Ok(report.finish())
     }
 
-    /// `resonance review <range>` (FR-066, MVP-036).
+    /// `resonance_review` (FR-066, MVP-036).
     pub fn review(&mut self, range: &str) -> Result<ReviewView> {
         let repo = self.repo.clone();
         let (a, b) = range
@@ -1011,6 +1014,7 @@ impl Engine {
             .into_iter()
             .chain(coverage.uncovered_others)
             .collect();
+        v.markdown = review_markdown(&v);
         Ok(v)
     }
 
@@ -1173,7 +1177,7 @@ fn range_coverage(repo: &crate::repo::Repo, a: &str, b: &str, config: &Config) -
     })
 }
 
-/// A delta for people (`show-delta`, git's textconv driver).
+/// A delta for people (git's textconv driver).
 pub fn render_delta(bytes: &[u8]) -> String {
     let d = match delta::Delta::parse(bytes) {
         Ok(d) => d,
@@ -1253,4 +1257,47 @@ fn short(v: &Value) -> String {
     } else {
         one
     }
+}
+
+/// The review summary as Markdown (FR-066).
+pub fn review_markdown(v: &ReviewView) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "### Resonance graph changes ({})", v.range);
+    let sections: [(&str, &[String]); 8] = [
+        ("Intent added", &v.intent_added),
+        ("Intent changed", &v.intent_changed),
+        ("Intent retired", &v.intent_retired),
+        ("Links added", &v.links_added),
+        ("Links removed", &v.links_removed),
+        ("Annotations", &v.annotations),
+        ("Conflicts", &v.conflicts),
+        (
+            "Files changed without Resonance",
+            &v.files_outside_resonance,
+        ),
+    ];
+    for (title, items) in sections {
+        if items.is_empty() {
+            continue;
+        }
+        let _ = writeln!(out, "\n**{title} ({})**", items.len());
+        for i in items {
+            let _ = writeln!(out, "- {i}");
+        }
+    }
+    if v.link_status_changes > 0 || v.identity_operations > 0 {
+        let _ = writeln!(
+            out,
+            "\n- {} link status change(s), {} identity operation(s)",
+            v.link_status_changes, v.identity_operations
+        );
+    }
+    if v.compacted {
+        let _ = writeln!(out, "- the snapshot was compacted");
+    }
+    if v.deltas.is_empty() && !v.compacted {
+        let _ = writeln!(out, "- no graph changes");
+    }
+    out
 }

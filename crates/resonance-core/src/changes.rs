@@ -27,10 +27,10 @@ const SEQ: &str = "changes.seq";
 
 /// Where a change came from (MVP-040).
 pub mod origin {
+    /// The default for calls that name no origin (the CLI, which makes no spec changes).
     pub const CLI: &str = "cli";
     pub const TUI: &str = "tui";
     pub const MCP: &str = "mcp";
-    pub const IMPORT: &str = "import";
     pub const GIT: &str = "git";
 }
 
@@ -59,7 +59,7 @@ pub struct Entry {
     pub fields: Vec<String>,
     /// One line, at most 100 characters.
     pub summary: String,
-    /// `tui`, `cli`, `mcp`, `import` or `git`.
+    /// `tui`, `mcp` or `git`.
     pub origin: String,
     pub op_ids: Vec<String>,
     /// The item's fields before the change (absent for a creation); `changes show` only.
@@ -171,7 +171,7 @@ pub fn done(
 /// Whether changes by this actor, from this origin, are logged (MVP-040).
 pub fn logged(actor: ActorKind, origin: &str, include_agents: bool) -> bool {
     match origin {
-        origin::IMPORT | origin::GIT => true,
+        origin::GIT => true,
         _ => match actor {
             ActorKind::Human => true,
             ActorKind::Agent => include_agents,

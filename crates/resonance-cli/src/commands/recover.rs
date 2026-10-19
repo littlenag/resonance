@@ -1,8 +1,8 @@
-//! Recovery and value: `recover` (FR-196, §8.18) and `value` (FR-240).
+//! Recovery: `recover` (FR-196, §8.18).
 
 use std::fmt::Write;
 
-use resonance_core::api::{RecoverView, UndoView, ValueView};
+use resonance_core::api::{RecoverView, UndoView};
 use resonance_core::error::{Error, Result};
 use resonance_core::ingest::ReconcileReport;
 use resonance_core::recovery::Divergence;
@@ -143,40 +143,4 @@ fn render_recover(v: &RecoverView) -> String {
         }
     }
     out
-}
-
-pub fn value(ctx: &Ctx) -> Result<()> {
-    let v: ValueView = ctx.run("value", json!({}))?;
-    ctx.emit(&v, |v| {
-        let mut out = String::from(
-            "What Resonance did for you here (counted locally; nothing leaves this machine):\n",
-        );
-        let _ = writeln!(out, "  traces answered:        {}", v.traces);
-        let _ = writeln!(out, "  why answered:           {}", v.whys);
-        let _ = writeln!(out, "  context packs:          {}", v.context_packs);
-        let _ = writeln!(out, "  searches:               {}", v.searches);
-        let _ = writeln!(out, "  test runs:              {}", v.test_runs);
-        let _ = writeln!(
-            out,
-            "  anchors that followed edits, moves and renames: {}",
-            v.anchors_followed
-        );
-        let _ = writeln!(
-            out,
-            "  repairs made:           {} (recorded cost: {} tokens, {} s)",
-            v.repairs, v.repair_tokens, v.repair_seconds
-        );
-        if !v.divergences.is_empty() {
-            let list: Vec<String> = v
-                .divergences
-                .iter()
-                .map(|(k, n)| format!("{k}: {n}"))
-                .collect();
-            let _ = writeln!(out, "  divergences classified: {}", list.join(", "));
-        }
-        if let Some(u) = &v.upgrade {
-            let _ = writeln!(out, "\n{u}");
-        }
-        out
-    })
 }

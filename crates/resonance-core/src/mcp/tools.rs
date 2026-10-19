@@ -87,7 +87,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "resonance_repair_list",
-            "Things that need an agent's judgment: orphaned units and links, low-confidence re-anchors, stale links, unreadable intent sources, retired requirements that still have links.",
+            "Things that need an agent's judgment: orphaned units and links, low-confidence re-anchors, stale links (including derivedFrom links between items and the documents they came from), retired requirements that still have links.",
             json!({}),
             &[],
         ),
@@ -134,11 +134,13 @@ pub fn definitions() -> Vec<Value> {
                 ("name", s("The test's name.")),
                 (
                     "run",
-                    s("The exact command that runs this test alone, from the repository root."),
+                    s(
+                        "The exact command that runs this test alone, from the repository root. Without it, test.command from the configuration is used.",
+                    ),
                 ),
                 ("kind", s("Free text (default test).")),
             ]),
-            &["path", "name", "run"],
+            &["path", "name"],
         ),
         tool(
             "resonance_list_units",
@@ -158,11 +160,17 @@ pub fn definitions() -> Vec<Value> {
             &["ref"],
         ),
         tool(
+            "resonance_remove_unit",
+            "Remove a code unit or test that no longer exists. It is retired, never deleted, and its links and annotations become orphaned for re-attaching.",
+            json!({"ref": s(reference)}),
+            &["ref"],
+        ),
+        tool(
             "resonance_link",
-            "Link two nodes: satisfies (code unit, test or file -> requirement), verifies (test -> requirement or code unit), constrains (decision -> anything). Agent links need a confidence and start as asserted.",
+            "Link two nodes: satisfies (code unit, test or file -> requirement), verifies (test -> requirement or code unit), constrains (decision or constraint -> anything), realizes (code unit -> design), derivedFrom (requirement -> requirement it refines), supersedes, or a namespaced extension type. Agent links need a confidence and start as asserted.",
             json!({
                 "source": s(reference),
-                "type": s("satisfies, verifies or constrains."),
+                "type": s("satisfies, verifies, constrains, realizes, derivedFrom, supersedes, or namespace:name."),
                 "target": s(reference),
                 "confidence": {"type": "number", "minimum": 0, "maximum": 1, "description": "How sure you are that the link holds."},
             }),
@@ -179,7 +187,7 @@ pub fn definitions() -> Vec<Value> {
             "Return a stale link to asserted after checking that it still holds.",
             json!({
                 "link": s("A link ID."),
-                "costTokens": i("Optional: tokens this repair cost you, for `resonance value`."),
+                "costTokens": i("Optional: tokens this repair cost you, for resonance_value."),
                 "costSeconds": i("Optional: seconds this repair took."),
             }),
             &["link"],
@@ -201,10 +209,39 @@ pub fn definitions() -> Vec<Value> {
             json!({
                 "ref": s("A link ID or annotation ID."),
                 "target": s(reference),
-                "costTokens": i("Optional: tokens this repair cost you, for `resonance value`."),
+                "costTokens": i("Optional: tokens this repair cost you, for resonance_value."),
                 "costSeconds": i("Optional: seconds this repair took."),
             }),
             &["ref", "target"],
+        ),
+        tool(
+            "resonance_import_items",
+            "Bring spec items in from a document you have read (Resonance does not parse documents). Give the document's repository path and, per item, its type, key, fields and the region it came from (startLine/endLine, or an exact match). Call first with dryRun: true and show the developer the plan (what is created, updated or unchanged, and any errors) together with any reformatting of the document you propose; reformat first if agreed, then call again without dryRun. Each item is linked (derivedFrom) to a code unit of kind spec over its region, so later edits on either side make that link stale. Nothing is written unless every item is valid.",
+            json!({
+                "document": s("The document, as a repository-relative path."),
+                "items": {"type": "array", "description": "The items found in the document.", "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": s("Requirement, Decision, Design or Constraint."),
+                        "key": s("The item's key, for example FR-042 or ADR-0007."),
+                        "fields": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Requirement: text, kind, priority, status. Decision: title, decision, context, consequences, status. Design: title, text, status. Constraint: title, text, scope, status."},
+                        "region": {"type": "object", "properties": {
+                            "startLine": {"type": "integer", "minimum": 1},
+                            "endLine": {"type": "integer", "minimum": 1},
+                            "match": s("Instead of lines: an exact snippet that occurs once in the document."),
+                        }},
+                    },
+                    "required": ["type", "key", "region"],
+                }},
+                "dryRun": {"type": "boolean", "description": "Return the plan and write nothing."},
+            }),
+            &["document", "items"],
+        ),
+        tool(
+            "resonance_show_item",
+            "One spec item with every field, its status, link counts and the document region it came from, if any.",
+            json!({"ref": s(reference)}),
+            &["ref"],
         ),
         tool(
             "resonance_list_items",
@@ -228,7 +265,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "resonance_edit_item",
-            "Change a graph-native spec item's fields (imported items are edited in their source document). Links to it become stale.",
+            "Change a spec item's fields. Links to it become stale, including the derivedFrom link to the document it came from, which tells you to update that document.",
             json!({
                 "ref": s(reference),
                 "fields": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Field values by name."},
@@ -237,7 +274,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "resonance_retire_item",
-            "Retire a graph-native spec item; it is never deleted.",
+            "Retire a spec item; it is never deleted.",
             json!({"ref": s(reference)}),
             &["ref"],
         ),
@@ -281,9 +318,18 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "resonance_review",
-            "A summary of the graph changes in a git range (intent added, changed and retired; links; annotations; identity operations; conflicts; compactions), for pull request descriptions. `resonance review <range> --markdown` prints it as Markdown.",
+            "A summary of the graph changes in a git range (intent added, changed and retired; links; annotations; identity operations; conflicts; compactions), with a Markdown rendering to put in pull request descriptions.",
             json!({"range": s("A git range, for example origin/main..HEAD.")}),
             &["range"],
+        ),
+        tool(
+            "resonance_compact",
+            "Fold the sealed deltas into a new snapshot. Resonance compacts the trunk on its own; call this only when the developer asks. With commit, the compaction gets its own commit.",
+            json!({
+                "commit": {"type": "boolean", "description": "Commit the compaction on its own."},
+                "anywhere": {"type": "boolean", "description": "Compact even off the trunk (only when the developer insists)."},
+            }),
+            &[],
         ),
         tool(
             "resonance_changes",
@@ -416,9 +462,6 @@ pub fn to_call(name: &str, args: &Value) -> Result<Call> {
         ),
         "resonance_declare_unit" | "resonance_declare_test" => {
             let test = name == "resonance_declare_test";
-            if test {
-                req(args, "run")?;
-            }
             (
                 "unit_add",
                 json!({
@@ -475,6 +518,23 @@ pub fn to_call(name: &str, args: &Value) -> Result<Call> {
             json!({"action": arg(args, "action"), "id": arg(args, "id"), "note": arg(args, "note")}),
         ),
         "resonance_value" => ("value", json!({})),
+        "resonance_import_items" => (
+            "import_items",
+            json!({
+                "document": req(args, "document")?,
+                "items": args.get("items").cloned().unwrap_or(json!([])),
+                "dryRun": args.get("dryRun").and_then(Value::as_bool).unwrap_or(false),
+            }),
+        ),
+        "resonance_show_item" => ("spec_show", json!({"ref": req(args, "ref")?})),
+        "resonance_remove_unit" => ("unit_remove", json!({"ref": req(args, "ref")?})),
+        "resonance_compact" => (
+            "compact",
+            json!({
+                "commit": args.get("commit").and_then(Value::as_bool).unwrap_or(false),
+                "anywhere": args.get("anywhere").and_then(Value::as_bool).unwrap_or(false),
+            }),
+        ),
         "resonance_conventions" => ("conventions", json!({})),
         "resonance_check" => ("check", json!({"range": arg(args, "range")})),
         "resonance_review" => ("review", json!({"range": req(args, "range")?})),

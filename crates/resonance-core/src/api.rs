@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod agent_hook;
+mod import;
 mod shared;
 pub use agent_hook::{GateDecision, git_subcommands};
+pub use import::{ImportItem, ImportPlan, ImportRegion, ImportStep, SPEC_UNIT_KIND};
 
 pub use shared::{
     CheckReport, Finding, JoinView, LeaveView, ReviewView, ShareView, governs, render_delta,
@@ -27,7 +29,6 @@ use crate::history::{self, Mode, fold};
 use crate::ingest::lineindex::LineIndex;
 use crate::ingest::reconcile::{put_anchor, recompute_containment};
 use crate::ingest::{ReconcileOptions, ReconcileReport, reconcile};
-use crate::intent::{self, IntentReport};
 use crate::links::{self, LINK_TYPES, anchor_of, is_live, new_link, new_link_props};
 use crate::model::{Edge, EdgeType, Layer, LinkStatus, Node, NodeType, Props, ids, new_id};
 use crate::ops::{Actor, ActorKind, Tx, hlc, kind};
@@ -42,7 +43,7 @@ use crate::query::{
     AnnotationView, DecisionView, LinkView, NodeRef, RequirementView, UnitView, annotation_view,
     decision_view, link_view, node_ref_by_id, requirement_view, unit_view,
 };
-use crate::repo::config::{Config, write_intent_sources};
+use crate::repo::config::Config;
 use crate::repo::{Repo, abs_path};
 use crate::store::{EdgeQuery, GraphRead, GraphScope, GraphStore, NodeQuery, SCHEMA_VERSION, meta};
 use crate::verify::{self, RunOutcome, TestResult};
@@ -102,7 +103,6 @@ pub struct StatusView {
     pub participation: String,
     pub schema_version: u32,
     pub last_reconcile: Option<String>,
-    pub intent_sources: Vec<String>,
     pub counts: Counts,
     pub repair: Vec<RepairItem>,
     pub history: HistoryStatus,
@@ -114,15 +114,6 @@ pub struct StatusView {
     /// The agent kit for this working tree (FR-210).
     #[serde(default)]
     pub agent_kit: crate::agent::KitStatus,
-}
-
-/// `intent project` (FR-121).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectView {
-    pub path: String,
-    pub keys: Vec<String>,
-    pub written: bool,
 }
 
 /// `recover` with no action (FR-196).
@@ -152,7 +143,7 @@ pub struct UndoView {
     pub reconcile: ReconcileReport,
 }
 
-/// `resonance value` (FR-240).
+/// `resonance_value` (FR-240).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueView {
@@ -207,14 +198,6 @@ pub struct HistoryStatus {
     /// Operations the last fold could not apply.
     pub skipped: usize,
     pub snapshot: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportView {
-    pub sources: Vec<String>,
-    pub added_sources: Vec<String>,
-    pub intent: IntentReport,
 }
 
 /// A link that was created or already existed.
@@ -380,7 +363,9 @@ fn check_link_types(etype: EdgeType, src: &Node, dst: &Node) -> Result<()> {
             src.ntype == Annotation && !matches!(dst.ntype, Evidence | Annotation)
         }
         EdgeType::DerivedFrom => {
-            matches!(src.ntype, Requirement | Design) && dst.ntype == Requirement
+            (matches!(src.ntype, Requirement | Design) && dst.ntype == Requirement)
+                || (NodeType::SPEC_ITEMS.contains(&src.ntype)
+                    && matches!(dst.ntype, CodeUnit | File))
         }
         EdgeType::Supersedes => {
             src.ntype == dst.ntype
@@ -400,7 +385,9 @@ fn check_link_types(etype: EdgeType, src: &Node, dst: &Node) -> Result<()> {
             "a decision or constraint constrains a requirement, code unit, test, file, design or decision"
         }
         EdgeType::Annotates => "an annotation annotates a node",
-        EdgeType::DerivedFrom => "a requirement or design is derived from a requirement",
+        EdgeType::DerivedFrom => {
+            "a requirement or design is derived from a requirement, or a spec item from the document region (code unit) or file it came from"
+        }
         EdgeType::Supersedes => "an item supersedes an earlier item of the same type",
         EdgeType::Realizes => "a code unit, test or file realizes a design",
         _ => "this link type is derived and cannot be created by hand",
@@ -536,12 +523,7 @@ impl Engine {
         self.mode = history::mode(&self.repo, &self.config);
         let cu = fold::catch_up(&self.repo, &mut *self.store, self.mode, &self.writer, force)?;
         let settled = if cu.refolded {
-            let r = crate::ingest::reconcile::settle(
-                &mut *self.store,
-                &self.repo.root,
-                &self.config,
-                &mut self.index,
-            )?;
+            let r = crate::ingest::reconcile::settle(&mut *self.store, &mut self.index)?;
             fold::mark_settled(&mut *self.store)?;
             Some(r)
         } else {
@@ -578,7 +560,7 @@ impl Engine {
         self.actor = actor;
     }
 
-    /// `resonance changes` (MVP-040): pending entries after `since`.
+    /// `resonance_changes` (MVP-040): pending entries after `since`.
     pub fn changes(&self, since: Option<u64>) -> Result<Vec<crate::changes::Entry>> {
         Ok(crate::changes::list(self.reader(), since)?
             .iter()
@@ -586,12 +568,12 @@ impl Engine {
             .collect())
     }
 
-    /// `resonance changes show <seq>`: one entry with its before and after.
+    /// `resonance_changes_show`: one entry with its before and after.
     pub fn changes_show(&self, seq: u64) -> Result<crate::changes::Entry> {
         crate::changes::get(self.reader(), seq)
     }
 
-    /// `resonance changes done <seq>…` (FR-276).
+    /// `resonance_changes_done` (FR-276).
     pub fn changes_done(
         &mut self,
         seqs: &[u64],
@@ -701,15 +683,13 @@ impl Engine {
         Ok(report)
     }
 
-    /// Log spec changes that arrived through git, and source-document edits (MVP-040).
+    /// Log spec changes that arrived through git (MVP-040).
     fn log_reconcile(&mut self, cu: &fold::CatchUp, seq: u64) -> Result<()> {
         self.log_changes(&cu.arrived, crate::changes::origin::GIT)?;
-        let origin = if cu.head_move.is_some() {
-            crate::changes::origin::GIT
-        } else {
-            crate::changes::origin::IMPORT
-        };
-        self.log_changes_after(seq, origin)
+        if cu.head_move.is_some() {
+            self.log_changes_after(seq, crate::changes::origin::GIT)?;
+        }
+        Ok(())
     }
 
     /// Re-read the configuration file (after it changes).
@@ -809,7 +789,6 @@ impl Engine {
             history: history_status,
             schema_version: self.store.schema_version()?,
             last_reconcile: r.get_meta(meta::LAST_RECONCILE)?,
-            intent_sources: self.config.intent.sources.clone(),
             counts: Counts {
                 files: r.list_files()?.len(),
                 requirements: reqs.len() - retired,
@@ -834,51 +813,6 @@ impl Engine {
 
     // ----- Intent ---------------------------------------------------------------------------
 
-    /// Import requirement documents and keep them in sync (MVP-011, FR-122).
-    pub fn import(&mut self, paths: &[String], format: Option<&str>) -> Result<ImportView> {
-        if paths.is_empty() {
-            return Err(Error::Usage(
-                "give at least one file (or ADR directory) to import".into(),
-            ));
-        }
-        if let Some(f) = format
-            && intent::formats::Format::parse(f).is_none()
-        {
-            return Err(Error::Usage(format!(
-                "unknown format `{f}` (expected markdown, speckit, kiro, kiro-design, ears or adr)"
-            )));
-        }
-        let mut sources = self.config.intent.sources.clone();
-        let mut added = Vec::new();
-        for p in paths {
-            let rel = self.repo.relative_path(&self.cwd, p)?;
-            let abs = abs_path(&self.repo.root, &rel);
-            if !abs.is_file() && !abs.is_dir() {
-                return Err(Error::NotFound(format!("the file {p}")));
-            }
-            let rel = match format {
-                Some(f) => format!("{f}:{rel}"),
-                None => rel,
-            };
-            if !sources.contains(&rel) {
-                sources.push(rel.clone());
-                added.push(rel);
-            }
-        }
-        if !added.is_empty() {
-            write_intent_sources(&self.repo.config_path(), &sources)?;
-        }
-        let report = self.reconcile(ReconcileOptions {
-            force_intent: true,
-            ..Default::default()
-        })?;
-        Ok(ImportView {
-            sources,
-            added_sources: added,
-            intent: report.intent,
-        })
-    }
-
     /// Create a requirement (FR-120).
     pub fn req_add(
         &mut self,
@@ -895,19 +829,19 @@ impl Engine {
         let id = ids::requirement_id(key);
         if self.reader().get_node(&id)?.is_some() {
             return Err(Error::Invalid(format!(
-                "{key} already exists; use `resonance req edit`"
+                "{key} already exists; change it with resonance_edit_item"
             )));
         }
-        let kind = kind.unwrap_or_else(|| intent::kind_of(key)).to_string();
+        let kind = kind
+            .unwrap_or_else(|| ids::requirement_kind(key))
+            .to_string();
         let author = self.actor.id.clone();
         self.mutate(|tx| {
             let mut p = Props::new();
             p.insert("key".into(), json!(key));
             p.insert("text".into(), json!(text.trim()));
             p.insert("kind".into(), json!(kind));
-            p.insert("specStatus".into(), Value::Null);
             p.insert("status".into(), json!("active"));
-            p.insert("origin".into(), json!("authored"));
             p.insert("author".into(), json!(author));
             p.insert("createdAt".into(), json!(hlc::rfc3339(hlc::now_ms())));
             tx.create_node(&id, NodeType::Requirement, Layer::Authored, p)
@@ -929,17 +863,6 @@ impl Engine {
             return Err(Error::Invalid(format!(
                 "{reference} is a {}, not a requirement",
                 n.ntype
-            )));
-        }
-        if n.str_prop("origin") == Some("import") {
-            let src = n
-                .props
-                .get("source")
-                .map(|s| format!("{}:{}", s["path"].as_str().unwrap_or("?"), s["line"]))
-                .unwrap_or_default();
-            return Err(Error::Invalid(format!(
-                "{} is imported from {src}; edit it there and Resonance will pick up the change",
-                n.str_prop("key").unwrap_or(reference)
             )));
         }
         Ok(n)
@@ -1101,12 +1024,12 @@ impl Engine {
                 && self.config.test.command.trim().is_empty()
             {
                 return Err(Error::Usage(
-                    "--run is required: give the exact command that runs this test alone (or set test.command in .resonance/config.toml)".into(),
+                    "a test needs its run command: the exact command that runs this test alone (or set test.command in .resonance/config.toml)".into(),
                 ));
             }
         } else if input.run.is_some() {
             return Err(Error::Usage(
-                "--run is only for tests; use `resonance test add`".into(),
+                "a run command is only for tests; declare one with resonance_declare_test".into(),
             ));
         }
         let anchor = self.anchor_for(&input.region, input.match_text.as_deref(), None)?;
@@ -1189,7 +1112,7 @@ impl Engine {
             && edit.run.is_none();
         if confirm_only && old.state == AnchorState::Orphaned {
             return Err(Error::Invalid(format!(
-                "{reference} is orphaned; give its new region, for example `resonance unit edit {reference} path:START-END`"
+                "{reference} is orphaned; give its new region (path and lines, or an exact match) to resonance_edit_unit"
             )));
         }
         let id = n.id.clone();
@@ -1415,7 +1338,7 @@ impl Engine {
         match etype {
             EdgeType::Annotates => {
                 return Err(Error::Usage(
-                    "use `resonance annotate` to attach annotations".into(),
+                    "use resonance_annotate to attach annotations".into(),
                 ));
             }
             EdgeType::Contains | EdgeType::Evidences => {
@@ -1500,7 +1423,7 @@ impl Engine {
         match e.status {
             LinkStatus::Orphaned => {
                 return Err(Error::Invalid(format!(
-                    "link {} is orphaned; re-attach it with `resonance reattach {} <target>`",
+                    "link {} is orphaned; re-attach it to a new target with resonance_reattach ({})",
                     e.id, e.id
                 )));
             }
@@ -1847,7 +1770,6 @@ impl Engine {
         })?;
         self.reconcile(ReconcileOptions {
             full: true,
-            force_intent: true,
             rebuild_containment: true,
         })
     }
@@ -1902,7 +1824,6 @@ impl Engine {
         })?;
         self.after_write()?;
         report.reconcile = Some(self.reconcile(ReconcileOptions {
-            force_intent: true,
             rebuild_containment: true,
             ..Default::default()
         })?);
@@ -2005,6 +1926,34 @@ impl Engine {
                 }
                 v.id
             }
+            NodeType::Decision if key.is_some() => {
+                // A keyed decision gets a deterministic ID, so that clones agree (FR-186).
+                let k = key.expect("checked").trim().to_string();
+                let title =
+                    get("title").ok_or_else(|| Error::Usage("a decision needs a title".into()))?;
+                let decision = get("decision")
+                    .ok_or_else(|| Error::Usage("a decision needs its decision".into()))?;
+                let id = format!("dec:{k}");
+                if self.reader().get_node(&id)?.is_some() {
+                    return Err(Error::Invalid(format!("{k} already exists")));
+                }
+                let author = self.actor.id.clone();
+                let (context, consequences) = (get("context"), get("consequences"));
+                let status = get("status").unwrap_or_else(|| "accepted".into());
+                self.mutate(|tx| {
+                    let mut p = Props::new();
+                    p.insert("key".into(), json!(k));
+                    p.insert("title".into(), json!(title));
+                    p.insert("decision".into(), json!(decision));
+                    p.insert("context".into(), json!(context));
+                    p.insert("consequences".into(), json!(consequences));
+                    p.insert("status".into(), json!(status));
+                    p.insert("author".into(), json!(author));
+                    p.insert("createdAt".into(), json!(hlc::rfc3339(hlc::now_ms())));
+                    tx.create_node(&id, NodeType::Decision, Layer::Authored, p)
+                })?;
+                id
+            }
             NodeType::Decision => {
                 let mut v = self.decision_add(DecisionInput {
                     title: get("title"),
@@ -2060,7 +2009,6 @@ impl Engine {
                         p.insert("scope".into(), json!(get("scope")));
                     }
                     p.insert("status".into(), json!(status));
-                    p.insert("origin".into(), json!("authored"));
                     p.insert("author".into(), json!(author));
                     p.insert("createdAt".into(), json!(hlc::rfc3339(hlc::now_ms())));
                     tx.create_node(&id, ntype, Layer::Authored, p)
@@ -2147,7 +2095,11 @@ impl Engine {
                 n.ntype
             )));
         }
-        Ok(query::spec_item_view(&n))
+        let mut v = query::spec_item_view(&n);
+        if let Some(src) = self.source_of(&v.id)? {
+            v.source = Some(src);
+        }
+        Ok(v)
     }
 
     /// Spec items, filtered by type, status and text (for the TUI and `spec list`).
@@ -2184,6 +2136,9 @@ impl Engine {
                         continue;
                     }
                 }
+                if let Some(src) = self.source_of(&v.id)? {
+                    v.source = Some(src);
+                }
                 let links = links::links_of(self.reader(), &v.id)?;
                 v.links = links.len();
                 v.stale_links = links
@@ -2211,17 +2166,6 @@ impl Engine {
         fields: &std::collections::BTreeMap<String, String>,
     ) -> Result<query::SpecItemView> {
         let item = self.spec_item(reference)?;
-        if item.origin == "import" {
-            let src = item
-                .source
-                .as_ref()
-                .map(|s| format!("{}:{}", s["path"].as_str().unwrap_or("?"), s["line"]))
-                .unwrap_or_default();
-            return Err(Error::Invalid(format!(
-                "{} is imported from {src}; edit it there and Resonance picks up the change",
-                item.key.as_deref().unwrap_or(&item.title)
-            )));
-        }
         let allowed = Self::spec_fields(item.ntype);
         for k in fields.keys() {
             if !allowed.contains(&k.as_str()) {
@@ -2276,12 +2220,6 @@ impl Engine {
     /// Retire a spec item: it is never deleted (FR-271). Returns it with its link count.
     pub fn spec_retire(&mut self, reference: &str) -> Result<(query::SpecItemView, usize)> {
         let item = self.spec_item(reference)?;
-        if item.origin == "import" {
-            return Err(Error::Invalid(format!(
-                "{} is imported; remove it from its source document",
-                item.key.as_deref().unwrap_or(&item.title)
-            )));
-        }
         let id = item.id.clone();
         let link_count = links::links_of(self.reader(), &id)?.len();
         self.mutate(|tx| {
@@ -2349,79 +2287,6 @@ impl Engine {
             tx.create_node(&id, NodeType::Extension, Layer::Authored, p)
         })?;
         self.show(&id)
-    }
-
-    /// Project graph-native requirements into `<dir>/requirements.md` in this spec's Markdown
-    /// conventions (FR-121, one-shot). With `apply`, the file is written and becomes their
-    /// import source, so the document owns them from then on; without, only a preview.
-    pub fn intent_project(&mut self, dir: &str, apply: bool) -> Result<ProjectView> {
-        let rel_dir = self.repo.relative_path(&self.cwd, dir)?;
-        let rel = if rel_dir.is_empty() {
-            "requirements.md".to_string()
-        } else {
-            format!("{rel_dir}/requirements.md")
-        };
-        let target = abs_path(&self.repo.root, &rel);
-        if target.exists() {
-            return Err(Error::Invalid(format!(
-                "{rel} exists; project into a directory without a requirements.md"
-            )));
-        }
-        let mut reqs: Vec<Node> = self
-            .reader()
-            .find_nodes(&NodeQuery::of_type(NodeType::Requirement))?
-            .into_iter()
-            .filter(|n| n.str_prop("origin") != Some("import"))
-            .filter(|n| n.str_prop("status") != Some("retired"))
-            .collect();
-        reqs.sort_by(|a, b| a.str_prop("key").cmp(&b.str_prop("key")));
-        let mut text = String::from(
-            "# Requirements\n\nProjected from the Resonance graph (FR-121). This file now owns these\nrequirements: edit them here.\n\n",
-        );
-        let mut lines = Vec::new();
-        for n in &reqs {
-            let line = text.lines().count() + 1;
-            let body = n.str_prop("text").unwrap_or_default().replace('\n', "\n  ");
-            text.push_str(&format!(
-                "- **{}** {body}\n",
-                n.str_prop("key").unwrap_or_default()
-            ));
-            lines.push((n.id.clone(), line));
-        }
-        let keys: Vec<String> = reqs
-            .iter()
-            .map(|n| n.str_prop("key").unwrap_or_default().to_string())
-            .collect();
-        if !apply || reqs.is_empty() {
-            return Ok(ProjectView {
-                path: rel,
-                keys,
-                written: false,
-            });
-        }
-        crate::recovery::write_file(&target, text.as_bytes())?;
-        let path = rel.clone();
-        self.mutate(|tx| {
-            for (id, line) in &lines {
-                tx.set_prop(id, "origin", json!("import"))?;
-                tx.set_prop(id, "source", json!({"path": path, "line": line}))?;
-            }
-            Ok(())
-        })?;
-        let mut sources = self.config.intent.sources.clone();
-        if !sources.contains(&rel) {
-            sources.push(rel.clone());
-            write_intent_sources(&self.repo.config_path(), &sources)?;
-        }
-        self.reconcile(ReconcileOptions {
-            force_intent: true,
-            ..Default::default()
-        })?;
-        Ok(ProjectView {
-            path: rel,
-            keys,
-            written: true,
-        })
     }
 
     // ----- Recovery and value (§8.18, FR-196, FR-240) ---------------------------------------
@@ -2628,10 +2493,6 @@ impl Engine {
                 .unwrap_or_default();
             !changed.contains(&path)
         });
-    }
-
-    pub fn intent_sources(&self) -> &[String] {
-        &self.config.intent.sources
     }
 
     /// The working directory relative paths are resolved against.

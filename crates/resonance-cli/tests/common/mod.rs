@@ -22,7 +22,7 @@ pub struct TestRepo {
 impl Drop for TestRepo {
     fn drop(&mut self) {
         // Stop this repository's daemon, if one was started.
-        let _ = self.command(&["daemon", "--stop"]).output();
+        let _ = self.command(&["daemon", "stop"]).output();
     }
 }
 
@@ -115,6 +115,27 @@ impl TestRepo {
 
     pub fn home(&self) -> &Path {
         self.home.path()
+    }
+
+    /// Put a fake `claude` first on PATH, so that `init` can register the MCP server without a
+    /// real Claude Code. Returns the log of its calls (`<cwd>|<args>` per line).
+    pub fn fake_claude(&mut self) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = self.home().join("bin");
+        fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("claude-calls.log");
+        let path = dir.join("claude");
+        fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\necho \"$PWD|$*\" >> '{}'\necho 'Added stdio MCP server resonance'\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        self.with_path(dir);
+        log
     }
 
     /// Prepend a directory to PATH for every `resonance` run.
@@ -262,39 +283,146 @@ impl TestRepo {
         String::from_utf8_lossy(&out.stderr).into_owned()
     }
 
-    /// Declare the standard units and tests of the sample project and link them.
+    /// Call MCP tools in one `resonance mcp` session, as an agent would. Returns each call's
+    /// `data`, or its error text.
+    pub fn tools(&self, calls: &[(&str, Value)]) -> Vec<Result<Value, String>> {
+        use std::io::Write;
+        use std::process::Stdio;
+        let mut child = self
+            .command(&["mcp"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start resonance mcp");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut lines = vec![
+            serde_json::json!({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "clientInfo": {"name": "test-agent"}}}),
+        ];
+        for (i, (name, args)) in calls.iter().enumerate() {
+            lines.push(
+                serde_json::json!({"jsonrpc": "2.0", "id": i + 1, "method": "tools/call",
+                "params": {"name": name, "arguments": args}}),
+            );
+        }
+        for l in lines {
+            writeln!(stdin, "{l}").unwrap();
+        }
+        drop(stdin);
+        let out = child.wait_with_output().unwrap();
+        let responses: Vec<Value> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+            .collect();
+        assert_eq!(
+            responses.len(),
+            calls.len() + 1,
+            "resonance mcp: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        responses[1..]
+            .iter()
+            .map(|r| {
+                let text = r["result"]["content"][0]["text"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{r}"))
+                    .to_string();
+                if r["result"]["isError"] == true {
+                    Err(text)
+                } else {
+                    let body: Value = serde_json::from_str(&text).unwrap();
+                    Ok(body["data"].clone())
+                }
+            })
+            .collect()
+    }
+
+    /// Call one MCP tool and require success; returns its `data`.
+    pub fn tool(&self, name: &str, args: Value) -> Value {
+        self.tools(&[(name, args.clone())])
+            .remove(0)
+            .unwrap_or_else(|e| panic!("{name} {args}: {e}"))
+    }
+
+    /// Call one MCP tool and require an error; returns its text.
+    pub fn tool_err(&self, name: &str, args: Value) -> String {
+        match self.tools(&[(name, args.clone())]).remove(0) {
+            Ok(v) => panic!("{name} {args} succeeded: {v}"),
+            Err(e) => e,
+        }
+    }
+
+    /// The arguments of a region `path:START-END` or `path:LINE`.
+    pub fn region(region: &str) -> Value {
+        let (path, lines) = region.rsplit_once(':').expect("path:START-END");
+        let (a, b) = lines.split_once('-').unwrap_or((lines, lines));
+        serde_json::json!({"path": path, "startLine": a.parse::<u64>().unwrap(), "endLine": b.parse::<u64>().unwrap()})
+    }
+
+    /// Declare a code unit (`resonance_declare_unit`).
+    pub fn declare(&self, region: &str, name: &str) -> Value {
+        let mut a = Self::region(region);
+        a["name"] = name.into();
+        self.tool("resonance_declare_unit", a)
+    }
+
+    /// Declare a test with its run command (`resonance_declare_test`).
+    pub fn declare_test(&self, region: &str, name: &str, run: &str) -> Value {
+        let mut a = Self::region(region);
+        a["name"] = name.into();
+        a["run"] = run.into();
+        self.tool("resonance_declare_test", a)
+    }
+
+    /// Link two nodes as an agent (`resonance_link`, confidence 0.9).
+    pub fn link(&self, source: &str, etype: &str, target: &str) -> Value {
+        self.tool(
+            "resonance_link",
+            serde_json::json!({"source": source, "type": etype, "target": target, "confidence": 0.9}),
+        )
+    }
+
+    /// Annotate a node (`resonance_annotate`).
+    pub fn annotate(&self, target: &str, kind: &str, text: &str) -> Value {
+        self.tool(
+            "resonance_annotate",
+            serde_json::json!({"target": target, "kind": kind, "text": text}),
+        )
+    }
+
+    /// What an agent brings in from `spec/requirements.md` (MVP-042).
+    pub fn import_sample(&self) -> Value {
+        let item = |key: &str, text: &str, line: u64| {
+            serde_json::json!({"type": "Requirement", "key": key, "fields": {"text": text},
+                "region": {"startLine": line, "endLine": line}})
+        };
+        self.tool(
+            "resonance_import_items",
+            serde_json::json!({"document": "spec/requirements.md", "items": [
+                item("FR-001", "The store opens a database at a path.", 3),
+                item("FR-002", "The store closes cleanly, flushing pending writes.", 4),
+                item("FR-003", "The store reports its size.", 5),
+                item("NFR-001", "Opening is fast: p95 under 10 ms.", 9),
+            ]}),
+        )
+    }
+
+    /// Bring in the sample requirements, declare the sample's units and tests, and link them.
     pub fn declare_sample(&self) {
-        self.ok(&["import", "spec/requirements.md"]);
-        self.ok(&[
-            "unit",
-            "add",
-            "src/store.rs:4-9",
-            "--name",
-            "open",
-            "--kind",
-            "function",
-        ]);
-        self.ok(&[
-            "unit",
-            "add",
-            "src/store.rs:11-14",
-            "--name",
-            "close",
-            "--kind",
-            "function",
-        ]);
-        self.ok(&[
-            "test",
-            "add",
-            "tests/store_test.sh:3-5",
-            "--name",
-            "opens_db",
-            "--run",
-            "sh tests/store_test.sh open",
-        ]);
-        self.ok(&["link", "open", "satisfies", "FR-001"]);
-        self.ok(&["link", "close", "satisfies", "FR-002"]);
-        self.ok(&["link", "opens_db", "verifies", "FR-001"]);
+        self.import_sample();
+        self.tools(&[
+            ("resonance_declare_unit", serde_json::json!({"path": "src/store.rs", "startLine": 4, "endLine": 9, "name": "open", "kind": "function"})),
+            ("resonance_declare_unit", serde_json::json!({"path": "src/store.rs", "startLine": 11, "endLine": 14, "name": "close", "kind": "function"})),
+            ("resonance_declare_test", serde_json::json!({"path": "tests/store_test.sh", "startLine": 3, "endLine": 5, "name": "opens_db", "run": "sh tests/store_test.sh open"})),
+            ("resonance_link", serde_json::json!({"source": "open", "type": "satisfies", "target": "FR-001", "confidence": 0.9})),
+            ("resonance_link", serde_json::json!({"source": "close", "type": "satisfies", "target": "FR-002", "confidence": 0.9})),
+            ("resonance_link", serde_json::json!({"source": "opens_db", "type": "verifies", "target": "FR-001", "confidence": 0.9})),
+        ])
+        .into_iter()
+        .for_each(|r| {
+            r.unwrap();
+        });
     }
 }
 

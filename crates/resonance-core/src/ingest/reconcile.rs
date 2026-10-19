@@ -22,7 +22,6 @@ use crate::ingest::lineindex::LineIndex;
 use crate::ingest::walk::{
     compile_ignores, git_ignored, in_nested_repository, is_ignored_path, mtime_ns, walk,
 };
-use crate::intent::{self, IntentReport};
 use crate::links::{self, StatusChanges, anchor_of};
 use crate::model::{Edge, EdgeType, Layer, LinkStatus, Node, NodeType, content_hash, ids};
 use crate::ops::{Actor, Tx, hlc, kind};
@@ -38,8 +37,6 @@ const RACY_NS: i64 = 2_000_000_000;
 pub struct ReconcileOptions {
     /// Re-hash every file, ignoring size and modification time (`reconcile --full`).
     pub full: bool,
-    /// Re-import intent sources even if they look unchanged.
-    pub force_intent: bool,
     /// Recompute containment for every file (`rebuild-derived`).
     pub rebuild_containment: bool,
 }
@@ -73,7 +70,6 @@ pub struct ReconcileReport {
     pub files_moved: usize,
     pub anchors: AnchorReport,
     pub links: StatusChanges,
-    pub intent: IntentReport,
     pub operations: usize,
     pub duration_ms: u64,
     /// Files whose content changed, with their previous and new content hashes (for
@@ -122,7 +118,7 @@ pub fn reconcile(
     let started = Instant::now();
     let (hashed, removed, scanned) = scan_all(&*store, root, config, opts.full)?;
     commit(
-        store, root, config, opts, index, hashed, removed, scanned, started,
+        store, config, opts, index, hashed, removed, scanned, started,
     )
 }
 
@@ -140,7 +136,6 @@ pub fn reconcile_paths(
     match scan_paths(&*store, root, config, paths)? {
         Some((hashed, removed, scanned)) => commit(
             store,
-            root,
             config,
             ReconcileOptions::default(),
             index,
@@ -289,7 +284,6 @@ fn scan_paths(
 #[allow(clippy::too_many_arguments)]
 fn commit(
     store: &mut dyn GraphStore,
-    root: &Path,
     config: &Config,
     opts: ReconcileOptions,
     index: &mut LineIndex,
@@ -305,16 +299,7 @@ fn commit(
     };
     store.write(GraphScope::Primary, &mut |w| {
         let mut tx = Tx::new(w, Actor::resonance())?;
-        apply(
-            &mut tx,
-            root,
-            config,
-            opts,
-            index,
-            &hashed,
-            &removed,
-            &mut report,
-        )?;
+        apply(&mut tx, config, opts, index, &hashed, &removed, &mut report)?;
         let now = hlc::now_ms();
         tx.w().set_meta(meta::LAST_RECONCILE, &hlc::rfc3339(now))?;
         report.operations = tx.finish()?;
@@ -333,7 +318,6 @@ struct ContentChange {
 #[allow(clippy::too_many_arguments)]
 fn apply(
     tx: &mut Tx<'_>,
-    root: &Path,
     config: &Config,
     opts: ReconcileOptions,
     index: &mut LineIndex,
@@ -526,41 +510,6 @@ fn apply(
         }
     }
 
-    // Intent sources (MVP-011): re-imported when they change.
-    report.intent = intent::sync(tx, root, &config.intent.sources, opts.force_intent)?;
-    for id in &report.intent.changed_ids {
-        changed_nodes.insert(id.clone());
-    }
-
-    // Source tags (FR-123): in changed files, or everywhere when they were just enabled.
-    let enabled = config.ingest.source_tags;
-    let was = tx.r().get_meta(crate::ingest::tags::ENABLED)?.as_deref() == Some("true");
-    if enabled && !was {
-        for f in tx.r().list_files()? {
-            let text = tx
-                .r()
-                .get_blob(&f.blob)?
-                .and_then(|b| String::from_utf8(b).ok());
-            crate::ingest::tags::sync_file(tx, &f.path, text.as_deref())?;
-        }
-    } else if enabled {
-        for c in &changes {
-            let text = texts.get(&c.path).map(String::as_str);
-            crate::ingest::tags::sync_file(tx, &c.path, text)?;
-        }
-    } else if was {
-        // Turned off: tag links go away.
-        for f in tx.r().list_files()? {
-            crate::ingest::tags::sync_file(tx, &f.path, None)?;
-        }
-    }
-    if enabled != was {
-        tx.w().set_meta(
-            crate::ingest::tags::ENABLED,
-            if enabled { "true" } else { "false" },
-        )?;
-    }
-
     // Link statuses (MVP-012).
     for id in &changed_nodes {
         report.links += links::refresh_statuses(tx, id)?;
@@ -578,14 +527,9 @@ fn apply(
 
 /// After a re-fold (MVP-027): recreate File nodes from the stat cache and stored blobs, and
 /// re-check every anchor against the stored content of its file, re-locating those that no
-/// longer match. Imported intent is re-read and derived containment rebuilt. The disk is not
-/// read; an ordinary reconcile afterwards picks up anything that changed there.
-pub fn settle(
-    store: &mut dyn GraphStore,
-    root: &Path,
-    config: &Config,
-    index: &mut LineIndex,
-) -> Result<ReconcileReport> {
+/// longer match. Derived containment is rebuilt. The disk is not read; an ordinary reconcile
+/// afterwards picks up anything that changed there.
+pub fn settle(store: &mut dyn GraphStore, index: &mut LineIndex) -> Result<ReconcileReport> {
     let started = Instant::now();
     *index = LineIndex::default();
     let mut report = ReconcileReport::default();
@@ -642,10 +586,6 @@ pub fn settle(
                     &mut changed_nodes,
                 )?;
             }
-        }
-        report.intent = intent::sync(&mut tx, root, &config.intent.sources, true)?;
-        for id in &report.intent.changed_ids {
-            changed_nodes.insert(id.clone());
         }
         for id in &changed_nodes {
             report.links += links::refresh_statuses(&mut tx, id)?;

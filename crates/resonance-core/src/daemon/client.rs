@@ -3,7 +3,7 @@
 //!
 //! A client finds the daemon through `.resonance/local/daemon.json` (no registry needed, S14), or
 //! at the socket path computed from the repository root. If none answers, it starts
-//! `resonance daemon --foreground` as a detached process and waits for it (P4). A daemon from
+//! `resonance daemon run` as a detached process and waits for it (P4). A daemon from
 //! a different build of `resonance` is asked to stop and replaced, so that an upgraded binary
 //! never talks to an old daemon.
 
@@ -211,7 +211,7 @@ fn log_tail(repo: &Repo) -> String {
     lines[lines.len().saturating_sub(10)..].join("\n")
 }
 
-/// Start `exe daemon --foreground` for `repo`, detached, logging to `.resonance/daemon.log`.
+/// Start `exe daemon run` for `repo`, detached, logging to `.resonance/daemon.log`.
 pub fn start(repo: &Repo, exe: &Path) -> Result<Child> {
     let log = runtime::log_path(repo);
     if fs::metadata(&log).is_ok_and(|m| m.len() > LOG_LIMIT) {
@@ -225,7 +225,7 @@ pub fn start(repo: &Repo, exe: &Path) -> Result<Child> {
     let mut cmd = Command::new(exe);
     cmd.arg("-C")
         .arg(&repo.root)
-        .args(["daemon", "--foreground"])
+        .args(["daemon", "run"])
         .current_dir(&repo.root)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

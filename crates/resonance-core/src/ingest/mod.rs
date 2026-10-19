@@ -3,7 +3,6 @@
 pub mod blobs;
 pub mod lineindex;
 pub mod reconcile;
-pub mod tags;
 pub mod walk;
 
 pub use reconcile::{ReconcileOptions, ReconcileReport, reconcile, reconcile_paths};

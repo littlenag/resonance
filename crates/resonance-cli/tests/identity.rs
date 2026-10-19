@@ -7,7 +7,7 @@ mod common;
 use common::{STORE, TestRepo};
 use resonance_core::store::{GraphRead, GraphStore};
 use resonance_store_sqlite::SqliteStore;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn op_kinds(repo: &TestRepo) -> Vec<String> {
     let mut store = SqliteStore::open(&repo.path().join(".resonance/local/state.db")).unwrap();
@@ -21,7 +21,7 @@ fn op_kinds(repo: &TestRepo) -> Vec<String> {
 }
 
 fn location(repo: &TestRepo, unit: &str) -> (String, u64, String) {
-    let l = repo.json(&["show", unit])["location"].clone();
+    let l = repo.tool("resonance_show", json!({"ref": unit}))["location"].clone();
     (
         l["path"].as_str().unwrap().to_string(),
         l["startLine"].as_u64().unwrap(),
@@ -33,15 +33,8 @@ fn location(repo: &TestRepo, unit: &str) -> (String, u64, String) {
 fn a_file_renamed_and_edited_in_one_step_keeps_its_anchors_and_links() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&[
-        "annotate",
-        "src/store.rs",
-        "--kind",
-        "note",
-        "--text",
-        "the storage module",
-    ]);
-    repo.ok(&["link", "src/store.rs", "satisfies", "FR-003"]);
+    repo.annotate("src/store.rs", "note", "the storage module");
+    repo.link("src/store.rs", "satisfies", "FR-003");
     // Rename and edit at once: exact search alone could not follow `open`, whose lines change.
     let edited = STORE
         .replace("use std::io;\n", "use std::io;\nuse std::fs;\n")
@@ -54,10 +47,10 @@ fn a_file_renamed_and_edited_in_one_step_keeps_its_anchors_and_links() {
         (path.as_str(), start, state.as_str()),
         ("src/storage/sqlite.rs", 5, "attached")
     );
-    let quote_line = repo.json(&["why", "open"])["unit"]["address"].clone();
+    let quote_line = repo.tool("resonance_why", json!({"ref": "open"}))["unit"]["address"].clone();
     assert_eq!(quote_line, "src/storage/sqlite.rs::open");
     // File-level links and annotations follow the file (FR-036).
-    let file = repo.json(&["why", "src/storage/sqlite.rs"]);
+    let file = repo.tool("resonance_why", json!({"ref": "src/storage/sqlite.rs"}));
     assert_eq!(file["annotations"][0]["text"], "the storage module");
     assert_eq!(file["requirements"][0]["requirement"]["key"], "FR-003");
     assert!(op_kinds(&repo).contains(&"file.move".to_string()));
@@ -73,14 +66,7 @@ fn a_file_renamed_and_edited_in_one_step_keeps_its_anchors_and_links() {
 fn an_unrelated_new_file_is_not_mistaken_for_a_move() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&[
-        "annotate",
-        "src/store.rs",
-        "--kind",
-        "note",
-        "--text",
-        "the storage module",
-    ]);
+    repo.annotate("src/store.rs", "note", "the storage module");
     repo.remove("src/store.rs");
     repo.write("src/other.rs", "pub fn unrelated() -> u32 {\n    42\n}\n");
     let repair = repo.json(&["status"])["repair"].clone();
@@ -116,16 +102,11 @@ fn a_region_moved_into_a_file_that_did_not_change_is_found() {
 #[test]
 fn a_snippet_anchor_keeps_its_exact_columns() {
     let repo = TestRepo::with_project();
-    repo.ok(&["import", "spec/requirements.md"]);
-    repo.ok(&[
-        "unit",
-        "add",
-        "src/store.rs",
-        "--match",
-        "connect(path)",
-        "--name",
-        "connect_call",
-    ]);
+    repo.import_sample();
+    repo.tool(
+        "resonance_declare_unit",
+        json!({"path": "src/store.rs", "match": "connect(path)", "name": "connect_call"}),
+    );
     repo.replace(
         "src/store.rs",
         "let conn = connect(path);",
@@ -153,45 +134,18 @@ fn a_snippet_anchor_keeps_its_exact_columns() {
 fn split_copies_links_and_annotations_to_the_new_units() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "instruction",
-        "--text",
-        "keep the signature",
-    ]);
+    repo.annotate("open", "instruction", "keep the signature");
     // `open` is split into two declared units.
-    repo.ok(&[
-        "unit",
-        "add",
-        "src/store.rs:4-6",
-        "--name",
-        "open_connect",
-        "--kind",
-        "function",
-    ]);
-    repo.ok(&[
-        "unit",
-        "add",
-        "src/store.rs:7-9",
-        "--name",
-        "open_finish",
-        "--kind",
-        "function",
-    ]);
-    let change = repo.json(&[
-        "unit",
-        "split",
-        "open",
-        "--into",
-        "open_connect",
-        "open_finish",
-    ]);
+    repo.tool("resonance_declare_unit", json!({"path": "src/store.rs", "startLine": 4, "endLine": 6, "name": "open_connect", "kind": "function"}));
+    repo.tool("resonance_declare_unit", json!({"path": "src/store.rs", "startLine": 7, "endLine": 9, "name": "open_finish", "kind": "function"}));
+    let change = repo.tool(
+        "resonance_split_unit",
+        json!({"ref": "open", "into": ["open_connect", "open_finish"]}),
+    );
     assert_eq!(change["linksMoved"], 4, "{change}");
     assert_eq!(change["retired"][0]["removed"], true);
     for part in ["open_connect", "open_finish"] {
-        let why = repo.json(&["why", part]);
+        let why = repo.tool("resonance_why", json!({"ref": part}));
         assert_eq!(
             why["requirements"][0]["requirement"]["key"], "FR-001",
             "{part}"
@@ -202,7 +156,7 @@ fn split_copies_links_and_annotations_to_the_new_units() {
             "{part}"
         );
     }
-    let trace = repo.json(&["trace", "FR-001"]);
+    let trace = repo.tool("resonance_trace", json!({"requirement": "FR-001"}));
     let labels: Vec<&str> = trace["satisfiedBy"]
         .as_array()
         .unwrap()
@@ -227,18 +181,13 @@ fn split_copies_links_and_annotations_to_the_new_units() {
 fn merge_moves_links_to_the_remaining_unit() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&[
-        "unit",
-        "add",
-        "src/store.rs:4-14",
-        "--name",
-        "store_fns",
-        "--kind",
-        "block",
-    ]);
-    let change = repo.json(&["unit", "merge", "open", "close", "--into", "store_fns"]);
+    repo.tool("resonance_declare_unit", json!({"path": "src/store.rs", "startLine": 4, "endLine": 14, "name": "store_fns", "kind": "block"}));
+    let change = repo.tool(
+        "resonance_merge_unit",
+        json!({"refs": ["open", "close"], "into": "store_fns"}),
+    );
     assert_eq!(change["retired"].as_array().unwrap().len(), 2);
-    let why = repo.json(&["why", "store_fns"]);
+    let why = repo.tool("resonance_why", json!({"ref": "store_fns"}));
     let keys: Vec<&str> = why["requirements"]
         .as_array()
         .unwrap()
@@ -247,6 +196,9 @@ fn merge_moves_links_to_the_remaining_unit() {
         .collect();
     assert_eq!(keys, ["FR-001", "FR-002"]);
     assert!(op_kinds(&repo).contains(&"identity.merge".to_string()));
-    let err = repo.fails(&["unit", "merge", "store_fns", "--into", "store_fns"], 2);
+    let err = repo.tool_err(
+        "resonance_merge_unit",
+        json!({"refs": ["store_fns"], "into": "store_fns"}),
+    );
     assert!(err.contains("listed twice"), "{err}");
 }

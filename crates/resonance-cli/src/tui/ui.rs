@@ -31,8 +31,9 @@ Edit and add
   left/right     (adding) change the type
   ctrl-s or F2   save            esc     cancel
 
-Items imported from a document are edited there: e and r open it at the item's line.
-Changes you make here are recorded in the change log for agents (`resonance changes`).
+Items your agent brought in from a document show where they came from; editing one marks
+the document for your agent to update.
+Changes you make here are recorded in the change log (l) for your agent to pick up.
 
 Press any key to go back.";
 
@@ -147,7 +148,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(i.status.clone()),
                 Cell::from(one_line(&i.title, 200)),
                 Cell::from(links),
-                Cell::from(if i.origin == "import" { "doc" } else { "" }),
+                Cell::from(if i.source.is_some() { "doc" } else { "" }),
             ])
             .style(style)
         })
@@ -174,7 +175,7 @@ fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             && app.filter_type.is_none()
             && app.filter_status.is_none()
         {
-            "No spec items yet. Press a to add one, or import a document with `resonance import <file.md>`."
+            "No spec items yet. Press a to add one, or ask your agent to bring your requirements documents into Resonance."
         } else {
             "Nothing matches the filters (esc clears them)."
         };
@@ -210,22 +211,6 @@ fn push_field(lines: &mut Vec<Line<'static>>, bold: Style, key: &str, text: &str
     }
 }
 
-/// `alsoDefinedIn` is a list of `{path, line}` from later sources of the same key.
-fn also_defined_text(v: &Value) -> String {
-    let Some(items) = v.as_array() else {
-        return value_text(v);
-    };
-    items
-        .iter()
-        .map(|item| {
-            let path = item.get("path").and_then(Value::as_str).unwrap_or("?");
-            let line = item.get("line").and_then(Value::as_u64).unwrap_or(0);
-            format!("{path}:{line}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 fn detail_lines(d: &Value) -> Vec<Line<'static>> {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     let mut lines: Vec<Line> = Vec::new();
@@ -239,27 +224,15 @@ fn detail_lines(d: &Value) -> Vec<Line<'static>> {
         )),
     ]));
     let props = d["properties"].as_object().cloned().unwrap_or_default();
-    if let Some(src) = props.get("source").filter(|s| !s.is_null()) {
+    if let Some(src) = d.get("source").filter(|s| !s.is_null()) {
         lines.push(Line::from(format!(
-            "Source: {}:{} (edit it there)",
+            "From: {}:{} (edits here mark the document for your agent to update)",
             value_text(&src["path"]),
             value_text(&src["line"])
         )));
     }
-    // Shown on their own: the generic loop would hide them, or print the array as JSON.
-    if let Some(status) = props.get("specStatus").and_then(Value::as_str) {
-        if !status.is_empty() {
-            push_field(&mut lines, bold, "specStatus", status);
-        }
-    }
-    if let Some(also) = props.get("alsoDefinedIn").filter(|v| !v.is_null()) {
-        let text = also_defined_text(also);
-        if !text.is_empty() {
-            push_field(&mut lines, bold, "alsoDefinedIn", &text);
-        }
-    }
     lines.push(Line::from(""));
-    let skip = ["source", "alsoDefinedIn", "key", "specStatus"];
+    let skip = ["source", "alsoDefinedIn", "key", "specStatus", "origin"];
     for (k, v) in &props {
         if skip.contains(&k.as_str()) || v.is_null() {
             continue;

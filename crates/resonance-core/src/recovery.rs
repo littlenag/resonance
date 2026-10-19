@@ -4,7 +4,7 @@
 //! evidence into the classes C1–C9 of §8.18 and recorded with its level and resolution
 //! (FR-190, FR-198). Resolutions act automatically only when nothing is lost: whatever they
 //! displace is kept under `.resonance/local/recovery/<id>/`, and `resonance recover undo <id>`
-//! puts it back (FR-192). Counters behind `resonance value` are kept the same way, locally.
+//! puts it back (FR-192). Counters behind `resonance_value` are kept the same way, locally.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

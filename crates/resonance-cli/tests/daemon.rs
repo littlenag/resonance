@@ -17,7 +17,7 @@ use resonance_core::daemon::client::Remote;
 use resonance_core::daemon::runtime;
 use resonance_core::ops::Actor;
 use resonance_core::repo::Repo;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// A command that always goes through the daemon.
 fn daemon_cmd(repo: &TestRepo, args: &[&str]) -> Command {
@@ -41,6 +41,23 @@ fn json(repo: &TestRepo, args: &[&str]) -> Value {
     let mut all = vec!["--json"];
     all.extend_from_slice(args);
     serde_json::from_str(&ok(repo, &all)).unwrap()
+}
+
+/// A node through MCP, as an agent reads it.
+fn show(repo: &TestRepo, reference: &str) -> Value {
+    repo.tool("resonance_show", json!({"ref": reference}))
+}
+
+/// A node from the daemon without waiting for pending changes (`cached`, FR-102).
+fn cached_show(repo: &TestRepo, reference: &str) -> Value {
+    use resonance_core::service::{Backend, Call};
+    let r = Repo::discover(repo.path()).unwrap();
+    let mut remote =
+        Remote::connect_existing(&r, Actor::agent("test"), root(repo)).expect("daemon running");
+    remote.cached = true;
+    remote
+        .call(Call::new("show", json!({"ref": reference})))
+        .unwrap()
 }
 
 fn info(repo: &TestRepo) -> runtime::DaemonInfo {
@@ -71,9 +88,7 @@ fn one_daemon_per_repository_started_on_demand_and_stopped() {
     );
 
     // A second daemon refuses to start (FR-082).
-    let out = daemon_cmd(&repo, &["daemon", "--foreground"])
-        .output()
-        .unwrap();
+    let out = daemon_cmd(&repo, &["daemon", "run"]).output().unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("already running"));
 
@@ -85,7 +100,7 @@ fn one_daemon_per_repository_started_on_demand_and_stopped() {
     assert_eq!(health["ready"], true);
     assert!(health["requestsServed"].as_u64().unwrap() >= 2);
 
-    let stopped = ok(&repo, &["daemon", "--stop"]);
+    let stopped = ok(&repo, &["daemon", "stop"]);
     assert!(stopped.contains("Stopped"), "{stopped}");
     assert!(!runtime::lock_held(&root(&repo)));
     assert!(
@@ -96,13 +111,13 @@ fn one_daemon_per_repository_started_on_demand_and_stopped() {
         !Path::new(&first.endpoint).exists(),
         "the socket is removed"
     );
-    assert!(ok(&repo, &["daemon", "--stop"]).contains("No daemon"));
+    assert!(ok(&repo, &["daemon", "stop"]).contains("No daemon"));
 }
 
 #[test]
 fn an_idle_daemon_exits() {
     let repo = TestRepo::with_project_daemon();
-    ok(&repo, &["daemon", "--stop"]);
+    ok(&repo, &["daemon", "stop"]);
     let out = daemon_cmd(&repo, &["status"])
         .env("RESONANCE_DAEMON_IDLE_SECONDS", "1")
         .output()
@@ -133,7 +148,7 @@ fn reads_follow_saves_and_subscribers_hear_about_changes() {
         "use std::io;\nuse std::fs;\n",
     );
     // Read-your-writes (FR-102): the very next answer reflects the save.
-    assert_eq!(json(&repo, &["show", "open"])["location"]["startLine"], 5);
+    assert_eq!(show(&repo, "open")["location"]["startLine"], 5);
     // FR-104: the change stream reported the ingest.
     let mut kinds = Vec::new();
     while let Ok(note) = rx.recv_timeout(Duration::from_secs(5)) {
@@ -144,10 +159,7 @@ fn reads_follow_saves_and_subscribers_hear_about_changes() {
     }
     assert!(kinds.contains(&"ingest".to_string()), "{kinds:?}");
     // Mutations are announced too.
-    ok(
-        &repo,
-        &["annotate", "open", "--kind", "note", "--text", "subscribed"],
-    );
+    repo.annotate("open", "note", "subscribed");
     let mut saw_mutation = false;
     while let Ok(note) = rx.recv_timeout(Duration::from_secs(5)) {
         if note["kind"] == "mutation" && note["method"] == "annotate" {
@@ -156,7 +168,7 @@ fn reads_follow_saves_and_subscribers_hear_about_changes() {
         }
     }
     assert!(saw_mutation);
-    ok(&repo, &["daemon", "--stop"]);
+    ok(&repo, &["daemon", "stop"]);
     let _ = sub.join();
 }
 
@@ -174,7 +186,7 @@ fn changes_made_during_a_git_operation_wait_for_it_and_cached_answers_do_not() {
     );
     // A cached answer does not wait, and does not see the change yet (FR-102).
     let started = Instant::now();
-    let cached = json(&repo, &["--cached", "show", "open"]);
+    let cached = cached_show(&repo, "open");
     assert!(
         started.elapsed() < Duration::from_secs(3),
         "{:?}",
@@ -194,7 +206,7 @@ fn changes_made_during_a_git_operation_wait_for_it_and_cached_answers_do_not() {
         })
     };
     let started = Instant::now();
-    let synced = json(&repo, &["show", "open"]);
+    let synced = show(&repo, "open");
     assert!(
         started.elapsed() >= Duration::from_millis(300),
         "waited for the lock"
@@ -229,7 +241,7 @@ fn a_branch_switch_is_applied_and_reflected_in_the_next_answer() {
     // S10 AC2: the answer reflects the new commit.
     let status = json(&repo, &["status"]);
     assert_eq!(status["counts"]["files"].as_u64().unwrap(), 4 + 40);
-    assert_eq!(json(&repo, &["show", "open"])["location"]["startLine"], 5);
+    assert_eq!(show(&repo, "open")["location"]["startLine"], 5);
     // S10 AC1: not forty separate edits.
     let mut ingests = 0;
     while let Ok(note) = rx.recv_timeout(Duration::from_millis(500)) {
@@ -238,7 +250,7 @@ fn a_branch_switch_is_applied_and_reflected_in_the_next_answer() {
         }
     }
     assert!(ingests <= 5, "{ingests} ingest batches for one checkout");
-    ok(&repo, &["daemon", "--stop"]);
+    ok(&repo, &["daemon", "stop"]);
     let _ = sub.join();
 }
 
@@ -261,7 +273,7 @@ fn a_crashed_daemon_causes_delay_never_wrong_answers() {
         "use std::io;\nuse std::fs;\nuse std::env;\n",
     );
     // The next command starts a new daemon, which reconciles before answering (AC1, AC2).
-    assert_eq!(json(&repo, &["show", "open"])["location"]["startLine"], 6);
+    assert_eq!(show(&repo, "open")["location"]["startLine"], 6);
     assert_ne!(info(&repo).pid, pid);
 }
 
@@ -279,7 +291,7 @@ fn a_daemon_from_another_build_is_replaced() {
         .unwrap()
         .set_modified(earlier)
         .unwrap();
-    ok(&repo, &["daemon", "--stop"]);
+    ok(&repo, &["daemon", "stop"]);
     // Start a daemon with the copy (a different build as far as the client can tell).
     let out = Command::new(&copy)
         .args(["status"])
@@ -382,7 +394,7 @@ fn the_registry_tracks_daemons_and_rebuilds_after_a_restart() {
     );
 
     // A stopped daemon unregisters.
-    ok(&repo, &["daemon", "--stop"]);
+    ok(&repo, &["daemon", "stop"]);
     wait_until("the daemon to unregister", Duration::from_secs(10), || {
         entries().is_empty()
     });
@@ -428,7 +440,7 @@ fn the_daemon_leaves_git_status_unchanged() {
         "use std::io;\n",
         "use std::io;\nuse std::fs;\n",
     );
-    ok(&repo, &["show", "open"]);
+    show(&repo, "open");
     repo.git(&["checkout", "--", "src/store.rs"]);
     ok(&repo, &["status"]);
     assert_eq!(

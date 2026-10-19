@@ -7,7 +7,7 @@ mod common;
 use std::fs;
 
 use common::TestRepo;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// The `.delta` files in `.resonance/deltas/`, sorted.
 fn delta_files(repo: &TestRepo) -> Vec<std::path::PathBuf> {
@@ -21,8 +21,8 @@ fn delta_files(repo: &TestRepo) -> Vec<std::path::PathBuf> {
 
 /// A summary of the authored graph that does not depend on operation IDs.
 fn fingerprint(repo: &TestRepo) -> Value {
-    let trace = repo.json(&["trace", "FR-001"]);
-    let why = repo.json(&["why", "open"]);
+    let trace = repo.tool("resonance_trace", json!({"requirement": "FR-001"}));
+    let why = repo.tool("resonance_why", json!({"ref": "open"}));
     let status = repo.json(&["status"]);
     serde_json::json!({
         "satisfiedBy": trace["satisfiedBy"].as_array().map(|a| a.len()),
@@ -109,8 +109,8 @@ fn canonical(v: &Value, out: &mut String) {
 fn rebuild_reproduces_the_same_authored_graph() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&["annotate", "open", "--kind", "note", "--text", "keep"]);
-    repo.ok(&["test", "FR-001"]);
+    repo.annotate("open", "note", "keep");
+    repo.tool("resonance_test", json!({"ref": "FR-001"}));
     repo.write("NOTES.md", "x\n");
     repo.commit_all("seal the graph changes into a commit");
     repo.replace("src/store.rs", "conn.check();", "conn.check_all();");
@@ -148,13 +148,13 @@ fn a_delta_that_arrives_twice_is_harmless() {
 fn export_and_restore_round_trip() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&["annotate", "open", "--kind", "warning", "--text", "careful"]);
+    repo.annotate("open", "warning", "careful");
     let before = fingerprint(&repo);
     let export = repo.path().join("..").join("export.jsonl");
     repo.ok(&["export", "--out", export.to_str().unwrap()]);
 
     let other = TestRepo::with_project();
-    other.ok(&["import", "spec/requirements.md"]);
+    other.import_sample();
     let out = other.json(&["restore", export.to_str().unwrap()]);
     assert!(out["applied"].as_u64().unwrap() > 0, "{out}");
     assert!(
@@ -174,7 +174,7 @@ fn a_repository_in_the_earlier_layout_is_migrated() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
     let before = fingerprint(&repo);
-    repo.ok(&["daemon", "--stop"]);
+    repo.ok(&["daemon", "stop"]);
     // Recreate the earlier layout: the live store at .resonance/graph.db, no local/.
     let res = repo.path().join(".resonance");
     fs::rename(res.join("local/state.db"), res.join("graph.db")).unwrap();
@@ -220,7 +220,7 @@ fn a_missing_resonance_directory_is_restored_from_a_backup() {
         dest.starts_with(repo.home().to_str().unwrap()),
         "outside the repository"
     );
-    repo.ok(&["daemon", "--stop"]);
+    repo.ok(&["daemon", "stop"]);
     fs::remove_dir_all(repo.path().join(".resonance")).unwrap();
 
     let err = repo.fails(&["status"], 1);

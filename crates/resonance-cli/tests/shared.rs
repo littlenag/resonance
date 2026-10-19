@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use common::TestRepo;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// A bare remote, plus `origin` configured in `repo`.
 fn with_remote(repo: &TestRepo) -> tempfile::TempDir {
@@ -27,14 +27,7 @@ fn with_remote(repo: &TestRepo) -> tempfile::TempDir {
 fn shared_repo() -> (TestRepo, tempfile::TempDir) {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "instruction",
-        "--text",
-        "keep the signature",
-    ]);
+    repo.annotate("open", "instruction", "keep the signature");
     let bare = with_remote(&repo);
     repo.ok(&["share", "--yes"]);
     repo.git(&["add", "-A"]);
@@ -44,7 +37,7 @@ fn shared_repo() -> (TestRepo, tempfile::TempDir) {
 }
 
 fn annotations_on(repo: &TestRepo, unit: &str) -> Vec<String> {
-    let mut v: Vec<String> = repo.json(&["why", unit])["annotations"]
+    let mut v: Vec<String> = repo.tool("resonance_why", json!({"ref": unit}))["annotations"]
         .as_array()
         .unwrap()
         .iter()
@@ -65,32 +58,28 @@ fn tracked(repo: &TestRepo) -> Vec<String> {
 fn share_previews_then_leaves_new_files_to_commit() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "note",
-        "--text",
-        "shared note",
-    ]);
-    let private = repo.json(&[
-        "annotate",
-        "close",
-        "--kind",
-        "note",
-        "--text",
-        "private note",
-    ]);
+    repo.annotate("open", "note", "shared note");
+    let private = repo.annotate("close", "note", "private note");
     let private_id = private["id"].as_str().unwrap().to_string();
 
-    let plan = repo.json(&["share", "--dry-run", "--keep-local", &private_id]);
+    let preview = repo.json(&["share", "--dry-run", "--keep-local", &private_id]);
+    let plan = &preview["share"];
     assert_eq!(plan["applied"], false);
     assert!(plan["annotations"].as_array().unwrap().len() >= 2, "{plan}");
+    assert_eq!(
+        preview["instructions"]["path"], "CLAUDE.md",
+        "listed in the preview (FR-213)"
+    );
+    assert!(!repo.path().join("CLAUDE.md").exists());
     assert_eq!(repo.git_status(), "", "a preview changes nothing");
     repo.fails(&["share"], 1);
 
     let done = repo.json(&["share", "--yes", "--keep-local", &private_id]);
-    assert_eq!(done["applied"], true);
+    assert_eq!(done["share"]["applied"], true);
+    assert!(
+        repo.read("CLAUDE.md")
+            .contains("<!-- >>> resonance >>> -->")
+    );
     let status = repo.git_status();
     assert!(status.contains(".resonance/"), "{status}");
     repo.git(&["add", "-A"]);
@@ -101,6 +90,7 @@ fn share_previews_then_leaves_new_files_to_commit() {
         ".resonance/README.md",
         ".resonance/.gitignore",
         ".resonance/.gitattributes",
+        "CLAUDE.md",
     ] {
         assert!(staged.contains(f), "{f} in {staged}");
     }
@@ -132,7 +122,7 @@ fn a_fresh_clone_joins_and_rebuilds_the_graph_from_git() {
     assert!(out.contains("Joined"), "{out}");
     assert_eq!(annotations_on(&mate, "open"), ["keep the signature"]);
     assert_eq!(
-        mate.json(&["trace", "FR-001"])["satisfiedBy"]
+        mate.tool("resonance_trace", json!({"requirement": "FR-001"}))["satisfiedBy"]
             .as_array()
             .unwrap()
             .len(),
@@ -149,14 +139,7 @@ fn branches_that_both_change_the_graph_merge_without_conflicts() {
     let mate = TestRepo::clone_of(bare.path());
     mate.ok(&["init", "--no-agent"]);
     mate.git(&["checkout", "-q", "-b", "feature"]);
-    mate.ok(&[
-        "annotate",
-        "close",
-        "--kind",
-        "note",
-        "--text",
-        "from the feature",
-    ]);
+    mate.annotate("close", "note", "from the feature");
     mate.write("FEATURE.md", "f\n");
     mate.git(&["add", "-A"]);
     mate.git(&["commit", "-q", "-m", "feature"]);
@@ -167,7 +150,7 @@ fn branches_that_both_change_the_graph_merge_without_conflicts() {
     );
     mate.git(&["push", "-q", "-u", "origin", "feature"]);
 
-    repo.ok(&["annotate", "close", "--kind", "note", "--text", "from main"]);
+    repo.annotate("close", "note", "from main");
     repo.write("MAIN.md", "m\n");
     repo.git(&["add", "-A"]);
     repo.git(&["commit", "-q", "-m", "main work"]);
@@ -199,12 +182,12 @@ fn a_hold_outs_commits_are_ingested_and_never_blocked() {
     holdout.commit_all("hold-out change");
     holdout.git(&["push", "-q", "origin", "main"]);
     repo.git(&["pull", "-q", "--no-rebase", "origin", "main"]);
-    let value = repo.json(&["value"]);
+    let value = repo.tool("resonance_value", json!({}));
     assert!(
         value["divergences"]["C2"].as_u64().unwrap_or(0) >= 1,
         "{value}"
     );
-    let review = repo.json(&["review", "HEAD~1..HEAD"]);
+    let review = repo.tool("resonance_review", json!({"range": "HEAD~1..HEAD"}));
     assert_eq!(
         review["filesOutsideResonance"],
         serde_json::json!(["src/store.rs"])
@@ -265,7 +248,7 @@ fn compaction_on_the_trunk_and_colliding_compactions() {
     mate.ok(&["init", "--no-agent"]);
     // A branch in flight carries its own delta.
     mate.git(&["checkout", "-q", "-b", "topic"]);
-    mate.ok(&["annotate", "open", "--kind", "note", "--text", "topic note"]);
+    mate.annotate("open", "note", "topic note");
     mate.write("T.md", "t\n");
     mate.git(&["add", "-A"]);
     mate.git(&["commit", "-q", "-m", "topic"]);
@@ -273,19 +256,12 @@ fn compaction_on_the_trunk_and_colliding_compactions() {
 
     // The trunk accumulates deltas and compacts.
     for i in 0..2 {
-        repo.ok(&[
-            "annotate",
-            "close",
-            "--kind",
-            "note",
-            "--text",
-            &format!("main {i}"),
-        ]);
+        repo.annotate("close", "note", &format!("main {i}"));
         repo.write(&format!("M{i}.md"), "m\n");
         repo.git(&["add", "-A"]);
         repo.git(&["commit", "-q", "-m", &format!("main {i}")]);
     }
-    let c = repo.json(&["compact", "--commit"]);
+    let c = repo.tool("resonance_compact", json!({"commit": true}));
     assert!(c["folded"].as_array().unwrap().len() >= 2, "{c}");
     let still = tracked(&repo);
     for id in c["folded"].as_array().unwrap() {
@@ -296,7 +272,7 @@ fn compaction_on_the_trunk_and_colliding_compactions() {
         );
     }
     repo.git(&["push", "-q", "origin", "main"]);
-    let off = mate.fails(&["compact"], 1);
+    let off = mate.tool_err("resonance_compact", json!({}));
     assert!(off.contains("trunk"), "{off}");
 
     // S19: the branch made before the compaction merges cleanly.
@@ -312,16 +288,16 @@ fn compaction_on_the_trunk_and_colliding_compactions() {
     // Colliding compactions: both sides compact on main; the merge driver unions them.
     mate.git(&["checkout", "-q", "main"]);
     mate.git(&["pull", "-q", "--no-rebase", "origin", "main"]);
-    mate.ok(&["annotate", "close", "--kind", "note", "--text", "mate"]);
+    mate.annotate("close", "note", "mate");
     mate.write("X.md", "x\n");
     mate.git(&["add", "-A"]);
     mate.git(&["commit", "-q", "-m", "mate"]);
-    mate.ok(&["compact", "--commit"]);
-    repo.ok(&["annotate", "close", "--kind", "note", "--text", "mine"]);
+    mate.tool("resonance_compact", json!({"commit": true}));
+    repo.annotate("close", "note", "mine");
     repo.write("Y.md", "y\n");
     repo.git(&["add", "-A"]);
     repo.git(&["commit", "-q", "-m", "mine"]);
-    repo.ok(&["compact", "--commit"]);
+    repo.tool("resonance_compact", json!({"commit": true}));
     mate.git(&["push", "-q", "origin", "main"]);
     let pull = repo.git_output(&["pull", "-q", "--no-rebase", "--no-edit", "origin", "main"]);
     assert!(
@@ -342,7 +318,7 @@ fn an_edit_made_while_resonance_was_down_is_restored_from_the_graph() {
     if common::direct_mode() {
         return; // A daemon's start-up reconcile is what finds such edits (FR-012b).
     }
-    repo.ok(&["daemon", "--stop"]);
+    repo.ok(&["daemon", "stop"]);
     repo.replace("src/store.rs", "conn.check();", "conn.unchecked();");
     let st = repo.json(&["recover"]);
     let c3 = st["divergences"]
@@ -394,7 +370,7 @@ fn leave_rejoin_and_unshare_lose_nothing() {
 #[test]
 fn deltas_render_for_people() {
     let (repo, _bare) = shared_repo();
-    repo.ok(&["annotate", "close", "--kind", "note", "--text", "readable"]);
+    repo.annotate("close", "note", "readable");
     repo.write("R.md", "r\n");
     repo.git(&["add", "-A"]);
     repo.git(&["commit", "-q", "-m", "r"]);
@@ -404,7 +380,7 @@ fn deltas_render_for_people() {
         .find(|l| l.ends_with(".delta"))
         .unwrap()
         .to_string();
-    let text = repo.ok(&["show-delta", &file]);
+    let text = repo.ok(&["git-driver", "textconv", &file]);
     assert!(
         text.contains("Resonance delta") && text.contains("readable"),
         "{text}"
@@ -414,9 +390,9 @@ fn deltas_render_for_people() {
         diff.contains("Resonance delta"),
         "the textconv driver renders deltas in git: {diff}"
     );
-    let review = repo.ok(&["review", "HEAD~1..HEAD", "--markdown"]);
-    assert!(review.contains("### Resonance graph changes"), "{review}");
-    assert!(review.contains("readable"), "{review}");
-    let v: Value = repo.json(&["review", "HEAD~1..HEAD"]);
+    let v: Value = repo.tool("resonance_review", json!({"range": "HEAD~1..HEAD"}));
+    let md = v["markdown"].as_str().unwrap();
+    assert!(md.contains("### Resonance graph changes"), "{md}");
+    assert!(md.contains("readable"), "{md}");
     assert_eq!(v["annotations"].as_array().unwrap().len(), 1);
 }

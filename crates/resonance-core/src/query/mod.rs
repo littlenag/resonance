@@ -140,8 +140,6 @@ pub struct RequirementView {
     pub text: String,
     pub kind: String,
     pub status: String,
-    pub spec_status: Option<String>,
-    pub origin: String,
     pub source: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<String>,
@@ -163,8 +161,7 @@ pub struct SpecItemView {
     pub status: String,
     pub kind: Option<String>,
     pub priority: Option<String>,
-    /// `import` when a source document owns the item (FR-272), else `authored`.
-    pub origin: String,
+    /// The document region the item came from, from its `derivedFrom` link (FR-124).
     pub source: Option<Value>,
     /// Every property, for editors.
     pub props: Value,
@@ -194,7 +191,6 @@ pub fn spec_item_view(node: &Node) -> SpecItemView {
         status: status_of(node),
         kind: node.str_prop("kind").map(String::from),
         priority: node.str_prop("priority").map(String::from),
-        origin: node.str_prop("origin").unwrap_or("authored").to_string(),
         source: node.props.get("source").cloned().filter(|v| !v.is_null()),
         props: Value::Object(node.props.clone()),
         links: 0,
@@ -225,8 +221,6 @@ pub fn requirement_view(node: &Node) -> RequirementView {
         text: s(node, "text"),
         kind: s(node, "kind"),
         status: s(node, "status"),
-        spec_status: node.str_prop("specStatus").map(String::from),
-        origin: s(node, "origin"),
         source: node.props.get("source").cloned().filter(|v| !v.is_null()),
         priority: node.str_prop("priority").map(String::from),
     }
@@ -387,6 +381,7 @@ pub fn link_view(r: &dyn GraphRead, edge: &Edge, from: &str) -> Result<LinkView>
         relation: match (edge.etype, edge.str_prop("extType")) {
             (EdgeType::Extension, Some(t)) if outgoing => t.to_string(),
             (EdgeType::Extension, Some(t)) => format!("{t} (reverse)"),
+            (EdgeType::DerivedFrom, _) if outgoing => "derived from".to_string(),
             _ if outgoing => edge.etype.as_str().to_string(),
             _ => edge.etype.reverse_name().to_string(),
         },

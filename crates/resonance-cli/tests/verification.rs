@@ -5,36 +5,32 @@
 mod common;
 
 use common::TestRepo;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn verifies_status(repo: &TestRepo, key: &str) -> Value {
-    repo.json(&["trace", key])["verifiedBy"][0]["link"]["status"].clone()
+    repo.tool("resonance_trace", json!({"requirement": key}))["verifiedBy"][0]["link"]["status"]
+        .clone()
 }
 
 fn declare_test(repo: &TestRepo, name: &str, run: &str) {
-    repo.ok(&[
-        "test",
-        "add",
-        "tests/store_test.sh:3-5",
-        "--name",
-        name,
-        "--run",
-        run,
-    ]);
+    repo.tool("resonance_declare_test", json!({"path": "tests/store_test.sh", "startLine": 3, "endLine": 5, "name": name, "run": run}));
 }
 
 #[test]
 fn a_pass_verifies_and_records_evidence() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    let report = repo.json(&["test", "FR-001"]);
+    let report = repo.tool("resonance_test", json!({"ref": "FR-001"}));
     assert_eq!(report["passed"], 1);
     let run = &report["runs"][0];
     assert_eq!(run["result"], "pass");
     assert_eq!(run["exitCode"], 0);
     assert!(run["outputTail"].as_str().unwrap().contains("open ok"));
     assert_eq!(run["links"][0]["status"], "verified");
-    let evidence = repo.json(&["show", run["evidenceId"].as_str().unwrap()]);
+    let evidence = repo.tool(
+        "resonance_show",
+        json!({"ref": run["evidenceId"].as_str().unwrap()}),
+    );
     let p = &evidence["properties"];
     assert_eq!(p["kind"], "test");
     assert_eq!(p["result"], "pass");
@@ -48,13 +44,11 @@ fn a_pass_verifies_and_records_evidence() {
 fn a_fail_leaves_the_link_asserted_with_failing_evidence() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&["test", "FR-001"]);
+    repo.tool("resonance_test", json!({"ref": "FR-001"}));
     assert_eq!(verifies_status(&repo, "FR-001"), "verified");
     declare_test(&repo, "broken", "sh tests/store_test.sh nope");
-    repo.ok(&["link", "broken", "verifies", "FR-002"]);
-    let out = repo.run(&["--json", "test", "FR-002"]);
-    assert_eq!(out.status.code(), Some(1), "scripts can tell");
-    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+    repo.link("broken", "verifies", "FR-002");
+    let report = repo.tool("resonance_test", json!({"ref": "FR-002"}));
     assert_eq!(report["failed"], 1);
     assert_eq!(report["runs"][0]["result"], "fail");
     assert_eq!(report["runs"][0]["exitCode"], 1);
@@ -64,15 +58,15 @@ fn a_fail_leaves_the_link_asserted_with_failing_evidence() {
             .unwrap()
             .contains("unknown test nope")
     );
-    let trace = repo.json(&["trace", "FR-002"]);
+    let trace = repo.tool("resonance_trace", json!({"requirement": "FR-002"}));
     let link = &trace["verifiedBy"][0]["link"];
     assert_eq!(link["status"], "asserted");
     assert_eq!(link["latestEvidence"]["result"], "fail");
 
     // A verified link whose test starts failing goes back to asserted.
     repo.replace("tests/store_test.sh", "exit 0", "exit 3");
-    let out = repo.run(&["test", "opens_db"]);
-    assert_eq!(out.status.code(), Some(1));
+    let report = repo.tool("resonance_test", json!({"ref": "opens_db"}));
+    assert_eq!(report["failed"], 1, "{report}");
     assert_eq!(verifies_status(&repo, "FR-001"), "asserted");
 }
 
@@ -82,12 +76,10 @@ fn errors_are_never_passes() {
     repo.declare_sample();
     declare_test(&repo, "missing_cmd", "definitely-not-a-command-xyz --flag");
     declare_test(&repo, "zero_tests", "echo 'running 0 tests'; exit 0");
-    repo.ok(&["link", "missing_cmd", "verifies", "FR-002"]);
-    repo.ok(&["link", "zero_tests", "verifies", "FR-003"]);
+    repo.link("missing_cmd", "verifies", "FR-002");
+    repo.link("zero_tests", "verifies", "FR-003");
     for (key, why) in [("FR-002", "not found"), ("FR-003", "no test actually ran")] {
-        let out = repo.run(&["--json", "test", key]);
-        assert_eq!(out.status.code(), Some(1));
-        let report: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let report = repo.tool("resonance_test", json!({"ref": key}));
         assert_eq!(report["errors"], 1, "{report}");
         assert_eq!(report["runs"][0]["result"], "error");
         assert!(
@@ -101,17 +93,16 @@ fn errors_are_never_passes() {
 #[test]
 fn a_test_that_runs_too_long_is_stopped_and_recorded_as_an_error() {
     let repo = TestRepo::with_project();
-    repo.ok(&["import", "spec/requirements.md"]);
+    repo.import_sample();
     declare_test(&repo, "slow", "sleep 30");
-    repo.ok(&["link", "slow", "verifies", "FR-001"]);
+    repo.link("slow", "verifies", "FR-001");
+    let cfg = repo
+        .read(".resonance/config.toml")
+        .replace("timeoutSeconds = 600", "timeoutSeconds = 1");
+    repo.write(".resonance/config.toml", &cfg);
     let started = std::time::Instant::now();
-    let out = repo
-        .command(&["--json", "test", "slow"])
-        .env("RESONANCE_TEST_TIMEOUT_SECONDS", "1")
-        .output()
-        .unwrap();
+    let report = repo.tool("resonance_test", json!({"ref": "slow"}));
     assert!(started.elapsed().as_secs() < 15, "stopped by the timeout");
-    let report: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(report["runs"][0]["result"], "error");
     assert!(
         report["runs"][0]["error"]
@@ -125,14 +116,20 @@ fn a_test_that_runs_too_long_is_stopped_and_recorded_as_an_error() {
 fn tests_run_by_requirement_test_or_link_and_fall_back_to_the_configured_command() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    let link = repo.json(&["trace", "FR-001"])["verifiedBy"][0]["link"]["id"]
+    let link = repo.tool("resonance_trace", json!({"requirement": "FR-001"}))["verifiedBy"][0]["link"]["id"]
         .as_str()
         .unwrap()
         .to_string();
-    assert_eq!(repo.json(&["test", &link])["passed"], 1);
-    assert_eq!(repo.json(&["test", "opens_db"])["passed"], 1);
     assert_eq!(
-        repo.json(&["test", "open"])["runs"]
+        repo.tool("resonance_test", json!({"ref": &link}))["passed"],
+        1
+    );
+    assert_eq!(
+        repo.tool("resonance_test", json!({"ref": "opens_db"}))["passed"],
+        1
+    );
+    assert_eq!(
+        repo.tool("resonance_test", json!({"ref": "open"}))["runs"]
             .as_array()
             .unwrap()
             .len(),
@@ -146,9 +143,12 @@ fn tests_run_by_requirement_test_or_link_and_fall_back_to_the_configured_command
         "command = \"sh tests/store_test.sh {name} # {path} {address}\"",
     );
     repo.write(".resonance/config.toml", &config);
-    repo.ok(&["test", "add", "tests/store_test.sh:4", "--name", "open"]);
-    repo.ok(&["link", "tests/store_test.sh::open", "verifies", "FR-003"]);
-    let report = repo.json(&["test", "FR-003"]);
+    repo.tool(
+        "resonance_declare_test",
+        json!({"path": "tests/store_test.sh", "startLine": 4, "endLine": 4, "name": "open"}),
+    );
+    repo.link("tests/store_test.sh::open", "verifies", "FR-003");
+    let report = repo.tool("resonance_test", json!({"ref": "FR-003"}));
     assert_eq!(
         report["runs"][0]["command"],
         "sh tests/store_test.sh open # tests/store_test.sh tests/store_test.sh::open"
@@ -159,20 +159,18 @@ fn tests_run_by_requirement_test_or_link_and_fall_back_to_the_configured_command
 #[test]
 fn declaring_a_test_needs_a_command() {
     let repo = TestRepo::with_project();
-    let err = repo.fails(
-        &["test", "add", "tests/store_test.sh:3-5", "--name", "t"],
-        2,
+    let err = repo.tool_err(
+        "resonance_declare_test",
+        json!({"path": "tests/store_test.sh", "startLine": 3, "endLine": 5, "name": "t"}),
     );
-    assert!(err.contains("--run is required"), "{err}");
-    let err = repo.fails(&["test"], 2);
-    assert!(err.contains("test add"), "{err}");
+    assert!(err.contains("run"), "{err}");
 }
 
 #[test]
 fn a_verified_link_goes_stale_when_the_test_changes() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&["test", "FR-001"]);
+    repo.tool("resonance_test", json!({"ref": "FR-001"}));
     assert_eq!(verifies_status(&repo, "FR-001"), "verified");
     // An edit inside the test's region changes its content hash (FR-002, MVP-012).
     repo.replace(
@@ -183,15 +181,15 @@ fn a_verified_link_goes_stale_when_the_test_changes() {
     assert_eq!(verifies_status(&repo, "FR-001"), "stale");
     // An asserted link whose code changes stays asserted (MVP-012).
     assert_eq!(
-        repo.json(&["trace", "FR-001"])["satisfiedBy"][0]["link"]["status"],
+        repo.tool("resonance_trace", json!({"requirement": "FR-001"}))["satisfiedBy"][0]["link"]["status"],
         "asserted"
     );
     repo.replace("src/store.rs", "conn.check();", "conn.check(); // checked");
     assert_eq!(
-        repo.json(&["trace", "FR-001"])["satisfiedBy"][0]["link"]["status"],
+        repo.tool("resonance_trace", json!({"requirement": "FR-001"}))["satisfiedBy"][0]["link"]["status"],
         "asserted"
     );
     // Re-running the test verifies it again.
-    repo.ok(&["test", "FR-001"]);
+    repo.tool("resonance_test", json!({"ref": "FR-001"}));
     assert_eq!(verifies_status(&repo, "FR-001"), "verified");
 }

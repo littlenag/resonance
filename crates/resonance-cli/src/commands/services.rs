@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::{Ctx, confirm, exe, human_actor, open_store};
-use crate::cli::RegistryCommand;
+use crate::cli::{DaemonCommand, RegistryCommand};
 use crate::render;
 
 pub fn mcp(ctx: &Ctx) -> Result<()> {
@@ -33,29 +33,51 @@ pub fn mcp(ctx: &Ctx) -> Result<()> {
     mcp::serve(backend, stdin, stdout)
 }
 
-pub fn daemon(ctx: &Ctx, foreground: bool, stop: bool) -> Result<()> {
+pub fn daemon(ctx: &Ctx, action: DaemonCommand) -> Result<()> {
     let repo = ctx.repo()?;
-    if stop {
+    let stop = |ctx: &Ctx| -> Result<bool> {
         let was_running = client::stop(&repo)?;
-        let text = if was_running {
-            "Stopped the daemon.\n"
-        } else {
-            "No daemon is running for this repository.\n"
-        };
-        return ctx.emit(&json!({"stopped": was_running}), |_| text.to_string());
+        if !ctx.json {
+            ctx.note(if was_running {
+                "Stopped the daemon."
+            } else {
+                "No daemon is running for this repository."
+            });
+        }
+        Ok(was_running)
+    };
+    match action {
+        DaemonCommand::Stop => {
+            let was_running = client::stop(&repo)?;
+            ctx.emit(&json!({"stopped": was_running}), |_| {
+                if was_running {
+                    "Stopped the daemon.\n".to_string()
+                } else {
+                    "No daemon is running for this repository.\n".to_string()
+                }
+            })
+        }
+        DaemonCommand::Run => {
+            let actor = human_actor(&repo);
+            let opts = DaemonOptions {
+                binary_id: runtime::binary_id(&exe()?),
+                idle: None,
+            };
+            daemon::run(repo, &open_store, actor, opts)
+        }
+        DaemonCommand::Restart | DaemonCommand::Start | DaemonCommand::Status => {
+            if matches!(action, DaemonCommand::Restart) {
+                stop(ctx)?;
+            }
+            if !repo.is_initialized() {
+                return Err(Error::NotInitialized);
+            }
+            // Start one if needed, and report on it.
+            let mut remote = Remote::connect(&repo, &exe()?, human_actor(&repo), ctx.cwd.clone())?;
+            let health = remote.health()?;
+            ctx.emit(&health, render::health)
+        }
     }
-    if foreground {
-        let actor = human_actor(&repo);
-        let opts = DaemonOptions {
-            binary_id: runtime::binary_id(&exe()?),
-            idle: None,
-        };
-        return daemon::run(repo, &open_store, actor, opts);
-    }
-    // Start one if needed, and report on it.
-    let mut remote = Remote::connect(&repo, &exe()?, human_actor(&repo), ctx.cwd.clone())?;
-    let health = remote.health()?;
-    ctx.emit(&health, render::health)
 }
 
 pub fn registry(ctx: &Ctx, cmd: RegistryCommand) -> Result<()> {

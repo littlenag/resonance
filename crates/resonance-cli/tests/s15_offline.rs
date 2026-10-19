@@ -1,5 +1,6 @@
 //! S15: AC1 `init` modifies no tracked file and explains offline mode, AC2 every local feature
-//! works, AC4 teammates see no trace, AC7 leaving is clean (`eject`). Also `agent install`.
+//! works, AC4 teammates see no trace, AC7 leaving is clean (`eject`). Also the agent kit that
+//! `init` installs.
 
 mod common;
 
@@ -7,31 +8,21 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
 use common::TestRepo;
+use serde_json::json;
 
 #[test]
 fn every_local_feature_works_and_leaves_no_trace() {
     let repo = TestRepo::with_project();
     let tracked_before = repo.git(&["ls-files", "-s"]);
     repo.declare_sample();
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "warning",
-        "--text",
-        "callers depend on this",
-    ]);
-    repo.ok(&[
-        "decision",
-        "add",
-        "--title",
-        "Plain files",
-        "--decision",
-        "Keep the store in one file",
-    ]);
-    repo.ok(&["test", "FR-001"]);
-    repo.ok(&["context", "FR-001"]);
-    repo.ok(&["search", "store"]);
+    repo.annotate("open", "warning", "callers depend on this");
+    repo.tool(
+        "resonance_create_decision",
+        json!({"title": "Plain files", "decision": "Keep the store in one file"}),
+    );
+    repo.tool("resonance_test", json!({"ref": "FR-001"}));
+    repo.tool("resonance_context", json!({"requirements": ["FR-001"]}));
+    repo.tool("resonance_search", json!({"text": "store"}));
 
     // AC4: nothing visible to git or teammates.
     assert_eq!(repo.git_status(), "", "the working tree looks untouched");
@@ -61,7 +52,7 @@ fn every_local_feature_works_and_leaves_no_trace() {
 fn eject_exports_first_then_removes_everything_it_added() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&["annotate", "open", "--kind", "note", "--text", "keep me"]);
+    repo.annotate("open", "note", "keep me");
     let exclude_path = repo.path().join(".git/info/exclude");
     let exclude_before_init = fs::read_to_string(&exclude_path)
         .unwrap()
@@ -169,26 +160,18 @@ fn fake_claude(dir: &std::path::Path, log: &std::path::Path) {
 }
 
 #[test]
-fn agent_install_registers_at_local_scope_only_when_asked() {
-    let mut repo = TestRepo::with_project();
+fn init_installs_the_agent_kit_and_registers_mcp_at_local_scope() {
+    let mut repo = TestRepo::new();
+    repo.write("src/lib.rs", "pub fn f() {}\n");
+    repo.commit_all("code");
     let bin_dir = tempfile::tempdir().unwrap();
     let log = bin_dir.path().join("calls.log");
     fake_claude(bin_dir.path(), &log);
     repo.with_path(bin_dir.path().to_path_buf());
 
-    let dry = repo.ok(&["agent", "install", "--dry-run"]);
-    assert!(
-        dry.contains("claude mcp add --scope local resonance -- "),
-        "{dry}"
-    );
-    assert!(!log.exists(), "a dry run runs nothing");
-
-    // No terminal and no --yes: nothing runs.
-    repo.fails(&["agent", "install"], 1);
-    assert!(!log.exists());
-
-    let out = repo.ok(&["agent", "install", "--yes"]);
+    let out = repo.ok(&["init"]);
     assert!(out.contains("Registered"), "{out}");
+    assert!(out.contains("hook post-checkout: created"), "{out}");
     let call = fs::read_to_string(&log).unwrap();
     let (cwd, args) = call.trim().split_once('|').unwrap();
     assert_eq!(
@@ -200,22 +183,49 @@ fn agent_install_registers_at_local_scope_only_when_asked() {
         "{args}"
     );
     assert!(args.ends_with(" mcp"), "{args}");
+    assert!(repo.path().join("CLAUDE.local.md").is_file());
+    assert!(
+        repo.home()
+            .join(".claude/skills/resonance/SKILL.md")
+            .is_file()
+    );
     assert_eq!(repo.git_status(), "", "FR-263: nothing tracked changes");
+
+    // Running init again refreshes, changing nothing.
+    let again = repo.ok(&["init"]);
+    assert!(again.contains("already set up"), "{again}");
+    assert_eq!(repo.git_status(), "");
 }
 
 #[test]
-fn agent_install_without_claude_prints_instructions() {
-    let mut repo = TestRepo::with_project();
+fn init_without_claude_prints_the_registration_command() {
+    let mut repo = TestRepo::new();
     let empty = tempfile::tempdir().unwrap();
     repo.with_path(empty.path().to_path_buf());
     // Keep only system directories on PATH so that a real `claude` is not found.
-    let mut cmd = repo.command(&["agent", "install", "--yes"]);
+    let mut cmd = repo.command(&["init"]);
     cmd.env("PATH", format!("{}:/usr/bin:/bin", empty.path().display()));
     let out = cmd.output().unwrap();
-    assert!(out.status.success());
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
         text.contains("was not found") && text.contains("claude mcp add --scope local resonance"),
         "{text}"
+    );
+}
+
+#[test]
+fn generic_agents_get_a_section_and_the_mcp_command() {
+    let repo = TestRepo::new();
+    let out = repo.ok(&["init", "--agent", "generic"]);
+    assert!(out.contains("AGENTS.md") && out.contains(" mcp"), "{out}");
+    assert!(out.contains("<!-- >>> resonance >>> -->"), "{out}");
+    assert!(
+        !repo.path().join("AGENTS.md").exists(),
+        "offline, printed only"
     );
 }

@@ -1,11 +1,11 @@
-//! Intent breadth (B4, mvp.md §5 "Intent breadth"): designs, constraints, supersede,
-//! derivedFrom and realizes, extension types, the importers (Spec Kit, Kiro, EARS, ADR),
-//! source tags and `intent project`.
+//! Intent breadth (B4) and the agent's import of spec documents (S26, MVP-042), through MCP as
+//! agents do it: designs, constraints, supersede, derivedFrom and realizes, extension types,
+//! and `resonance_import_items` with its dry run, validation and links back to the document.
 
 mod common;
 
 use common::TestRepo;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn keys(list: &Value) -> Vec<String> {
     list.as_array()
@@ -19,274 +19,202 @@ fn keys(list: &Value) -> Vec<String> {
 fn designs_constraints_and_their_links() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    let d = repo.json(&[
-        "design",
-        "add",
-        "--key",
-        "DES-1",
-        "--title",
-        "Storage layer",
-        "--text",
-        "One file per store",
-    ]);
+    let d = repo.tool(
+        "resonance_create_item",
+        json!({"type": "Design", "key": "DES-1", "fields": {"title": "Storage layer", "text": "One file per store"}}),
+    );
     assert_eq!(d["type"], "Design");
     assert_eq!(d["status"], "active");
-    let c = repo.json(&[
-        "constraint",
-        "add",
-        "--key",
-        "CON-1",
-        "--text",
-        "Opening takes under 10 ms",
-        "--scope",
-        "src/store.rs",
-    ]);
+    let c = repo.tool(
+        "resonance_create_item",
+        json!({"type": "Constraint", "key": "CON-1", "fields": {"text": "Opening takes under 10 ms", "scope": "src/store.rs"}}),
+    );
     assert_eq!(c["props"]["scope"], "src/store.rs");
 
-    repo.ok(&["link", "open", "realizes", "DES-1"]);
-    repo.ok(&["link", "CON-1", "constrains", "open"]);
-    repo.ok(&[
-        "req",
-        "add",
-        "FR-010",
-        "--text",
-        "Opening is atomic",
-        "--priority",
-        "high",
-        "--status",
-        "draft",
-    ]);
-    repo.ok(&["link", "FR-010", "derivedFrom", "FR-001"]);
-    let why = repo.json(&["show", "open"]);
+    repo.link("open", "realizes", "DES-1");
+    repo.link("CON-1", "constrains", "open");
+    repo.tool(
+        "resonance_create_item",
+        json!({"type": "Requirement", "key": "FR-010", "fields": {"text": "Opening is atomic", "priority": "high", "status": "draft"}}),
+    );
+    repo.link("FR-010", "derivedFrom", "FR-001");
+    let why = repo.tool("resonance_show", json!({"ref": "open"}));
     let text = why.to_string();
     assert!(
         text.contains("realizes") && text.contains("constrained by"),
         "{why}"
     );
-    let r = repo.json(&["spec", "show", "FR-010"]);
+    let r = repo.tool("resonance_show_item", json!({"ref": "FR-010"}));
     assert_eq!(r["priority"], "high");
     assert_eq!(r["status"], "draft");
 
     // A design cannot satisfy a requirement; the error says what can.
-    let err = repo.fails(&["link", "DES-1", "satisfies", "FR-001"], 1);
+    let err = repo.tool_err(
+        "resonance_link",
+        json!({"source": "DES-1", "type": "satisfies", "target": "FR-001", "confidence": 0.9}),
+    );
     assert!(err.contains("satisfies a requirement"), "{err}");
 
     // Supersede: the old one is superseded and its links go stale (S7).
-    repo.ok(&[
-        "req",
-        "add",
-        "FR-011",
-        "--text",
-        "The store opens a database, or creates one",
-    ]);
-    repo.ok(&["test", "FR-001"]);
-    repo.ok(&["req", "supersede", "FR-001", "--by", "FR-011"]);
-    let old = repo.json(&["spec", "show", "FR-001"]);
+    repo.tool(
+        "resonance_create_requirement",
+        json!({"key": "FR-011", "text": "The store opens a database, or creates one"}),
+    );
+    repo.tool("resonance_test", json!({"ref": "FR-001"}));
+    repo.tool(
+        "resonance_supersede",
+        json!({"old": "FR-001", "new": "FR-011"}),
+    );
+    let old = repo.tool("resonance_show_item", json!({"ref": "FR-001"}));
     assert_eq!(old["status"], "superseded");
-    let trace = repo.json(&["trace", "FR-001"]);
+    let trace = repo.tool("resonance_trace", json!({"requirement": "FR-001"}));
     assert_eq!(trace["verifiedBy"][0]["link"]["status"], "stale", "{trace}");
 
     // Edit and retire: retired, never deleted (FR-271).
-    repo.ok(&["design", "edit", "DES-1", "--text", "Two files per store"]);
-    repo.ok(&["design", "retire", "DES-1"]);
-    let list = repo.json(&["spec", "list", "--type", "Design"]);
+    repo.tool(
+        "resonance_edit_item",
+        json!({"ref": "DES-1", "fields": {"text": "Two files per store"}}),
+    );
+    repo.tool("resonance_retire_item", json!({"ref": "DES-1"}));
+    let list = repo.tool("resonance_list_items", json!({"type": "Design"}));
     assert_eq!(list[0]["status"], "retired");
-    let active = repo.json(&["spec", "list", "--status", "active"]);
+    let active = repo.tool("resonance_list_items", json!({"status": "active"}));
     assert!(!keys(&active).contains(&"DES-1".to_string()));
-}
-
-#[test]
-fn imported_items_are_edited_in_their_source() {
-    let repo = TestRepo::with_project();
-    repo.ok(&["import", "spec/requirements.md"]);
-    let err = repo.fails(&["req", "edit", "FR-001", "--priority", "high"], 1);
-    assert!(err.contains("spec/requirements.md:3"), "{err}");
 }
 
 #[test]
 fn extension_types_survive_export_restore_and_rebuild() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    let svc = repo.json(&[
-        "ext",
-        "add",
-        "acme:Service",
-        "--name",
-        "billing",
-        "--prop",
-        "tier=gold",
-    ]);
+    let svc = repo.tool(
+        "resonance_create_extension",
+        json!({"type": "acme:Service", "name": "billing", "text": "Bills customers"}),
+    );
     let id = svc["node"]["id"].as_str().unwrap().to_string();
     assert_eq!(svc["properties"]["extType"], "acme:Service");
-    repo.ok(&["link", "open", "acme:runsIn", &id]);
-    let bad = repo.fails(&["ext", "add", "Service", "--name", "x"], 2);
+    repo.link("open", "acme:runsIn", &id);
+    let bad = repo.tool_err(
+        "resonance_create_extension",
+        json!({"type": "Service", "name": "x"}),
+    );
     assert!(bad.contains("namespace:Name"), "{bad}");
 
     repo.write("NOTES.md", "x\n");
     repo.commit_all("seal");
     repo.ok(&["rebuild"]);
-    let show = repo.json(&["show", &id]);
-    assert_eq!(show["properties"]["tier"], "gold");
+    let show = repo.tool("resonance_show", json!({"ref": &id}));
+    assert_eq!(show["properties"]["name"], "billing");
     assert!(show.to_string().contains("acme:runsIn"), "{show}");
 
     let export = repo.path().join("..").join("ext-export.jsonl");
     repo.ok(&["export", "--out", export.to_str().unwrap()]);
     let other = TestRepo::with_project();
     other.ok(&["restore", export.to_str().unwrap()]);
-    let found = other.json(&["search", "billing"]);
+    let found = other.tool("resonance_search", json!({"text": "billing"}));
     assert_eq!(found[0]["type"], "Extension", "{found}");
     let _ = std::fs::remove_file(export);
 }
 
+const ADR: &str =
+    "# 1. Use SQLite\n\n## Status\n\nAccepted\n\n## Decision\n\nUse SQLite behind a store API.\n";
+
+fn adr_item(decision: &str) -> Value {
+    json!({"type": "Decision", "key": "ADR-0001",
+        "fields": {"title": "Use SQLite", "decision": decision, "status": "accepted"},
+        "region": {"match": "Use SQLite behind a store API."}})
+}
+
 #[test]
-fn spec_kit_kiro_ears_and_adr_sources_import() {
+fn the_agent_previews_then_brings_items_in_linked_to_their_regions() {
     let repo = TestRepo::with_project();
-    repo.write(
-        "specs/001-photos/spec.md",
-        "# Feature\n\n### Functional Requirements\n\n- **FR-101**: System MUST let users create albums.\n- **FR-102**: System MUST sort albums by date.\n",
-    );
-    repo.write(
-        ".kiro/specs/user-auth/requirements.md",
-        "# Requirements\n\n### Requirement 1\n\n**User Story:** As a user, I want to sign in.\n\n#### Acceptance Criteria\n\n1. WHEN credentials are valid THEN the system SHALL sign the user in\n",
-    );
-    repo.write(
-        ".kiro/specs/user-auth/design.md",
-        "# Design\n\n## Overview\n\nA session service.\n\n## Components\n\nLogin form, session store.\n",
-    );
-    repo.write(
-        "docs/ears.md",
-        "- REQ-1: When the user saves, the editor shall write the file.\n- When the disk is full, the system shall warn the user.\n",
-    );
-    repo.write(
-        "docs/adr/0001-use-sqlite.md",
-        "# 1. Use SQLite\n\n## Status\n\nAccepted\n\n## Context\n\nWe need an embedded store.\n\n## Decision\n\nUse SQLite behind a store API.\n\n## Consequences\n\nOne file per repository.\n",
-    );
-    repo.write("docs/adr/README.md", "# Decisions\n");
-    repo.commit_all("specs");
-
-    let out = repo.json(&[
-        "import",
-        "specs/001-photos/spec.md",
-        ".kiro/specs/user-auth/requirements.md",
-        ".kiro/specs/user-auth/design.md",
-        "docs/adr",
+    repo.write("docs/adr/0001-use-sqlite.md", ADR);
+    repo.commit_all("adr");
+    let reqs = json!([
+        {"type": "Requirement", "key": "FR-001", "fields": {"text": "The store opens a database at a path."}, "region": {"startLine": 3}},
+        {"type": "Requirement", "key": "FR-002", "fields": {"text": "The store closes cleanly, flushing pending writes.", "status": "draft"}, "region": {"startLine": 4}},
     ]);
-    let added: Vec<String> = out["intent"]["added"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|k| k.as_str().unwrap().to_string())
-        .collect();
-    for k in [
-        "FR-101",
-        "FR-102",
-        "USERAUTH-1",
-        "USERAUTH-DESIGN-1",
-        "ADR-0001",
-    ] {
-        assert!(added.contains(&k.to_string()), "{k} in {added:?}");
-    }
-    let ears = repo.json(&["import", "docs/ears.md", "--format", "ears"]);
-    assert_eq!(ears["intent"]["added"], serde_json::json!(["REQ-1"]));
-    assert_eq!(
-        ears["intent"]["unidentified"].as_array().unwrap().len(),
-        1,
-        "{ears}"
-    );
 
-    let adr = repo.json(&["spec", "show", "ADR-0001"]);
-    assert_eq!(adr["type"], "Decision");
-    assert_eq!(adr["title"], "Use SQLite");
-    assert_eq!(adr["status"], "accepted");
+    // The preview writes nothing.
+    let plan = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": reqs, "dryRun": true}),
+    );
+    assert_eq!(plan["applied"], false);
+    assert_eq!(plan["items"][0]["action"], "create");
+    assert_eq!(plan["items"][0]["lines"], json!([3, 3]));
+    assert_eq!(repo.json(&["status"])["counts"]["requirements"], 0);
+
+    // One bad item: nothing is applied, and the plan says why.
+    let mut bad = reqs.as_array().unwrap().clone();
+    bad.push(json!({"type": "Requirement", "key": "FR-003", "fields": {"wat": "x", "text": "t"}, "region": {"startLine": 5}}));
+    bad.push(json!({"type": "Requirement", "key": "FR-009", "fields": {"text": "t"}, "region": {"match": "no such text"}}));
+    let plan = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": bad}),
+    );
+    assert_eq!(plan["applied"], false);
+    assert_eq!(plan["errors"], 2, "{plan}");
     assert!(
-        adr["props"]["context"]
+        plan["items"][2]["error"].as_str().unwrap().contains("wat"),
+        "{plan}"
+    );
+    assert_eq!(repo.json(&["status"])["counts"]["requirements"], 0);
+
+    // Applying: items, their `spec` units and derivedFrom links.
+    let done = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": reqs}),
+    );
+    assert_eq!(done["applied"], true, "{done}");
+    assert_eq!(done["items"][0]["unit"], "spec/requirements.md::FR-001");
+    let item = repo.tool("resonance_show_item", json!({"ref": "FR-002"}));
+    assert_eq!(item["status"], "draft");
+    assert_eq!(item["source"]["path"], "spec/requirements.md");
+    assert_eq!(item["source"]["line"], 4);
+    let units = repo.tool(
+        "resonance_list_units",
+        json!({"path": "spec/requirements.md"}),
+    );
+    assert_eq!(units.as_array().unwrap().len(), 2, "{units}");
+    assert_eq!(units[0]["kind"], "spec");
+
+    // Decisions keep their keys, with deterministic IDs (FR-186); a match finds the region.
+    repo.tool(
+        "resonance_import_items",
+        json!({"document": "docs/adr/0001-use-sqlite.md", "items": [adr_item("Use SQLite behind a store API.")]}),
+    );
+    let adr = repo.tool("resonance_show_item", json!({"ref": "ADR-0001"}));
+    assert_eq!(adr["id"], "dec:ADR-0001");
+    assert_eq!(adr["status"], "accepted");
+    assert_eq!(adr["source"]["line"], 9);
+
+    // Calling again: unchanged items stay so; a changed one is updated.
+    let again = repo.tool(
+        "resonance_import_items",
+        json!({"document": "docs/adr/0001-use-sqlite.md", "items": [adr_item("Use SQLite behind a store API, in WAL mode.")], "dryRun": true}),
+    );
+    assert_eq!(again["items"][0]["action"], "update");
+    assert_eq!(again["items"][0]["fields"], json!(["decision"]));
+    let same = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": reqs, "dryRun": true}),
+    );
+    assert_eq!(same["items"][0]["action"], "unchanged", "{same}");
+
+    // A key used by an item of another type is refused.
+    let clash = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "dryRun": true, "items": [
+            {"type": "Design", "key": "FR-001", "fields": {"title": "x"}, "region": {"startLine": 3}}]}),
+    );
+    assert!(
+        clash["items"][0]["error"]
             .as_str()
             .unwrap()
-            .contains("embedded")
+            .contains("already a Requirement"),
+        "{clash}"
     );
-    let design = repo.json(&["spec", "show", "USERAUTH-DESIGN-2"]);
-    assert_eq!(design["title"], "Components");
 
-    // Editing a source updates the item; removing one retires it.
-    repo.replace(
-        "docs/adr/0001-use-sqlite.md",
-        "Use SQLite behind a store API.",
-        "Use SQLite.",
-    );
-    assert_eq!(
-        repo.json(&["spec", "show", "ADR-0001"])["text"],
-        "Use SQLite."
-    );
-    repo.remove("docs/adr/0001-use-sqlite.md");
-    assert_eq!(
-        repo.json(&["spec", "show", "ADR-0001"])["status"],
-        "retired"
-    );
-}
-
-#[test]
-fn source_tags_create_and_remove_links_when_enabled() {
-    let repo = TestRepo::with_project();
-    repo.declare_sample();
-    repo.replace(
-        "src/store.rs",
-        "    conn.migrate();",
-        "    conn.migrate(); // @satisfies FR-003",
-    );
-    assert_eq!(
-        repo.json(&["trace", "FR-003"])["satisfiedBy"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0,
-        "tags are off by default"
-    );
-    let cfg = repo
-        .read(".resonance/config.toml")
-        .replace("sourceTags = false", "sourceTags = true");
-    repo.write(".resonance/config.toml", &cfg);
-    let trace = repo.json(&["trace", "FR-003"]);
-    let by = trace["satisfiedBy"].as_array().unwrap();
-    assert_eq!(by.len(), 1, "{trace}");
-    assert_eq!(
-        by[0]["unit"]["address"], "src/store.rs::open",
-        "the innermost unit: {trace}"
-    );
-    assert_eq!(by[0]["link"]["provenance"], "imported");
-
-    repo.replace("src/store.rs", " // @satisfies FR-003", "");
-    assert!(
-        repo.json(&["trace", "FR-003"])["satisfiedBy"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
-fn intent_project_writes_markdown_that_then_owns_the_items() {
-    let repo = TestRepo::with_project();
-    repo.ok(&["req", "add", "FR-200", "--text", "Exports are complete"]);
-    repo.ok(&["req", "add", "FR-201", "--text", "Restores are idempotent"]);
-    let plan = repo.json(&["intent", "project", "docs/intent", "--dry-run"]);
-    assert_eq!(plan["written"], false);
-    assert!(!repo.path().join("docs/intent/requirements.md").exists());
-    repo.fails(&["intent", "project", "docs/intent"], 1);
-
-    let done = repo.json(&["intent", "project", "docs/intent", "--yes"]);
-    assert_eq!(done["keys"], serde_json::json!(["FR-200", "FR-201"]));
-    let text = repo.read("docs/intent/requirements.md");
-    assert!(text.contains("- **FR-200** Exports are complete"));
-    let item = repo.json(&["spec", "show", "FR-200"]);
-    assert_eq!(item["origin"], "import");
-    // The document owns it now: edits there flow in.
-    repo.replace(
-        "docs/intent/requirements.md",
-        "Exports are complete",
-        "Exports are complete and signed",
-    );
-    assert_eq!(
-        repo.json(&["spec", "show", "FR-200"])["text"],
-        "Exports are complete and signed"
-    );
+    // Nothing here was written by Resonance into the documents.
+    assert_eq!(repo.git_status(), "");
 }

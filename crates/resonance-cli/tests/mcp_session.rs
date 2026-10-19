@@ -103,7 +103,8 @@ fn initialize_list_tools_and_trace() {
     assert_eq!(result["serverInfo"]["name"], "resonance");
     let instructions = result["instructions"].as_str().unwrap();
     for needle in [
-        "does not parse code",
+        "parses nothing",
+        "resonance_import_items",
         "resonance_declare_unit",
         "resonance_why",
         "resonance_repair_list",
@@ -139,11 +140,14 @@ fn initialize_list_tools_and_trace() {
         "resonance_declare_test",
         "resonance_list_units",
         "resonance_edit_unit",
+        "resonance_remove_unit",
         "resonance_link",
         "resonance_unlink",
         "resonance_confirm",
         "resonance_annotate",
         "resonance_reattach",
+        "resonance_import_items",
+        "resonance_show_item",
         "resonance_list_items",
         "resonance_create_item",
         "resonance_edit_item",
@@ -154,6 +158,7 @@ fn initialize_list_tools_and_trace() {
         "resonance_conventions",
         "resonance_check",
         "resonance_review",
+        "resonance_compact",
         "resonance_changes",
         "resonance_changes_show",
         "resonance_changes_done",
@@ -184,7 +189,7 @@ fn initialize_list_tools_and_trace() {
 #[test]
 fn an_agent_declares_links_and_verifies_through_mcp() {
     let repo = TestRepo::with_project();
-    repo.ok(&["import", "spec/requirements.md"]);
+    repo.import_sample();
     let mut s = Session::start(&repo);
     initialize(&mut s);
 

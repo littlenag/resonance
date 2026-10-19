@@ -15,7 +15,6 @@ pub const DEFAULT_CONFIG: &str = include_str!("../../assets/default-config.toml"
 #[derive(Default)]
 pub struct Config {
     pub repository: RepositoryConfig,
-    pub intent: IntentConfig,
     pub ingest: IngestConfig,
     pub test: TestConfig,
     pub daemon: DaemonConfig,
@@ -90,20 +89,11 @@ impl Default for DaemonConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct IntentConfig {
-    /// Repository-relative paths of imported requirement documents (MVP-011).
-    pub sources: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct IngestConfig {
     pub ignore: Vec<String>,
     pub max_blob_bytes: u64,
-    /// Read `@satisfies` / `@verifies` tags from file text (FR-123).
-    pub source_tags: bool,
 }
 
 impl Default for IngestConfig {
@@ -111,7 +101,6 @@ impl Default for IngestConfig {
         IngestConfig {
             ignore: Vec::new(),
             max_blob_bytes: 5 * 1024 * 1024,
-            source_tags: false,
         }
     }
 }
@@ -223,76 +212,6 @@ pub fn set_value(path: &Path, table: &str, key: &str, value: &str) -> Result<()>
     fs::write(path, next).map_err(|e| Error::io(format!("writing {}", path.display()), e))
 }
 
-/// Rewrite `intent.sources` in the configuration file, keeping every other line (and its
-/// comments) as it was.
-pub fn write_intent_sources(path: &Path, sources: &[String]) -> Result<()> {
-    let text = fs::read_to_string(path).unwrap_or_else(|_| DEFAULT_CONFIG.to_string());
-    let rendered = format!(
-        "sources = [{}]",
-        sources
-            .iter()
-            .map(|s| toml::Value::String(s.clone()).to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 2);
-    let mut table = String::new();
-    let mut replaced = false;
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            if table == "intent" && !replaced {
-                out.push(rendered.clone());
-                replaced = true;
-            }
-            table = trimmed
-                .trim_matches(|c| c == '[' || c == ']')
-                .trim()
-                .to_string();
-        }
-        if table == "intent" && !replaced && trimmed.starts_with("sources") {
-            // Skip the old value, which may span several lines.
-            let mut depth = 0i32;
-            loop {
-                let l = lines[i];
-                depth += l.matches('[').count() as i32 - l.matches(']').count() as i32;
-                if depth <= 0 || i + 1 >= lines.len() {
-                    break;
-                }
-                i += 1;
-            }
-            out.push(rendered.clone());
-            replaced = true;
-            i += 1;
-            continue;
-        }
-        out.push(line.to_string());
-        i += 1;
-    }
-    if !replaced {
-        if table != "intent" {
-            out.push(String::new());
-            out.push("[intent]".into());
-        }
-        out.push(rendered);
-    }
-    let mut next = out.join("\n");
-    next.push('\n');
-    // Never write a file that no longer parses.
-    let parsed: Config = toml::from_str(&next)
-        .map_err(|e| Error::Config(format!("could not update {}: {e}", path.display())))?;
-    if parsed.intent.sources != sources {
-        return Err(Error::Config(format!(
-            "could not update intent.sources in {}; edit it by hand",
-            path.display()
-        )));
-    }
-    fs::write(path, next).map_err(|e| Error::io(format!("writing {}", path.display()), e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,27 +234,5 @@ mod tests {
         assert_eq!(c.test.timeout_seconds, 7);
         assert_eq!(c.ingest.ignore, ["a/**", "b"]);
         assert!(c.apply_env(|_| Some("x".into())).is_err());
-    }
-
-    #[test]
-    fn rewriting_sources_keeps_comments() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        fs::write(&path, DEFAULT_CONFIG).unwrap();
-        write_intent_sources(&path, &["spec/a.md".into(), "docs/b c.md".into()]).unwrap();
-        let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("# Requirement documents imported"));
-        assert!(text.contains(r#"sources = ["spec/a.md", "docs/b c.md"]"#));
-        assert_eq!(Config::load(&path).unwrap().intent.sources.len(), 2);
-
-        fs::write(
-            &path,
-            "[intent]\nsources = [\n  \"x.md\",\n]\n[test]\ncommand = \"t\"\n",
-        )
-        .unwrap();
-        write_intent_sources(&path, &["y.md".into()]).unwrap();
-        let c = Config::load(&path).unwrap();
-        assert_eq!(c.intent.sources, ["y.md"]);
-        assert_eq!(c.test.command, "t");
     }
 }

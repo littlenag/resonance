@@ -29,13 +29,13 @@ pub struct InitSetup {
 
 /// The few lines `init` prints about offline mode (FR-180).
 pub const OFFLINE_EXPLANATION: &str = "\
-Resonance is running in offline mode: a private graph for you alone, kept in .resonance/
-and excluded through .git/info/exclude. Nothing is committed, no tracked file changes, and
-your teammates see no trace of it.
+Resonance is running in offline mode: a private graph for you and your agent, kept in
+.resonance/ and excluded through .git/info/exclude. Nothing is committed, no tracked file
+changes, and your teammates see no trace of it.
 
 What offline mode cannot do: share links, annotations or requirements with teammates, or
 follow their renames for you. When their changes move or rewrite code you annotated, those
-annotations go on the repair list (`resonance status`) for you or your agent to re-attach.
+annotations go on the repair list (`resonance status`) for your agent to re-attach.
 That repair is the cost of trying Resonance privately; it is smallest on repositories with
 few outside changes.";
 
@@ -44,8 +44,14 @@ few outside changes.";
 pub fn init(repo: &Repo, open_store: StoreFactory<'_>) -> Result<InitSetup> {
     ensure_layout(repo, open_store)?;
     let already = repo.is_initialized();
-    // Exclude first, so that `.resonance/` is never visible to git, even for a moment.
-    let exclusion_added = exclude::add(repo)?;
+    // Exclude first, so that `.resonance/` is never visible to git, even for a moment. A
+    // repository with committed data shares `.resonance/`: its own .gitignore keeps `local/`
+    // out of git, and excluding the directory would hide the deltas.
+    let exclusion_added = if repo.has_committed_data() {
+        false
+    } else {
+        exclude::add(repo)?
+    };
     let dir = repo.local_dir();
     fs::create_dir_all(&dir).map_err(|e| Error::io(format!("creating {}", dir.display()), e))?;
     let config = repo.config_path();
@@ -99,7 +105,7 @@ pub fn ensure_layout(repo: &Repo, open_store: StoreFactory<'_>) -> Result<Option
     }
     if crate::daemon::runtime::lock_file_held(&repo.resonance_dir().join("daemon.lock")) {
         return Err(Error::Invalid(
-            "a resonance daemon from an earlier version is running; stop it with `resonance daemon --stop` and try again".into(),
+            "a resonance daemon from an earlier version is running; stop it with `resonance daemon stop` and try again".into(),
         ));
     }
     let home = std::env::var_os("HOME")
@@ -222,11 +228,20 @@ pub fn default_export_path(repo: &Repo, home: &Path) -> PathBuf {
 pub struct Removal {
     pub removed_directory: bool,
     pub exclusion_removed: bool,
+    /// Resonance's blocks removed from git hooks.
+    #[serde(default)]
+    pub hooks: Vec<crate::hooks::HookChange>,
+    /// The agent kit's working-tree parts removed.
+    #[serde(default)]
+    pub kit: Vec<crate::agent::KitStep>,
 }
 
-/// Remove `.resonance/` and the exclusion line. The only code in Resonance that deletes
-/// `.resonance/` (FR-184); call it only after an export and the developer's confirmation.
+/// Remove the git hook blocks, the agent kit's working-tree parts, `.resonance/` and the
+/// exclusion line. The only code in Resonance that deletes `.resonance/` (FR-184); call it
+/// only after an export and the developer's confirmation.
 pub fn remove(repo: &Repo) -> Result<Removal> {
+    let hooks = crate::hooks::uninstall(repo)?;
+    let kit = crate::agent::uninstall_kit(repo)?;
     let dir = repo.resonance_dir();
     let removed_directory = dir.exists();
     if removed_directory {
@@ -237,5 +252,7 @@ pub fn remove(repo: &Repo) -> Result<Removal> {
     Ok(Removal {
         removed_directory,
         exclusion_removed,
+        hooks,
+        kit,
     })
 }

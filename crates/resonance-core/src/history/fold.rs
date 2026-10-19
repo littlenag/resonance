@@ -436,7 +436,6 @@ pub fn refold(
         w.set_meta(keys::JOURNAL_SEQ, &w.last_op_seq()?.to_string())?;
         w.set_meta(keys::SKIPPED, &serde_json::to_string(&skipped)?)?;
         // Imported intent is re-read from its sources during the settle.
-        w.delete_meta(crate::intent::meta::FINGERPRINT)?;
         if let Some(c) = clock {
             w.set_meta(meta::HLC, &c.to_string())?;
         }

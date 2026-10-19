@@ -2,17 +2,11 @@
 //! (FR-252), or run in this process with `--no-daemon` (direct mode, MVP-002). Either way the
 //! graph is brought up to date with the disk before the answer.
 
-mod changes;
-mod intent;
-mod links;
 mod recover;
 mod shared;
 pub use recover::divergence_line as recover_line;
-mod read;
 pub mod services;
 mod setup;
-mod units;
-mod verify;
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -29,7 +23,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::cli::{Cli, Command};
+use crate::cli::{AgentChoice, Cli, Command, DaemonCommand};
 
 /// What every command needs.
 pub struct Ctx {
@@ -213,84 +207,45 @@ pub fn run(cli: Cli) -> Result<()> {
             agent,
             no_agent,
             offline,
-        } => setup::init(&ctx, agent, no_agent, offline),
+        } => {
+            let agent = if no_agent {
+                AgentChoice::None
+            } else {
+                agent.unwrap_or(AgentChoice::ClaudeCode)
+            };
+            setup::init(&ctx, agent, offline)
+        }
+        Command::Status => setup::status(&ctx),
+        Command::Doctor => services::doctor(&ctx),
+        Command::Tui => crate::tui::run(&ctx),
         Command::Share {
             keep_local,
             dry_run,
             yes,
         } => shared::share(&ctx, &keep_local, dry_run, yes),
-        Command::Leave { export } => shared::leave(&ctx, export),
         Command::Unshare { yes, out } => shared::unshare(&ctx, yes, out),
-        Command::Compact { commit, anywhere } => shared::compact(&ctx, commit, anywhere),
+        Command::Leave { export } => shared::leave(&ctx, export),
+        Command::Eject { dry_run, yes, out } => setup::eject(&ctx, dry_run, yes, out),
+        Command::Version => setup::version(&ctx),
+        Command::Daemon { action } => {
+            services::daemon(&ctx, action.unwrap_or(DaemonCommand::Status))
+        }
         Command::Check { staged, range } => shared::check(&ctx, staged, range),
-        Command::Review { range, markdown } => shared::review(&ctx, &range, markdown),
-        Command::ShowDelta { file } => shared::show_delta(&ctx, &file),
-        Command::Hook { name, args } => shared::hook(&ctx, &name, &args),
-        Command::GitDriver(cmd) => shared::git_driver(cmd),
-        Command::AgentHook { event } => setup::agent_hook(&ctx, &event),
-        Command::Status => setup::status(&ctx),
-        Command::Reconcile { full } => setup::reconcile(&ctx, full),
-        Command::RebuildDerived => setup::rebuild_derived(&ctx),
-        Command::Rebuild => setup::rebuild(&ctx),
-        Command::Restore { file } => setup::restore(&ctx, &file),
         Command::Recover { action } => recover::recover(&ctx, action),
-        Command::Value => recover::value(&ctx),
-        Command::Changes { action, since } => changes::changes(&ctx, action, since),
-        Command::Tui => crate::tui::run(&ctx),
+        Command::Reconcile { full } => setup::reconcile(&ctx, full),
+        Command::Rebuild => setup::rebuild(&ctx),
+        Command::RebuildDerived => setup::rebuild_derived(&ctx),
+        Command::Export { out } => setup::export(&ctx, out),
+        Command::Restore { file } => setup::restore(&ctx, &file),
         Command::Backup {
             restore,
             from,
             list,
         } => setup::backup(&ctx, restore, from, list),
         Command::Mcp => services::mcp(&ctx),
-        Command::Daemon { foreground, stop } => services::daemon(&ctx, foreground, stop),
         Command::Registry(cmd) => services::registry(&ctx, cmd),
-        Command::Doctor => services::doctor(&ctx),
-        Command::Agent(cmd) => setup::agent(&ctx, cmd),
-        Command::Export { out } => setup::export(&ctx, out),
-        Command::Eject { dry_run, yes, out } => setup::eject(&ctx, dry_run, yes, out),
-        Command::Version => setup::version(&ctx),
-        Command::Import { paths, format } => intent::import(&ctx, &paths, format.as_deref()),
-        Command::Req(cmd) => intent::req(&ctx, cmd),
-        Command::Decision(cmd) => intent::decision(&ctx, cmd),
-        Command::Design(cmd) => intent::item(&ctx, "Design", cmd),
-        Command::Constraint(cmd) => intent::item(&ctx, "Constraint", cmd),
-        Command::Spec(cmd) => intent::spec(&ctx, cmd),
-        Command::Ext(cmd) => intent::ext(&ctx, cmd),
-        Command::Intent(cmd) => intent::project(&ctx, cmd),
-        Command::Unit(cmd) => units::unit(&ctx, cmd),
-        Command::Test(args) => match (args.sub, args.reference) {
-            (Some(sub), _) => units::test_add(&ctx, sub),
-            (None, Some(reference)) => verify::test(&ctx, &reference),
-            (None, None) => Err(Error::Usage(
-                "give what to test (a requirement, test, unit or link), or `resonance test add` to declare a test".into(),
-            )),
-        },
-        Command::Link {
-            src,
-            etype,
-            dst,
-            confidence,
-        } => links::link(&ctx, &src, &etype, &dst, confidence),
-        Command::Unlink { edge } => links::unlink(&ctx, &edge),
-        Command::Confirm { edge } => links::confirm(&ctx, &edge),
-        Command::Annotate {
-            target,
-            kind,
-            text,
-            task,
-        } => links::annotate(&ctx, &target, &kind, &text, task.as_deref()),
-        Command::Reattach { reference, target } => links::reattach(&ctx, &reference, &target),
-        Command::Show { reference } => read::show(&ctx, &reference),
-        Command::Trace { requirement } => read::trace(&ctx, &requirement),
-        Command::Why { unit } => read::why(&ctx, &unit),
-        Command::Search {
-            text,
-            ntype,
-            status,
-            limit,
-        } => read::search(&ctx, &text, ntype.as_deref(), status.as_deref(), limit),
-        Command::Unverified => read::unverified(&ctx),
-        Command::Context { requirements, task } => read::context(&ctx, &requirements, task.as_deref()),
+        Command::Hook { name, args } => shared::hook(&ctx, &name, &args),
+        Command::AgentHook { event } => setup::agent_hook(&ctx, &event),
+        Command::GitDriver(cmd) => shared::git_driver(&ctx, cmd),
     }
 }

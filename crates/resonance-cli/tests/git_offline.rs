@@ -5,10 +5,10 @@
 mod common;
 
 use common::TestRepo;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn annotations_on(repo: &TestRepo, unit: &str) -> Vec<String> {
-    repo.json(&["why", unit])["annotations"]
+    repo.tool("resonance_why", json!({"ref": unit}))["annotations"]
         .as_array()
         .unwrap()
         .iter()
@@ -28,14 +28,7 @@ fn committed_sample() -> TestRepo {
 fn offline_graph_changes_follow_branches() {
     let repo = committed_sample();
     repo.git(&["checkout", "-q", "-b", "feature"]);
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "note",
-        "--text",
-        "feature only",
-    ]);
+    repo.annotate("open", "note", "feature only");
     repo.write("FEATURE.md", "f\n");
     repo.commit_all("feature work");
     assert_eq!(annotations_on(&repo, "open"), ["feature only"]);
@@ -53,14 +46,7 @@ fn offline_graph_changes_follow_branches() {
 #[test]
 fn uncommitted_graph_changes_travel_with_checkouts() {
     let repo = committed_sample();
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "note",
-        "--text",
-        "not committed yet",
-    ]);
+    repo.annotate("open", "note", "not committed yet");
     repo.git(&["checkout", "-q", "-b", "other"]);
     assert_eq!(annotations_on(&repo, "open"), ["not committed yet"]);
     repo.git(&["checkout", "-q", "main"]);
@@ -70,7 +56,7 @@ fn uncommitted_graph_changes_travel_with_checkouts() {
 #[test]
 fn amended_and_rebased_commits_keep_their_graph_changes() {
     let repo = committed_sample();
-    repo.ok(&["annotate", "open", "--kind", "note", "--text", "amended"]);
+    repo.annotate("open", "note", "amended");
     repo.write("A.md", "a\n");
     repo.commit_all("a");
     repo.ok(&["status"]);
@@ -80,7 +66,7 @@ fn amended_and_rebased_commits_keep_their_graph_changes() {
 
     // A branch commit rebased onto a newer main keeps its delta (re-associated by patch ID).
     repo.git(&["checkout", "-q", "-b", "topic", "HEAD~1"]);
-    repo.ok(&["annotate", "close", "--kind", "note", "--text", "topic"]);
+    repo.annotate("close", "note", "topic");
     repo.write("B.md", "b\n");
     repo.commit_all("b");
     repo.ok(&["status"]);
@@ -96,14 +82,7 @@ fn amended_and_rebased_commits_keep_their_graph_changes() {
 #[test]
 fn a_dropped_commit_leaves_its_delta_in_the_detached_pool() {
     let repo = committed_sample();
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "note",
-        "--text",
-        "will be detached",
-    ]);
+    repo.annotate("open", "note", "will be detached");
     repo.write("C.md", "c\n");
     repo.commit_all("c");
     repo.ok(&["status"]);
@@ -173,7 +152,7 @@ fn a_pull_with_teammates_commits_is_classified() {
         mate.path().to_str().unwrap(),
         "main",
     ]);
-    let value = repo.json(&["value"]);
+    let value = repo.tool("resonance_value", json!({}));
     let d = &value["divergences"];
     assert!(d["C1"].as_u64().unwrap_or(0) >= 1, "{value}");
     assert!(d["C2"].as_u64().unwrap_or(0) >= 1, "{value}");
@@ -183,10 +162,10 @@ fn a_pull_with_teammates_commits_is_classified() {
 fn value_counts_what_resonance_did() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&["trace", "FR-001"]);
-    repo.ok(&["why", "open"]);
-    repo.ok(&["context", "FR-001"]);
-    let v = repo.json(&["value"]);
+    repo.tool("resonance_trace", json!({"requirement": "FR-001"}));
+    repo.tool("resonance_why", json!({"ref": "open"}));
+    repo.tool("resonance_context", json!({"requirements": ["FR-001"]}));
+    let v = repo.tool("resonance_value", json!({}));
     assert_eq!(v["traces"], 1);
     assert_eq!(v["whys"], 1);
     assert_eq!(v["contextPacks"], 1);
@@ -194,17 +173,15 @@ fn value_counts_what_resonance_did() {
         v["upgrade"].is_string(),
         "offline: how sharing improves things"
     );
-    let text = repo.ok(&["value"]);
-    assert!(text.contains("nothing leaves this machine"));
 }
 
 #[test]
 fn edits_made_while_no_daemon_ran_are_classified_at_startup() {
     let repo = TestRepo::with_project_daemon();
     repo.declare_sample();
-    repo.ok(&["daemon", "--stop"]);
+    repo.ok(&["daemon", "stop"]);
     repo.write("src/new.rs", "pub fn new() {}\n");
     repo.ok(&["status"]);
-    let v = repo.json(&["value"]);
+    let v = repo.tool("resonance_value", json!({}));
     assert!(v["divergences"]["C3"].as_u64().unwrap_or(0) >= 1, "{v}");
 }

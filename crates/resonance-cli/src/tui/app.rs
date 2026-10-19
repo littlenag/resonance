@@ -2,8 +2,6 @@
 //! [`Client`]; editors are [`Effect`]s the run loop carries out, so tests drive everything with
 //! key events.
 
-use std::path::PathBuf;
-
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::TableState;
 use resonance_core::changes::Entry;
@@ -33,11 +31,6 @@ impl Client for BackendClient {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     None,
-    /// Open an imported item's source document at its line (FR-272); then reload.
-    EditFile {
-        path: PathBuf,
-        line: usize,
-    },
     /// Edit a long field in `$VISUAL`/`$EDITOR`; the result goes to [`App::finish_text`].
     EditText {
         field: String,
@@ -163,7 +156,6 @@ pub fn fields_of(t: NodeType) -> &'static [(&'static str, bool)] {
 
 pub struct App {
     client: Box<dyn Client>,
-    pub root: PathBuf,
     pub screen: Screen,
     /// Where `esc` from help, the log or a form goes back to.
     back: Screen,
@@ -192,11 +184,10 @@ pub struct App {
 
 impl App {
     pub fn new(mut client: Box<dyn Client>) -> Result<App> {
-        let status = client.call("status", json!({}))?;
-        let root = PathBuf::from(status["root"].as_str().unwrap_or("."));
+        // Fails early, with a clear message, when Resonance is not set up.
+        client.call("status", json!({}))?;
         let mut app = App {
             client,
-            root,
             screen: Screen::List,
             back: Screen::List,
             items: Vec::new(),
@@ -284,7 +275,14 @@ impl App {
             self.detail_for = id.clone();
         }
         self.detail = match id {
-            Some(id) => Some(self.client.call("show", json!({"ref": id}))?),
+            Some(id) => {
+                let mut d = self.client.call("show", json!({"ref": id}))?;
+                // Where the item came from, if an agent imported it (FR-124).
+                if let Some(src) = self.selected().and_then(|i| i.source.clone()) {
+                    d["source"] = src;
+                }
+                Some(d)
+            }
             None => None,
         };
         Ok(())
@@ -492,29 +490,10 @@ impl App {
         Ok(Effect::None)
     }
 
-    /// An imported item is edited in its source document (FR-272).
-    fn source_effect(&mut self, item: &SpecItemView) -> Effect {
-        let Some(src) = &item.source else {
-            self.error("this item is imported, but its source is unknown");
-            return Effect::None;
-        };
-        let path = self.root.join(src["path"].as_str().unwrap_or_default());
-        let line = src["line"].as_u64().unwrap_or(1) as usize;
-        self.info(format!(
-            "{} is owned by {}; edit it there.",
-            item.key.as_deref().unwrap_or(&item.title),
-            src["path"].as_str().unwrap_or("?")
-        ));
-        Effect::EditFile { path, line }
-    }
-
     fn open_edit(&mut self) -> Result<Effect> {
         let Some(item) = self.selected().cloned() else {
             return Ok(Effect::None);
         };
-        if item.origin == "import" {
-            return Ok(self.source_effect(&item));
-        }
         let fields = fields_of(item.ntype)
             .iter()
             .map(|(name, long)| {
@@ -578,9 +557,6 @@ impl App {
         let Some(item) = self.selected().cloned() else {
             return Ok(Effect::None);
         };
-        if item.origin == "import" {
-            return Ok(self.source_effect(&item));
-        }
         if item.status == "retired" {
             self.info("Already retired.");
             return Ok(Effect::None);

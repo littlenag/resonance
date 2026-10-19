@@ -50,16 +50,21 @@ pub fn add_line(repo: &Repo, line: &str) -> Result<bool> {
 
 /// Remove the exclusion line, leaving every other line as it was. Returns whether it was there.
 pub fn remove(repo: &Repo) -> Result<bool> {
+    remove_line(repo, EXCLUDE_LINE)
+}
+
+/// Remove one exclusion line, leaving every other line as it was.
+pub fn remove_line(repo: &Repo, line: &str) -> Result<bool> {
     let path = exclude_file(repo)?;
     let Ok(current) = fs::read_to_string(&path) else {
         return Ok(false);
     };
-    if !current.lines().any(|l| l.trim() == EXCLUDE_LINE) {
+    if !current.lines().any(|l| l.trim() == line) {
         return Ok(false);
     }
     let mut next: String = current
         .lines()
-        .filter(|l| l.trim() != EXCLUDE_LINE)
+        .filter(|l| l.trim() != line)
         .map(|l| format!("{l}\n"))
         .collect();
     if !current.ends_with('\n') && next.ends_with('\n') {

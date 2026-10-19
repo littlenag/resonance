@@ -1,6 +1,7 @@
-//! S1 (offline form): AC1 no file modified, AC2 files and imported requirements present and
-//! nothing parsed, AC3 builds unaffected, AC4 deleting `.resonance/` leaves a working project,
-//! AC5 / NFR-041 `git status` unchanged. Also MVP-009, FR-045/FR-046 and MVP-016.
+//! S1 (offline form): AC1 no file modified, AC2 files present, hooks and the agent kit
+//! installed, no requirements read and nothing parsed, AC3 builds unaffected, AC4 deleting
+//! `.resonance/` leaves a working project, AC5 / NFR-041 `git status` unchanged. Also MVP-009,
+//! FR-045/FR-046, MVP-016 and the operations-only CLI (FR-259).
 
 mod common;
 
@@ -10,6 +11,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use common::{SPEC, STORE, TestRepo};
+use serde_json::json;
 
 /// Every file outside `.git/` and `.resonance/`, with its bytes and modification time.
 fn snapshot(root: &Path) -> BTreeMap<String, (Vec<u8>, SystemTime)> {
@@ -85,7 +87,15 @@ fn init_modifies_no_file_and_leaves_git_status_unchanged() {
     let exclude = fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap();
     assert!(exclude.lines().any(|l| l == "/.resonance/"), "FR-025");
 
-    // Re-running init changes nothing.
+    // The offline hooks are installed, and re-running init changes nothing visible.
+    assert!(
+        repo.path().join(".git/hooks/post-checkout").is_file(),
+        "FR-069"
+    );
+    assert!(
+        !repo.path().join(".git/hooks/pre-commit").exists(),
+        "offline: no blocking hooks"
+    );
     let again = repo.ok(&["init", "--no-agent"]);
     assert!(again.contains("already set up"), "{again}");
     let exclude2 = fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap();
@@ -94,27 +104,30 @@ fn init_modifies_no_file_and_leaves_git_status_unchanged() {
 }
 
 #[test]
-fn the_graph_holds_files_and_imported_requirements_but_parses_no_code() {
+fn the_graph_holds_files_but_no_requirements_and_parses_nothing() {
     let repo = project();
     repo.write("secret.env", "TOKEN=1\n");
     repo.write("target/debug/app", "binary output\n");
     repo.write("web/node_modules/lib/index.js", "module.exports = 1;\n");
     repo.write("src/.store.rs.swp", "vim swap\n");
-    repo.ok(&["init", "--no-agent"]);
-    repo.ok(&["import", "spec/requirements.md"]);
+    let out = repo.ok(&["init", "--no-agent"]);
+    assert!(
+        out.contains("No spec items yet") || out.contains("Requirements: 0"),
+        "{out}"
+    );
     let status = repo.json(&["status"]);
     let counts = &status["counts"];
     // README.md, .gitignore, spec/requirements.md, src/store.rs (FR-045, FR-046, .gitignore).
     assert_eq!(counts["files"], 4, "{status}");
     assert_eq!(
-        counts["requirements"], 4,
-        "AC2: FR-001..FR-003 and NFR-001 imported"
+        counts["requirements"], 0,
+        "AC2: init reads no requirements; the agent brings them in (S26)"
     );
     assert_eq!(
         counts["codeUnits"], 0,
         "AC2: nothing parsed; code units are declared"
     );
-    let file = repo.json(&["show", "src/store.rs"]);
+    let file = repo.tool("resonance_show", json!({"ref": "src/store.rs"}));
     assert_eq!(file["node"]["type"], "File");
     for ignored in [
         "secret.env",
@@ -122,8 +135,7 @@ fn the_graph_holds_files_and_imported_requirements_but_parses_no_code() {
         "web/node_modules/lib/index.js",
         "src/.store.rs.swp",
     ] {
-        let out = repo.run(&["show", ignored]);
-        assert!(!out.status.success(), "{ignored} must not be ingested");
+        repo.tool_err("resonance_show", json!({"ref": ignored}));
     }
 }
 
@@ -133,7 +145,7 @@ fn deleting_the_resonance_directory_leaves_a_working_project() {
     let status_before = repo.git_status();
     let build_before = build(&repo);
     repo.ok(&["init", "--no-agent"]);
-    repo.ok(&["import", "spec/requirements.md"]);
+    repo.import_sample();
     fs::remove_dir_all(repo.path().join(".resonance")).unwrap();
     assert_eq!(repo.git_status(), status_before, "AC4");
     assert_eq!(build(&repo), build_before, "AC4");
@@ -167,30 +179,58 @@ fn large_and_binary_files_are_recorded_without_their_bytes() {
     repo.write(".resonance-test-big.txt", &"x".repeat(2048));
     repo.commit_all("assets");
     repo.ok(&["init", "--no-agent"]);
-    let png = repo.json(&["show", "assets/logo.png"]);
+    let png = repo.tool("resonance_show", json!({"ref": "assets/logo.png"}));
     assert_eq!(png["properties"]["stored"], false, "MVP-016: binary");
     let config = repo
         .read(".resonance/config.toml")
         .replace("maxBlobBytes = 5242880", "maxBlobBytes = 1024");
     repo.write(".resonance/config.toml", &config);
     repo.write(".resonance-test-big.txt", &"y".repeat(2048));
-    let big = repo.json(&["show", ".resonance-test-big.txt"]);
+    let big = repo.tool("resonance_show", json!({"ref": ".resonance-test-big.txt"}));
     assert_eq!(
         big["properties"]["stored"], false,
         "MVP-016: larger than ingest.maxBlobBytes"
     );
     assert_eq!(big["properties"]["size"], 2048);
-    let err = repo.fails(&["unit", "add", "assets/logo.png:1-1", "--name", "logo"], 1);
+    let err = repo.tool_err(
+        "resonance_declare_unit",
+        json!({"path": "assets/logo.png", "startLine": 1, "name": "logo"}),
+    );
     assert!(err.contains("not UTF-8 text"), "{err}");
 }
 
 #[test]
 fn commands_before_init_and_usage_errors_have_distinct_exit_codes() {
     let repo = project();
-    let err = repo.fails(&["trace", "FR-001"], 1);
+    let err = repo.fails(&["status"], 1);
     assert!(err.contains("resonance init"), "{err}");
     repo.ok(&["init", "--no-agent"]);
-    repo.fails(&["link", "only-one-arg"], 2);
+    repo.fails(&["check"], 2);
     repo.fails(&["no-such-command"], 2);
-    repo.fails(&["--json", "show", "nothing-by-this-name"], 1);
+    repo.fails(&["recover", "undo", "nothing-by-this-id"], 1);
+}
+
+#[test]
+fn the_cli_offers_operations_only() {
+    // FR-259: graph work is MCP; the CLI sets up, runs, checks and repairs.
+    let repo = project();
+    let help = repo.ok(&["--help"]);
+    for gone in [
+        "import", "req", "decision", "unit", "link", "annotate", "trace", "why", "search", "show",
+        "context", "changes", "review", "compact", "value", "agent ",
+    ] {
+        assert!(
+            !help
+                .lines()
+                .any(|l| l.trim_start().starts_with(&format!("{gone} "))),
+            "`{gone}` is not a CLI command: {help}"
+        );
+    }
+    for kept in [
+        "init", "status", "doctor", "tui", "daemon", "check", "recover", "share",
+    ] {
+        assert!(help.contains(kept), "{kept}: {help}");
+    }
+    repo.fails(&["import", "spec/requirements.md"], 2);
+    repo.fails(&["trace", "FR-001"], 2);
 }

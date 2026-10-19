@@ -1,4 +1,4 @@
-//! The agent kit (B7, mvp.md §5 "Agent kit (B7, S22)"): `agent install` writes the skill, the
+//! The agent kit (B7, mvp.md §5 "Agent kit (B7, S22)"): `init` writes the skill, the
 //! harness hooks and the instructions section for the stage; the agent hook denies `git commit`
 //! while checks fail or change-log entries are pending, and allows it with the developer's
 //! override; `resonance_conventions` differs by stage and participation; `status` and `doctor`
@@ -65,19 +65,17 @@ fn mcp(repo: &TestRepo, name: &str, args: Value) -> (Value, Value) {
     (lines[0]["result"].clone(), body["data"].clone())
 }
 
-/// Handle every pending change-log entry.
+/// Handle every pending change-log entry, as the agent does.
 fn clear_log(repo: &TestRepo) {
-    let seqs: Vec<String> = repo
-        .json(&["changes"])
+    let seqs: Vec<u64> = repo
+        .tool("resonance_changes", json!({}))
         .as_array()
         .unwrap()
         .iter()
-        .map(|e| e["seq"].to_string())
+        .map(|e| e["seq"].as_u64().unwrap())
         .collect();
     if !seqs.is_empty() {
-        let mut args = vec!["changes", "done"];
-        args.extend(seqs.iter().map(String::as_str));
-        repo.ok(&args);
+        repo.tool("resonance_changes_done", json!({"seqs": seqs}));
     }
 }
 
@@ -108,8 +106,8 @@ fn gate(repo: &TestRepo, command: &str) -> String {
 }
 
 #[test]
-fn install_writes_the_offline_kit_locally() {
-    let repo = TestRepo::with_project();
+fn init_writes_the_offline_kit_locally() {
+    let mut repo = TestRepo::with_project();
     assert_eq!(repo.json(&["status"])["agentKit"]["installed"], false);
     assert!(repo.ok(&["status"]).contains("Agent kit: not installed"));
     assert!(repo.ok(&["doctor"]).contains("Agent kit: not installed"));
@@ -117,21 +115,23 @@ fn install_writes_the_offline_kit_locally() {
         ".claude/settings.local.json",
         "{\"permissions\": {\"allow\": [\"Bash(ls:*)\"]}}\n",
     );
+    let calls = repo.fake_claude();
 
-    let dry = repo.json(&["agent", "install", "--dry-run", "--no-mcp"]);
-    assert_eq!(dry["dryRun"], true);
+    let out = repo.json(&["init"]);
+    assert_eq!(out["agent"]["harness"], "claude-code");
+    assert_eq!(out["agent"]["stage"], 1);
     assert!(
-        !repo.path().join("CLAUDE.local.md").exists(),
-        "a dry run writes nothing"
+        fs::read_to_string(&calls)
+            .unwrap()
+            .contains("mcp add --scope local resonance")
     );
-    repo.fails(&["agent", "install", "--no-mcp"], 1);
-
-    let out = repo.json(&["agent", "install", "--yes", "--no-mcp"]);
-    assert_eq!(out["harness"], "claude-code");
-    assert_eq!(out["stage"], 1);
     let skill = fs::read_to_string(repo.home().join(".claude/skills/resonance/SKILL.md")).unwrap();
     assert!(skill.starts_with("---\nname: resonance"), "{skill}");
     assert!(skill.contains("Never edit anything under `.resonance/`"));
+    assert!(
+        skill.contains("resonance_import_items"),
+        "the skill teaches the import"
+    );
 
     let settings: Value = serde_json::from_str(&repo.read(".claude/settings.local.json")).unwrap();
     assert_eq!(
@@ -161,10 +161,10 @@ fn install_writes_the_offline_kit_locally() {
             .is_file()
     );
 
-    // Idempotent.
-    let again = repo.json(&["agent", "install", "--yes", "--no-mcp"]);
+    // Idempotent: running init again refreshes and changes nothing.
+    let again = repo.json(&["init"]);
     assert!(
-        again["steps"]
+        again["agent"]["steps"]
             .as_array()
             .unwrap()
             .iter()
@@ -174,7 +174,7 @@ fn install_writes_the_offline_kit_locally() {
     let settings: Value = serde_json::from_str(&repo.read(".claude/settings.local.json")).unwrap();
     assert_eq!(settings["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
 
-    let st = repo.json(&["agent", "status"]);
+    let st = repo.tool("resonance_conventions", json!({}));
     assert_eq!(st["kit"]["installed"], true);
     assert_eq!(st["kit"]["stale"], false);
     assert!(repo.ok(&["doctor"]).contains("Agent kit: "));
@@ -189,23 +189,8 @@ fn install_writes_the_offline_kit_locally() {
     let check = repo.json(&["check", "--staged"]);
     assert!(check.to_string().contains("R010"), "{check}");
     assert!(repo.ok(&["doctor"]).contains("stale"));
-    repo.ok(&["agent", "update"]);
+    repo.ok(&["init"]);
     assert_eq!(repo.json(&["status"])["agentKit"]["stale"], false);
-
-    let err = repo.fails(&["agent", "install", "--yes", "--shared"], 1);
-    assert!(err.contains("stage 2"), "{err}");
-}
-
-#[test]
-fn generic_agents_get_a_section_and_the_mcp_command() {
-    let repo = TestRepo::with_project();
-    let out = repo.ok(&["agent", "install", "--generic", "--yes"]);
-    assert!(out.contains("AGENTS.md") && out.contains(" mcp"), "{out}");
-    assert!(out.contains("<!-- >>> resonance >>> -->"), "{out}");
-    assert!(
-        !repo.path().join("AGENTS.md").exists(),
-        "offline, printed only"
-    );
 }
 
 #[test]
@@ -250,13 +235,25 @@ fn conventions_differ_by_stage_and_participation() {
 
 #[test]
 fn the_agent_gate_holds_commits_until_the_log_is_empty_or_overridden() {
-    let (repo, _bare) = shared_repo();
-    repo.ok(&["agent", "install", "--yes", "--no-mcp"]);
+    let (mut repo, _bare) = shared_repo();
+    repo.fake_claude();
+    repo.ok(&["init"]);
+    // Agents' own changes are logged here, so that the agent's MCP call stands in for a
+    // person's edit in the TUI.
+    let cfg = repo
+        .read(".resonance/config.toml")
+        .replace("includeAgents = false", "includeAgents = true");
+    repo.write(".resonance/config.toml", &cfg);
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "-q", "-m", "log agents"]);
     clear_log(&repo);
     assert_eq!(gate(&repo, "git status && git log"), "", "not gated");
 
     // A person changed the spec: the log has an entry.
-    repo.ok(&["req", "add", "FR-050", "--text", "Exports are signed"]);
+    repo.tool(
+        "resonance_create_requirement",
+        json!({"key": "FR-050", "text": "Exports are signed"}),
+    );
     repo.write("NOTES.md", "n\n");
     repo.git(&["add", "NOTES.md"]);
     let out = gate(&repo, "git add -A && git commit -m notes");
@@ -266,7 +263,7 @@ fn the_agent_gate_holds_commits_until_the_log_is_empty_or_overridden() {
         .as_str()
         .unwrap();
     assert!(
-        reason.contains("R009") && reason.contains("resonance changes"),
+        reason.contains("R009") && reason.contains("resonance_changes"),
         "{reason}"
     );
     assert!(gate(&repo, "git pull").contains("deny"));
@@ -282,7 +279,7 @@ fn the_agent_gate_holds_commits_until_the_log_is_empty_or_overridden() {
     // Handling the entry clears the gate.
     clear_log(&repo);
     assert_eq!(gate(&repo, "git commit -m notes"), "");
-    let v = repo.json(&["value"]);
+    let v = repo.tool("resonance_value", json!({}));
     assert_eq!(v["agent"]["denials"], 2, "{v}");
     assert_eq!(v["agent"]["overrides"], 1, "{v}");
     assert_eq!(v["agent"]["commitsChecked"], 2, "{v}");
@@ -293,26 +290,14 @@ fn the_agent_gate_holds_commits_until_the_log_is_empty_or_overridden() {
 }
 
 #[test]
-fn agent_cli_changes_carry_the_agent_identity() {
-    let repo = TestRepo::with_project();
-    let mut cmd = repo.command(&["--json", "req", "add", "FR-060", "--text", "By the agent"]);
-    cmd.env("RESONANCE_ACTOR", "agent:claude-code");
-    assert!(cmd.output().unwrap().status.success());
-    let show = repo.json(&["changes"]);
-    assert!(
-        show.as_array().unwrap().is_empty(),
-        "agents are not logged by default"
-    );
-}
-
-#[test]
 fn leaving_removes_the_kit_but_keeps_other_settings() {
-    let (repo, _bare) = shared_repo();
+    let (mut repo, _bare) = shared_repo();
     repo.write(
         ".claude/settings.local.json",
         "{\"permissions\": {\"allow\": [\"Bash(ls:*)\"]}}\n",
     );
-    repo.ok(&["agent", "install", "--yes", "--no-mcp"]);
+    repo.fake_claude();
+    repo.ok(&["init"]);
     let rec: Value = serde_json::from_str(&repo.read(".resonance/local/agent-kit.json")).unwrap();
     assert_eq!(rec["stage"], 2);
     assert_eq!(rec["participation"], "user");

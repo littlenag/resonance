@@ -186,7 +186,7 @@ pub fn resolve_edge(r: &dyn GraphRead, repo: &Repo, cwd: &Path, reference: &str)
     match resolve(r, repo, cwd, reference)? {
         Resolved::Edge(e) => Ok(e),
         Resolved::Node(n) => Err(Error::Invalid(format!(
-            "`{reference}` is a {} ({}); a link ID is needed here (see `resonance show`)",
+            "`{reference}` is a {} ({}); a link ID is needed here (see resonance_show)",
             n.ntype, n.id
         ))),
     }

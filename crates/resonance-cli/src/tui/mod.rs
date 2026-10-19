@@ -60,11 +60,6 @@ fn run_editor(path: &Path, line: Option<usize>) -> Result<()> {
 fn perform(app: &mut App, effect: Effect) -> Result<()> {
     match effect {
         Effect::None => Ok(()),
-        Effect::EditFile { path, line } => {
-            run_editor(&path, Some(line))?;
-            app.refresh();
-            Ok(())
-        }
         Effect::EditText { field, text } => {
             let dir = tempfile_dir()?;
             let path = dir.join(format!("resonance-{field}.md"));
@@ -102,9 +97,7 @@ fn subscribe(ctx: &Ctx) -> Option<mpsc::Receiver<()>> {
 pub fn run(ctx: &Ctx) -> Result<()> {
     use std::io::IsTerminal;
     if !std::io::stdout().is_terminal() {
-        return Err(Error::Usage(
-            "`resonance tui` needs a terminal; use `resonance spec list` in scripts".into(),
-        ));
+        return Err(Error::Usage("`resonance tui` needs a terminal".into()));
     }
     let backend = ctx.backend()?;
     let mut app = App::new(Box::new(BackendClient(backend)))?;

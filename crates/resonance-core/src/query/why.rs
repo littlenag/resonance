@@ -62,7 +62,7 @@ pub fn why(r: &dyn GraphRead, node: &Node) -> Result<WhyView> {
         NodeType::CodeUnit | NodeType::Test | NodeType::File
     ) {
         return Err(Error::Invalid(format!(
-            "why starts from a code unit, test or file; this is a {} (try `resonance trace` or `resonance show`)",
+            "why starts from a code unit, test or file; this is a {} (try resonance_trace or resonance_show)",
             node.ntype
         )));
     }

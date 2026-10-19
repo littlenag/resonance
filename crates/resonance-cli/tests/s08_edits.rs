@@ -7,6 +7,7 @@ mod common;
 use common::{STORE, TestRepo};
 use resonance_core::store::{GraphRead, GraphStore};
 use resonance_store_sqlite::SqliteStore;
+use serde_json::json;
 
 /// The kinds of every operation in the log, in order.
 fn op_kinds(repo: &TestRepo) -> Vec<String> {
@@ -24,21 +25,21 @@ fn op_kinds(repo: &TestRepo) -> Vec<String> {
 fn a_save_is_reflected_by_the_next_command() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    let before = repo.json(&["show", "src/store.rs"]);
+    let before = repo.tool("resonance_show", json!({"ref": "src/store.rs"}));
     let blob = before["properties"]["blob"].as_str().unwrap().to_string();
 
     // Two quick saves of the same size in the same instant must both be seen.
     repo.replace("src/store.rs", "conn.check();", "conn.check1();");
-    let first = repo.json(&["show", "src/store.rs"]);
+    let first = repo.tool("resonance_show", json!({"ref": "src/store.rs"}));
     repo.replace("src/store.rs", "conn.check1();", "conn.check2();");
-    let second = repo.json(&["show", "src/store.rs"]);
+    let second = repo.tool("resonance_show", json!({"ref": "src/store.rs"}));
     assert_ne!(first["properties"]["blob"], blob);
     assert_ne!(
         second["properties"]["blob"], first["properties"]["blob"],
         "racy timestamps are re-hashed"
     );
 
-    let open = repo.json(&["show", "open"]);
+    let open = repo.tool("resonance_show", json!({"ref": "open"}));
     assert_eq!(open["location"]["startLine"], 4);
     // The graph's own copy of the unit's text follows the latest save.
     let id = open["node"]["id"].as_str().unwrap();
@@ -55,7 +56,7 @@ fn edits_between_commands_are_always_reflected() {
     for i in 0..5 {
         let header = format!("// revision {i}\n").repeat(i + 1);
         repo.write("src/store.rs", &format!("{header}{STORE}"));
-        let open = repo.json(&["show", "open"]);
+        let open = repo.tool("resonance_show", json!({"ref": "open"}));
         assert_eq!(
             open["location"]["startLine"],
             4 + i as u64 + 1,
@@ -72,7 +73,7 @@ fn moves_and_approximate_matches_are_recorded_as_identity_operations() {
 
     // Step 4: reformat, recorded as identity.retarget with its confidence.
     repo.write("src/store.rs", &STORE.replace("\n    ", "\n  "));
-    let open = repo.json(&["show", "open"]);
+    let open = repo.tool("resonance_show", json!({"ref": "open"}));
     assert_eq!(open["location"]["state"], "attached");
     let confidence = open["location"]["confidence"].as_f64().unwrap();
     assert!((0.9..1.0).contains(&confidence), "{confidence}");
@@ -88,7 +89,7 @@ fn moves_and_approximate_matches_are_recorded_as_identity_operations() {
         &format!("{}{}", &text[..start], &text[end..]),
     );
     assert_eq!(
-        repo.json(&["show", "open"])["location"]["path"],
+        repo.tool("resonance_show", json!({"ref": "open"}))["location"]["path"],
         "src/open.rs"
     );
     assert!(op_kinds(&repo).contains(&"identity.move".to_string()));
@@ -120,7 +121,7 @@ fn a_low_confidence_match_goes_on_the_repair_list_until_confirmed() {
         .replace("Store { conn }", "Store::new(conn)")
         .replace("pub fn open(path: &str)", "pub fn open(path: &Path)");
     repo.write("src/store.rs", &edited);
-    let open = repo.json(&["show", "open"]);
+    let open = repo.tool("resonance_show", json!({"ref": "open"}));
     assert_eq!(open["location"]["state"], "attached");
     let confidence = open["location"]["confidence"].as_f64().unwrap();
     assert!((0.8..0.9).contains(&confidence), "{confidence}");
@@ -136,8 +137,8 @@ fn a_low_confidence_match_goes_on_the_repair_list_until_confirmed() {
     assert_eq!(item["location"]["startLine"], 4);
 
     // The agent checks the region and confirms it.
-    let out = repo.ok(&["unit", "edit", "open"]);
-    assert!(out.contains("Confirmed"), "{out}");
+    let out = repo.tool("resonance_edit_unit", json!({"ref": "open"}));
+    assert_eq!(out["location"]["confidence"], 1.0, "{out}");
     let after = repo.json(&["status"]);
     assert!(
         !after["repair"]
@@ -146,22 +147,28 @@ fn a_low_confidence_match_goes_on_the_repair_list_until_confirmed() {
             .iter()
             .any(|i| i["kind"] == "low-confidence-anchor")
     );
-    assert_eq!(repo.json(&["show", "open"])["location"]["confidence"], 1.0);
+    assert_eq!(
+        repo.tool("resonance_show", json!({"ref": "open"}))["location"]["confidence"],
+        1.0
+    );
 }
 
 #[test]
 fn rebuild_derived_and_full_reconcile_keep_everything() {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&["unit", "add", "src/store.rs:5-6", "--name", "inner"]);
-    let before = repo.json(&["why", "inner"]);
+    repo.tool(
+        "resonance_declare_unit",
+        json!({"path": "src/store.rs", "startLine": 5, "endLine": 6, "name": "inner"}),
+    );
+    let before = repo.tool("resonance_why", json!({"ref": "inner"}));
     repo.ok(&["rebuild-derived"]);
     repo.ok(&["reconcile", "--full"]);
-    let after = repo.json(&["why", "inner"]);
+    let after = repo.tool("resonance_why", json!({"ref": "inner"}));
     assert_eq!(before["enclosedBy"], after["enclosedBy"]);
     assert_eq!(after["enclosedBy"][0]["label"], "src/store.rs::open");
     assert_eq!(
-        repo.json(&["trace", "FR-001"])["satisfiedBy"][0]["link"]["status"],
+        repo.tool("resonance_trace", json!({"requirement": "FR-001"}))["satisfiedBy"][0]["link"]["status"],
         "asserted"
     );
 }

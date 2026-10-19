@@ -212,7 +212,12 @@ pub fn refresh_statuses(tx: &mut Tx<'_>, node: &str) -> Result<StatusChanges> {
         let requirement_changed = (src.ntype == NodeType::Requirement && src_changed)
             || (dst.ntype == NodeType::Requirement && dst_changed);
         let verified_changed = e.status == LinkStatus::Verified && (src_changed || dst_changed);
-        if requirement_changed || verified_changed {
+        // An item and the document region it came from: either side changing means the agent
+        // has to bring them back in step (FR-124).
+        let source_changed = e.etype == EdgeType::DerivedFrom
+            && matches!(dst.ntype, NodeType::CodeUnit | NodeType::File)
+            && (src_changed || dst_changed);
+        if requirement_changed || verified_changed || source_changed {
             tx.set_edge(&e.id, "status", json!(LinkStatus::Stale))?;
             changes.stale += 1;
         }

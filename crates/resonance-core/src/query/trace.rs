@@ -59,7 +59,7 @@ fn entries(r: &dyn GraphRead, req: &Node, etype: EdgeType) -> Result<Vec<TraceEn
 pub fn trace(r: &dyn GraphRead, req: &Node) -> Result<TraceView> {
     if req.ntype != NodeType::Requirement {
         return Err(Error::Invalid(format!(
-            "trace starts from a requirement; this is a {} (try `resonance why`)",
+            "trace starts from a requirement; this is a {} (try resonance_why)",
             req.ntype
         )));
     }

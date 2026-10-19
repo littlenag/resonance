@@ -8,7 +8,6 @@ use super::{Location, NodeRef, label_of, link_view, node_ref, node_ref_by_id};
 use crate::anchors::AnchorState;
 use crate::anchors::locate::CONFIDENT;
 use crate::error::Result;
-use crate::intent;
 use crate::links::{LINK_TYPES, anchor_of};
 use crate::model::{EdgeType, LinkStatus, NodeType};
 use crate::store::{EdgeQuery, GraphRead, NodeQuery};
@@ -25,12 +24,8 @@ pub enum RepairKind {
     OrphanedAnnotation,
     /// A link whose endpoints changed (MVP-012).
     StaleLink,
-    /// An intent source that could not be read (FR-013).
-    UnreadableIntentSource,
     /// A retired requirement that still has links.
     RetiredRequirementWithLinks,
-    /// A document defines a key that was authored through the CLI or MCP first.
-    IntentKeyConflict,
     /// Concurrent identity operations that could not both hold (§9.4).
     IdentityConflict,
 }
@@ -43,9 +38,7 @@ impl RepairKind {
             RepairKind::OrphanedLink => "orphaned link",
             RepairKind::OrphanedAnnotation => "orphaned annotation",
             RepairKind::StaleLink => "stale link",
-            RepairKind::UnreadableIntentSource => "unreadable intent source",
             RepairKind::RetiredRequirementWithLinks => "retired requirement with links",
-            RepairKind::IntentKeyConflict => "requirement key conflict",
             RepairKind::IdentityConflict => "identity conflict",
         }
     }
@@ -91,7 +84,7 @@ pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
             location: None,
             quote: None,
             suggestion: format!(
-                "decide which identity change holds (re-anchor with `resonance unit edit`, or split/merge again), then `resonance recover dismiss {}`",
+                "decide which identity change holds (re-anchor with resonance_edit_unit, or split or merge again), then dismiss it (resonance_recover, dismiss {})",
                 c.id
             ),
         });
@@ -113,7 +106,7 @@ pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
                     location: Some(Location::from_anchor(&a)),
                     quote: Some(short(&a.quote)),
                     suggestion: format!(
-                        "find what it now corresponds to and run `resonance unit edit {} <path:START-END>`, or `resonance unit remove {}`",
+                        "find what it now corresponds to and re-anchor {} with resonance_edit_unit, or remove {} with resonance_remove_unit",
                         n.id, n.id
                     ),
                 });
@@ -129,7 +122,7 @@ pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
                     location: Some(Location::from_anchor(&a)),
                     quote: Some(short(&a.quote)),
                     suggestion: format!(
-                        "check the region; confirm with `resonance unit edit {}`, or re-anchor with `resonance unit edit {} <path:START-END>`",
+                        "check the region; confirm {} with resonance_edit_unit and no changes, or re-anchor {} with a new region",
                         n.id, n.id
                     ),
                 });
@@ -148,13 +141,16 @@ pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
                 (LinkStatus::Orphaned, EdgeType::Annotates) => (
                     RepairKind::OrphanedAnnotation,
                     format!("annotation `{}` lost its target {}", src.label, dst.label),
-                    format!("re-attach it with `resonance reattach {} <target>`", e.src),
+                    format!(
+                        "re-attach {} to its new target with resonance_reattach",
+                        e.src
+                    ),
                 ),
                 (LinkStatus::Orphaned, _) => (
                     RepairKind::OrphanedLink,
                     format!("{} {} {} lost an endpoint", src.label, e.etype, dst.label),
                     format!(
-                        "re-attach it with `resonance reattach {} <target>`, or remove it with `resonance unlink {}`",
+                        "re-attach {} with resonance_reattach, or remove {} with resonance_unlink",
                         e.id, e.id
                     ),
                 ),
@@ -166,12 +162,12 @@ pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
                     ),
                     if e.etype == EdgeType::Verifies {
                         format!(
-                            "re-run the test with `resonance test {}`, or confirm with `resonance confirm {}`",
+                            "re-run the test with resonance_test ({}), or confirm {} with resonance_confirm",
                             e.id, e.id
                         )
                     } else {
                         format!(
-                            "check that it still holds and run `resonance confirm {}`, or `resonance unlink {}`",
+                            "check that it still holds and confirm {} with resonance_confirm, or remove {} with resonance_unlink",
                             e.id, e.id
                         )
                     },
@@ -197,20 +193,6 @@ pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
         }
     }
 
-    for u in intent::unreadable_sources(r)? {
-        items.push(RepairItem {
-            kind: RepairKind::UnreadableIntentSource,
-            target: u.path.clone(),
-            summary: format!(
-                "{} could not be read ({}); its requirements are kept as they were",
-                u.path, u.reason
-            ),
-            location: None,
-            quote: None,
-            suggestion: "fix or restore the file, or remove it from intent.sources in .resonance/config.toml".into(),
-        });
-    }
-
     for req in
         r.find_nodes(&NodeQuery::of_type(NodeType::Requirement).with_prop("status", "retired"))?
     {
@@ -233,21 +215,7 @@ pub fn repair_list(r: &dyn GraphRead) -> Result<Vec<RepairItem>> {
             ),
             location: None,
             quote: None,
-            suggestion: "move the links to the requirement that replaced it (`resonance reattach`), or remove them (`resonance unlink`)".into(),
-        });
-    }
-
-    for c in intent::key_conflicts(r)? {
-        items.push(RepairItem {
-            kind: RepairKind::IntentKeyConflict,
-            target: c.key.clone(),
-            summary: format!(
-                "{} is defined in {}:{} but was already created with `req add`; the document's version is ignored",
-                c.key, c.path, c.line
-            ),
-            location: None,
-            quote: None,
-            suggestion: "rename one of them".into(),
+            suggestion: "move the links to the requirement that replaced it (resonance_reattach), or remove them (resonance_unlink)".into(),
         });
     }
 

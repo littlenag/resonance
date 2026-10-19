@@ -6,31 +6,24 @@
 mod common;
 
 use common::{STORE, TestRepo};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn annotated() -> TestRepo {
     let repo = TestRepo::with_project();
     repo.declare_sample();
-    repo.ok(&[
-        "annotate",
-        "open",
-        "--kind",
-        "instruction",
-        "--text",
-        "do not change the open() signature",
-    ]);
+    repo.annotate("open", "instruction", "do not change the open() signature");
     repo
 }
 
 fn annotation_on_open(repo: &TestRepo) -> Value {
-    let why = repo.json(&["why", "open"]);
+    let why = repo.tool("resonance_why", json!({"ref": "open"}));
     let list = why["annotations"].as_array().unwrap();
     assert_eq!(list.len(), 1, "{why}");
     list[0].clone()
 }
 
 fn location(repo: &TestRepo, unit: &str) -> (String, u64, u64, String) {
-    let show = repo.json(&["show", unit]);
+    let show = repo.tool("resonance_show", json!({"ref": unit}));
     let l = &show["location"];
     (
         l["path"].as_str().unwrap().to_string(),
@@ -151,7 +144,10 @@ fn a_region_rewritten_beyond_recognition_is_orphaned_and_listed() {
     assert_eq!(unit_item["location"]["path"], "src/store.rs");
 
     // The agent re-anchors it to the new function; the annotation comes back.
-    repo.ok(&["unit", "edit", "open", "src/store.rs:4-7"]);
+    repo.tool(
+        "resonance_edit_unit",
+        json!({"ref": "open", "path": "src/store.rs", "startLine": 4, "endLine": 7}),
+    );
     let a = annotation_on_open(&repo);
     assert_eq!(a["linkStatus"], "asserted");
     assert!(
@@ -181,7 +177,7 @@ fn orphaned_when_the_anchor_disappears_and_restored_when_it_reappears() {
         "AC3"
     );
     assert_eq!(annotation_on_open(&repo)["linkStatus"], "orphaned");
-    let trace = repo.json(&["trace", "FR-001"]);
+    let trace = repo.tool("resonance_trace", json!({"requirement": "FR-001"}));
     assert_eq!(trace["satisfiedBy"][0]["link"]["status"], "orphaned");
 
     // Switching back brings the text back with its context: the anchor is restored (MVP-005).
@@ -191,7 +187,7 @@ fn orphaned_when_the_anchor_disappears_and_restored_when_it_reappears() {
         ("src/store.rs".into(), 4, 9, "attached".into())
     );
     assert_eq!(annotation_on_open(&repo)["linkStatus"], "asserted");
-    let trace = repo.json(&["trace", "FR-001"]);
+    let trace = repo.tool("resonance_trace", json!({"requirement": "FR-001"}));
     assert_eq!(
         trace["satisfiedBy"][0]["link"]["status"], "asserted",
         "links return to their earlier status"
@@ -201,17 +197,11 @@ fn orphaned_when_the_anchor_disappears_and_restored_when_it_reappears() {
 #[test]
 fn annotations_reach_agents_through_why_and_context_packs() {
     let repo = annotated();
-    repo.ok(&[
-        "annotate",
-        "close",
-        "--kind",
-        "call-out",
-        "--text",
-        "flush order matters here",
-        "--task",
-        "fix-shutdown",
-    ]);
-    let pack = repo.json(&["context", "FR-001", "FR-002", "--task", "fix-shutdown"]);
+    repo.tool("resonance_annotate", json!({"target": "close", "kind": "call-out", "text": "flush order matters here", "task": "fix-shutdown"}));
+    let pack = repo.tool(
+        "resonance_context",
+        json!({"requirements": ["FR-001", "FR-002"], "task": "fix-shutdown"}),
+    );
     let texts: Vec<&str> = pack["annotations"]
         .as_array()
         .unwrap()
@@ -240,11 +230,9 @@ fn annotations_reach_agents_through_why_and_context_packs() {
         "locations, not full text (FR-133)"
     );
     assert_eq!(pack["tests"][0]["address"], "tests/store_test.sh::opens_db");
-    let err = repo.fails(
-        &[
-            "annotate", "open", "--kind", "note", "--text", "x", "--task", "t",
-        ],
-        2,
+    let err = repo.tool_err(
+        "resonance_annotate",
+        json!({"target": "open", "kind": "note", "text": "x", "task": "t"}),
     );
     assert!(err.contains("call-out"), "{err}");
 }
@@ -252,13 +240,13 @@ fn annotations_reach_agents_through_why_and_context_packs() {
 #[test]
 fn orphaned_annotations_can_be_reattached() {
     let repo = annotated();
-    repo.ok(&["unit", "remove", "open"]);
+    repo.tool("resonance_remove_unit", json!({"ref": "open"}));
     let a = annotation_on_open_by_search(&repo);
     let id = a["id"].as_str().unwrap().to_string();
-    let reattached = repo.json(&["reattach", &id, "close"]);
+    let reattached = repo.tool("resonance_reattach", json!({"ref": &id, "target": "close"}));
     assert_eq!(reattached["link"]["status"], "asserted");
     assert_eq!(reattached["link"]["other"]["label"], "src/store.rs::close");
-    let why = repo.json(&["why", "close"]);
+    let why = repo.tool("resonance_why", json!({"ref": "close"}));
     assert_eq!(
         why["annotations"][0]["text"],
         "do not change the open() signature"
@@ -266,6 +254,9 @@ fn orphaned_annotations_can_be_reattached() {
 }
 
 fn annotation_on_open_by_search(repo: &TestRepo) -> Value {
-    let hits = repo.json(&["search", "open() signature", "--type", "Annotation"]);
+    let hits = repo.tool(
+        "resonance_search",
+        json!({"text": "open() signature", "type": "Annotation"}),
+    );
     hits[0].clone()
 }

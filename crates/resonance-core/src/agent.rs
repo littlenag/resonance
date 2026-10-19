@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 
 use crate::api::VERSION;
 use crate::error::{Error, Result};
-use crate::history::{Mode, Participation};
+use crate::history::Mode;
 use crate::repo::{Repo, exclude};
 
 /// The part of the agent instructions common to every mode (MVP-014, FR-212).
@@ -177,22 +177,23 @@ pub fn orientation(mode: Mode, kit: &KitStatus) -> Vec<String> {
         mode.participation.as_str()
     )];
     if mode.opted_in() {
-        out.push("The graph is shared and is this developer's source of truth: I check before every commit (`resonance check --staged`), stage the open delta with the code, keep the change log empty before commits, pushes and pulls, and include `resonance review --markdown` in pull requests.".into());
+        out.push("The graph is shared and is this developer's source of truth: I check before every commit (`resonance check --staged`), stage the open delta with the code, keep the change log empty before commits, pushes and pulls, and include the `resonance_review` summary in pull requests.".into());
     } else if mode.shared() {
         out.push("The team shares a graph, but this developer has not opted in: I work normally with git and never touch `.resonance/`.".into());
     } else {
         out.push("Offline: the graph is private to this developer. I keep Resonance invisible in commits and pull requests, and repair the graph after git operations.".into());
         out.push("Offline cannot share links and annotations with teammates or check their commits; `resonance share` does that when the team is ready.".into());
     }
-    out.push("Before changing code I read why it exists (`resonance_why`, `resonance_context`) and honor its annotations; after writing code and tests I declare, link and test them.".into());
+    out.push("I bring your spec documents into the graph when you ask, after showing you a preview, and keep them in step with it afterwards.".into());
+    out.push("Before changing code I read why it exists (`resonance_why`, `resonance_context`) and honor its annotations; after writing code and tests I declare, link and test them, so I can show you how what I built traces back to what you asked for.".into());
     if !kit.installed {
         out.push(
-            "The agent kit is not installed for this working tree: `resonance agent install`."
+            "The agent kit is not installed for this working tree: ask the developer to run `resonance init`."
                 .into(),
         );
     } else if kit.stale {
         out.push(format!(
-            "The agent kit is from Resonance {}; `resonance agent update` refreshes it.",
+            "The agent kit is from Resonance {}; running `resonance init` again refreshes it.",
             kit.version.as_deref().unwrap_or("?")
         ));
     }
@@ -259,9 +260,6 @@ pub struct KitOptions {
     pub home: PathBuf,
     /// Register the MCP server with `claude mcp add` (when Claude Code is installed).
     pub register_mcp: bool,
-    /// From stage 2: put the instructions section in the shared `CLAUDE.md` or `AGENTS.md`
-    /// (the developer confirmed it) instead of `CLAUDE.local.md`.
-    pub shared_section: bool,
     /// Other agents: an `AGENTS.md` section and the MCP command line.
     pub generic: bool,
     pub dry_run: bool,
@@ -433,19 +431,28 @@ fn keep_local(repo: &Repo, rel_path: &str, dry_run: bool, steps: &mut Vec<KitSte
     Ok(())
 }
 
-/// Where the instructions section goes (FR-213).
-fn section_file(repo: &Repo, mode: Mode, opts: &KitOptions) -> (PathBuf, bool) {
-    if opts.generic || (mode.shared() && opts.shared_section) {
-        let claude = repo.root.join("CLAUDE.md");
-        let agents = repo.root.join("AGENTS.md");
-        let file = if opts.generic || (agents.is_file() && !claude.is_file()) {
-            agents
-        } else {
-            claude
-        };
-        return (file, true);
+/// The shared instructions file (FR-213): `AGENTS.md` when the repository uses it and has no
+/// `CLAUDE.md`, else `CLAUDE.md`.
+pub fn shared_section_path(repo: &Repo) -> PathBuf {
+    let claude = repo.root.join("CLAUDE.md");
+    let agents = repo.root.join("AGENTS.md");
+    if agents.is_file() && !claude.is_file() {
+        agents
+    } else {
+        claude
     }
-    (repo.root.join("CLAUDE.local.md"), false)
+}
+
+/// Put the kit's section in the shared instructions file (`share`, from stage 2, after its
+/// preview, MVP-037). The section is worded for every kind of participation.
+pub fn write_shared_section(repo: &Repo, dry_run: bool) -> Result<KitStep> {
+    let path = shared_section_path(repo);
+    let text = with_section(&fs::read_to_string(&path).unwrap_or_default(), SECTION);
+    Ok(KitStep {
+        what: "shared instructions section".into(),
+        path: rel(repo, &path),
+        action: put(&path, &text, dry_run)?,
+    })
 }
 
 /// Install (or refresh) the agent kit (MVP-038).
@@ -471,17 +478,6 @@ pub fn install_kit(repo: &Repo, mode: Mode, opts: &KitOptions) -> Result<KitRepo
         );
         report.section = Some(SECTION.to_string());
         report.mcp_command = Some(mcp);
-        if mode.shared() && opts.shared_section {
-            let (path, _) = section_file(repo, mode, opts);
-            let text = with_section(&fs::read_to_string(&path).unwrap_or_default(), SECTION);
-            let action = put(&path, &text, opts.dry_run)?;
-            files.push(rel(repo, &path));
-            report.steps.push(KitStep {
-                what: "instructions section".into(),
-                path: rel(repo, &path),
-                action,
-            });
-        }
     } else {
         // 1. The MCP server, at local scope.
         report.mcp = Some(install(
@@ -515,8 +511,8 @@ pub fn install_kit(repo: &Repo, mode: Mode, opts: &KitOptions) -> Result<KitRepo
             opts.dry_run,
             &mut report.steps,
         )?;
-        // 4. The instructions section.
-        let (path, shared) = section_file(repo, mode, opts);
+        // 4. The instructions section, local to this developer.
+        let path = repo.root.join("CLAUDE.local.md");
         let text = with_section(&fs::read_to_string(&path).unwrap_or_default(), SECTION);
         report.steps.push(KitStep {
             what: "instructions section".into(),
@@ -524,9 +520,7 @@ pub fn install_kit(repo: &Repo, mode: Mode, opts: &KitOptions) -> Result<KitRepo
             action: put(&path, &text, opts.dry_run)?,
         });
         files.push(rel(repo, &path));
-        if !shared {
-            keep_local(repo, "CLAUDE.local.md", opts.dry_run, &mut report.steps)?;
-        }
+        keep_local(repo, "CLAUDE.local.md", opts.dry_run, &mut report.steps)?;
     }
     if !opts.dry_run {
         let record = KitRecord {
@@ -589,10 +583,16 @@ pub fn uninstall_kit(repo: &Repo) -> Result<Vec<KitStep>> {
     if kit_path(repo).is_file() {
         let _ = fs::remove_file(kit_path(repo));
     }
+    // Exclusions the kit added for files that are now gone.
+    for f in [".claude/settings.local.json", "CLAUDE.local.md"] {
+        if !repo.root.join(f).exists() {
+            exclude::remove_line(repo, &format!("/{f}"))?;
+        }
+    }
     Ok(steps)
 }
 
-/// The conventions, orientation and kit state, for `resonance_conventions` and `agent status`.
+/// The conventions, orientation and kit state, for `resonance_conventions`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConventionsView {
@@ -616,9 +616,4 @@ pub fn conventions_view(repo: &Repo, mode: Mode) -> ConventionsView {
         kit,
         conventions: conventions(mode),
     }
-}
-
-/// Whether participation is offline (for wording).
-pub fn is_offline(mode: Mode) -> bool {
-    mode.participation == Participation::Offline || !mode.shared()
 }

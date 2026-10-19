@@ -23,6 +23,15 @@ pub fn content_hash(bytes: &[u8]) -> String {
 }
 
 /// The deterministic node ID of a requirement, `req:<KEY>` (MVP-008, FR-031, FR-186).
+/// The kind of a requirement, from its key prefix: `NFR-` keys are non-functional.
+pub fn requirement_kind(key: &str) -> &'static str {
+    if key.starts_with("NFR-") {
+        "non-functional"
+    } else {
+        "functional"
+    }
+}
+
 pub fn requirement_id(key: &str) -> String {
     format!("req:{key}")
 }
