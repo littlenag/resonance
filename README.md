@@ -1,34 +1,29 @@
 # resonance
 Giving your agent a semantic API to your source code
 
-Resonance keeps a private graph beside a git repository: requirements and decisions, the code units and tests that realize them, typed links between them, and annotations. It parses no source code. Code units are named regions of files that people and agents declare, and Resonance keeps them attached as files change. Agents reach the graph through an MCP server; people use the CLI.
+Resonance is a superpower for your coding agent and a background tool for you. It keeps a graph beside a git repository: requirements, decisions, designs and constraints, the code units and tests that realize them, typed links between them, and annotations. Your agent works with it through an MCP server: it brings your spec documents in, declares the code and tests it works on, links, annotates, traces and verifies, and so can show you how it understood what you asked for. Resonance parses nothing, neither code nor documents: the agent names what matters, and Resonance keeps it attached as files change.
 
-The MVP is single-developer and offline: the graph lives in `.resonance/`, excluded through `.git/info/exclude`, so nothing is committed and `git status` never changes. See [`spec/mvp.md`](spec/mvp.md) for exactly what it does.
+You use the `resonance` command only to set it up, run its daemon, check on it and repair it, plus `resonance tui` to browse and edit the spec. It starts offline: the graph lives in `.resonance/`, excluded through `.git/info/exclude`, so nothing is committed and `git status` never changes, until your team chooses to share it. See [`spec/mvp.md`](spec/mvp.md) for exactly what it does.
 
 ## Using it
 
-The [user guide](docs/README.md) covers everything Resonance does, starting with a [quick start](docs/quick-start.md). In short:
+The [user guide](docs/README.md) covers everything, starting with a [quick start](docs/quick-start.md). In short:
 
 ```
 cargo install --locked --path crates/resonance-cli   # or: just install
 
 cd your-repository
-resonance init                          # .resonance/, excluded locally; reads every file
-resonance import spec/requirements.md   # `- **FR-001** text` items and `| **NFR-001** | text |` rows
-resonance agent install                 # registers the MCP server with Claude Code, local scope only
-resonance unit add src/store.rs:40-95 --name open --kind function
-resonance test add tests/store.rs:10-20 --name opens --run "cargo test -- --exact opens"
-resonance link open satisfies FR-001
-resonance link opens verifies FR-001
-resonance test FR-001                   # runs linked tests, records evidence, marks links verified
-resonance trace FR-001                  # requirement -> code -> tests, with statuses
-resonance why open                      # code -> requirements, decisions, tests, annotations
-resonance annotate open --kind instruction --text "do not change the signature"
-resonance status                        # counts plus the repair list
-resonance eject                         # export the graph, then remove .resonance/
+resonance init      # mirrors the repository into .resonance/, installs git hooks and the agent kit
+claude              # then ask: "Give me the Resonance orientation."
+                    #           "Bring docs/requirements.md into Resonance."
+                    #           "What implements FR-001, and is it verified?"
+resonance tui       # browse and edit the spec; your edits land in a change log for the agent
+resonance status    # stage, divergences, the repair list, pending changes, the agent kit
+resonance recover   # when git and the graph disagree: what happened, and undo
+resonance eject     # export the graph, then remove every trace of Resonance
 ```
 
-Commands are served by a per-repository daemon that watches the working tree; the first command starts it, and it exits after 30 idle minutes. Every answer reflects the files on disk, including edits made a moment before with any editor or agent. `resonance doctor` shows the daemon's health; `--no-daemon` runs a command in-process instead (for debugging), and `--cached` answers without waiting for changes still being applied. An optional system-wide registry (`resonance registry install`) tracks the daemons of every repository for `doctor`. References accept a requirement key (`FR-001`), a unit address (`src/store.rs::open`), a unique unit name, a file path, or an ID (or a unique prefix of one). Add `--json` to any command for machine-readable output.
+Requests are served by a per-repository daemon that watches the working tree; the first request starts it, and it exits after 30 idle minutes. Every answer reflects the files on disk, including edits made a moment before with any editor or agent. `resonance daemon start|stop|restart` controls it and `resonance doctor` shows its health; `--no-daemon` runs a command in-process instead (for debugging). An optional system-wide registry (`resonance registry install`) tracks the daemons of every repository for `doctor`. Add `--json` to any command for machine-readable output.
 
 ## Development
 

@@ -1,16 +1,16 @@
 # The daemon
 
-Each repository that uses Resonance gets a background process, the **daemon**. It watches the working tree, applies every change to the graph as it happens, and answers every CLI command and agent tool call. You don't need to manage it. This page explains what it does, so you know what to expect and where to look when something seems off.
+Each repository that uses Resonance gets a background process, the **daemon**. It watches the working tree, applies every change to the graph as it happens, and answers your agent's tool calls, the TUI and every `resonance` command. You don't need to manage it. This page explains what it does, so you know what to expect and where to look when something seems off.
 
 ## What it does for you
 
 - **Answers reflect the disk.** Before answering, the daemon makes sure it has seen every file change made before your request, including saves a moment earlier from any editor, agent or script. You never see a stale answer.
-- **Answers are fast.** The graph is kept current in the background, so a command only has to apply the last few changes, not re-read the repository.
+- **Answers are fast.** The graph is kept current in the background, so a request only has to apply the last few changes, not re-read the repository.
 - **Git operations are applied as one batch.** While a git command is changing files (a checkout, pull, rebase or merge), the daemon holds the changes and applies them together when git finishes, so a branch switch is one change rather than hundreds of separate edits.
 
 ## Life cycle
 
-- **Started on demand.** The first `resonance` command in a repository starts its daemon and waits until it's ready. A daemon that starts up first brings the graph up to date with everything that changed while none was running.
+- **Started on demand.** The first request in a repository (from your agent, the TUI or a `resonance` command) starts its daemon and waits until it's ready. A daemon that starts up first brings the graph up to date with everything that changed while none was running.
 - **One per repository.** A lock file (`.resonance/local/daemon.lock`) guarantees that only one daemon runs for each repository. A second one exits immediately.
 - **Exits when idle.** After 30 minutes without requests the daemon exits. Change this with `daemon.idleSeconds` in [the configuration](configuration.md).
 - **Replaced after an upgrade.** If you install a new build of `resonance`, the next command stops the daemon from the old build and starts a new one.
@@ -21,8 +21,9 @@ Each repository that uses Resonance gets a background process, the **daemon**. I
 
 ```
 resonance daemon              # start the daemon if needed and show its health
-resonance daemon --stop       # stop it
-resonance daemon --foreground # run it in this terminal until it's idle or stopped
+resonance daemon start        # start it
+resonance daemon stop         # stop it
+resonance daemon restart      # stop it and start a new one
 ```
 
 ```
@@ -65,13 +66,12 @@ On macOS the daemon uses one FSEvents stream for the whole repository. On Linux 
 
 ## Tests run inside the daemon
 
-`resonance test` (and the agent's `resonance_test`) runs test commands in the daemon. The commands run from the repository root and inherit the daemon's environment, which comes from the command that started the daemon. `RESONANCE_*` variables are the exception: they're passed along with each command.
+Your agent's `resonance_test` runs test commands in the daemon. The commands run from the repository root and inherit the daemon's environment, which comes from the command that started the daemon. `RESONANCE_*` variables are the exception: they're passed along with each command.
 
 If a test needs something from your shell, such as an activated virtual environment, a `PATH` entry or other variables, either make the run command self-contained (`.venv/bin/python -m pytest …`), or restart the daemon from a shell that has them:
 
 ```
-resonance daemon --stop
-resonance status   # starts a new daemon with this shell's environment
+resonance daemon restart   # from a shell with the environment the tests need
 ```
 
 ## Health of every daemon: doctor

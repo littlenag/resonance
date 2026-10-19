@@ -91,27 +91,17 @@ Each finding has a code, a severity (`error`, `attention` or `info`), a message 
 | `R007` | The branch will conflict in `.resonance/` when merged into the trunk. |
 | `R008` | Divergences that need a decision (see [Recovery](recovery.md)). |
 | `R009` | Change-log entries are pending (see [The TUI and the change log](tui-and-change-log.md)). |
-| `R010` | The agent kit is missing or stale (see [Working with agents](agents.md)). |
+| `R010` | The agent kit is missing or stale; `resonance init` installs or refreshes it (see [Working with your agent](agents.md)). |
 
 ## Pull requests
 
-```
-resonance review origin/main..HEAD --markdown
-```
-
-summarizes the graph changes in a range: intent added, changed and retired; links added and removed, and status changes; annotations; identity operations; conflicts; and compactions. Paste it into the pull request description. In `git diff` and `git log -p`, deltas are shown readably too (`resonance show-delta` is registered as their diff driver).
+Your agent puts a summary of the graph changes in the pull request description: intent added, changed and retired; links added and removed, and status changes; annotations; identity operations; conflicts; and compactions. Ask it for one at any time ("Summarize the Resonance changes on this branch"). In `git diff` and `git log -p`, deltas are shown readably too (`resonance git-driver textconv` is registered as their diff driver).
 
 ## Merging and compaction
 
 Deltas are new files, so branches that both change the graph merge without conflicts in `.resonance/`. When both sides changed the same item in incompatible ways, the result is a `Conflict` node, listed by `resonance recover` and `check` (`R006`), never a broken merge.
 
-Deltas accumulate. **Compaction** folds them into a new snapshot:
-
-```
-resonance compact --commit
-```
-
-Compact only on the trunk (`compaction.trunk`, by default the remote's default branch). Resonance compacts on its own when the trunk has more than `compaction.maxDeltas` sealed deltas. Branches made before a compaction still merge cleanly. If two compactions collide, the snapshot merge driver combines them; without the driver, `resonance recover repair-snapshot` does the same after the merge.
+Deltas accumulate. **Compaction** folds them into a new snapshot. Resonance compacts on its own when the trunk (`compaction.trunk`, by default the remote's default branch) has more than `compaction.maxDeltas` sealed deltas, leaving the new snapshot and the removed deltas as changes to commit. To compact sooner, or in a commit of its own, ask your agent. Branches made before a compaction still merge cleanly. If two compactions collide, the snapshot merge driver combines them; without the driver, `resonance recover repair-snapshot` does the same after the merge.
 
 ## Stepping back
 

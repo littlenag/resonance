@@ -1,13 +1,14 @@
 # Quick start
 
-This guide takes about fifteen minutes. You install Resonance, set it up in a small repository, record a few requirements, connect them to code and tests, and see what Resonance tells you as the code changes. At the end you connect Claude Code so your agent can do the same.
+This guide takes about ten minutes. You install Resonance, set it up in a small repository, and then work through your agent: it brings your requirements in, connects them to code and tests, and shows you how what was built traces back to what you asked for.
 
 You need:
 
 - macOS or Linux;
 - `git`;
 - the Rust toolchain (to build Resonance from source);
-- `python3`, only for the example project below.
+- `python3`, only for the example project below;
+- [Claude Code](https://claude.com/claude-code), or another agent that speaks MCP.
 
 ## 1. Install
 
@@ -110,242 +111,84 @@ $ resonance init
 Initialized Resonance in /home/you/inventory/.resonance (offline mode).
 Added /.resonance/ to .git/info/exclude; `git status` is unchanged.
 ...
-Files: 4   Requirements: 0 active, 0 retired   Decisions: 0
-Code units: 0   Tests: 0   Annotations: 0   Test runs recorded: 0
-Links: 0 asserted, 0 verified, 0 stale, 0 orphaned
+hook post-checkout: created
+hook post-merge: created
+hook post-rewrite: created
+Registered the Resonance MCP server with Claude Code (local scope: this project, this developer).
+Agent kit 0.1.0 (stage 1, offline):
+  skill: ~/.claude/skills/resonance/SKILL.md (created)
+  harness hook and RESONANCE_ACTOR: .claude/settings.local.json (created)
+  instructions section: CLAUDE.local.md (created)
 ```
 
-`init` creates `.resonance/` beside your code, adds it to `.git/info/exclude` so git never sees it, and reads every file. It may offer to install the agent kit for Claude Code; answer no for now (step 10 covers it).
+`init` does four things, and changes no tracked file:
 
-Check that git sees nothing:
+1. mirrors the repository into a graph in `.resonance/`, excluded from git through `.git/info/exclude`;
+2. installs a few non-blocking git hooks, so Resonance hears about checkouts, merges and rebases at once;
+3. onboards your agent: the MCP server (in Claude Code's local scope, for this project and you only), a skill, a hook that checks your agent's own git commands, and a short `CLAUDE.local.md` section;
+4. explains what offline mode can and can't do.
 
-```
-$ git status --short
-$
-```
+It reads no requirements. That is your agent's job.
 
-## 4. Import the requirements
+For an agent other than Claude Code, run `resonance init --agent generic`: it prints the MCP command line and a section to add to your agent's instructions. Running `init` again refreshes the hooks and the kit, for example after upgrading Resonance.
 
-```
-$ resonance import docs/requirements.md
-Now importing from: docs/requirements.md
-3 requirements defined in 1 source.
-Requirements added: FR-001, FR-002, FR-003
-Changes to these files are picked up automatically by every command.
-```
+## 4. Meet your agent
 
-From now on, edits to `docs/requirements.md` are picked up automatically. You never need to import it again.
+Start Claude Code in the repository, and ask:
 
-## 5. Declare code units and tests
+> Give me the Resonance orientation.
 
-Resonance does not parse your code. You tell it which regions matter by declaring them as **code units**, by line range or by an exact snippet:
+The agent confirms it can reach Resonance, tells you the mode (offline, stage 1), and says in a few lines what it will now do differently: read why code exists before changing it, record what it builds, keep Resonance invisible to your teammates, and keep the graph healthy.
 
-```
-$ resonance unit add inventory.py:12-15 --name record --kind function
-Code unit inventory.py::record (function)
-  at inventory.py:12-15 [attached]
-  id: 01M4PNTRWSVMAKQ51XXSP1N6ZR
+## 5. Bring your requirements in
 
-$ resonance unit add inventory.py --match 'if quantity < 0:' --name negative_check --kind block
-Code unit inventory.py::negative_check (block)
-  at inventory.py:13 [attached]
+> Bring docs/requirements.md into Resonance.
 
-$ resonance unit add inventory.py:4-5 --name normalize --kind function
-```
+The agent reads the document and shows you a preview before writing anything: the three requirements it found, their keys and text, and any reformatting it suggests. Here the document already has one requirement per list item with its key in bold, so there is nothing to reformat. Once you agree, it brings them in. Each requirement is linked to the lines it came from.
 
-A **test** is a code unit plus the exact command that runs that test alone:
+From then on **the graph is the source of truth**, and the document is its readable companion. If you edit the document, or edit a requirement in the TUI, your agent notices that the two have drifted apart and brings them back in step, asking you which way when it matters. See [Your spec documents](spec-documents.md).
 
-```
-$ resonance test add tests/test_inventory.py:7-10 --name test_record \
-    --run 'python3 -m unittest tests.test_inventory.InventoryTest.test_record'
+## 6. Connect code and tests
 
-$ resonance test add tests/test_inventory.py:12-14 --name test_rejects_negative \
-    --run 'python3 -m unittest tests.test_inventory.InventoryTest.test_rejects_negative'
-```
+> Connect inventory.py and the tests to the requirements, and run the tests.
 
-List what you declared:
+The agent declares the code units it's talking about (`record`, `normalize`), declares each test with the exact command that runs it alone, links them (`satisfies`, `verifies`) and runs the tests. Passing tests mark their links `verified`. Then ask:
 
-```
-$ resonance unit list
-inventory.py:4-5                 inventory.py::normalize                  unit  function   attached
-inventory.py:12-15               inventory.py::record                     unit  function   attached
-inventory.py:13                  inventory.py::negative_check             unit  block      attached
-tests/test_inventory.py:7-10     tests/test_inventory.py::test_record     test  test       attached
-tests/test_inventory.py:12-14    tests/test_inventory.py::test_rejects_negative test  test       attached
-```
+> What implements FR-002, and is it tested?
 
-IDs in your output will differ from the ones shown here. You rarely need them: a unique name such as `record` is enough.
+> Why does normalize exist?
 
-## 6. Link code and tests to requirements
+The agent answers from the graph, so you can see exactly how it connected your intent to the code. Resonance never parsed any of it: the agent named the regions, and Resonance keeps them attached as the code changes.
 
-Code **satisfies** a requirement; a test **verifies** one:
+## 7. Leave notes for the next change
 
-```
-$ resonance link record satisfies FR-001
-Linked: inventory.py::record [asserted] satisfies FR-001 (Requirement)  link 01M4PNTS5X
+> Annotate record: keep it idempotent, callers retry on timeout.
 
-$ resonance link negative_check satisfies FR-002
-$ resonance link normalize satisfies FR-003
-$ resonance link test_record verifies FR-001
-$ resonance link test_record verifies FR-003
-$ resonance link test_rejects_negative verifies FR-002
-```
+Annotations live only in the graph, never in your files. Before your agent changes `record`, it reads them, and treats an `instruction` or `warning` as a constraint. See [Concepts](concepts.md#annotations).
 
-Every new link is `asserted`: someone said it holds, but nothing has checked it yet.
-
-## 7. Verify with tests
-
-`resonance unverified` lists requirements that no passing test backs up:
-
-```
-$ resonance unverified
-3 requirements with no verified test:
-  FR-001    Recording an item stores its name and quantity.  [tests/test_inventory.py::test_record (asserted); 1 satisfying]
-  FR-002    Negative quantities are rejected.  [tests/test_inventory.py::test_rejects_negative (asserted); 1 satisfying]
-  FR-003    Item names are trimmed and lower-cased.  [tests/test_inventory.py::test_record (asserted); 1 satisfying]
-```
-
-Run the tests linked to a requirement. A pass marks their links `verified` and records the result as evidence:
-
-```
-$ resonance test FR-001
-PASS  tests/test_inventory.py::test_record (174 ms)
-      $ python3 -m unittest tests.test_inventory.InventoryTest.test_record
-      verifies FR-001 -> verified
-      verifies FR-003 -> verified
-1 passed, 0 failed, 0 errors.
-
-$ resonance test FR-002
-$ resonance unverified
-Every active requirement has a verified test.
-```
-
-## 8. Ask questions
-
-**Trace** a requirement to the code and tests behind it:
-
-```
-$ resonance trace FR-001
-FR-001 [active, functional]
-  Recording an item stores its name and quantity.
-  source: docs/requirements.md:3
-Satisfied by:
-  [asserted] inventory.py::record at inventory.py:12-15  link 01M4PNTS5X
-Verified by:
-  [verified] tests/test_inventory.py::test_record at tests/test_inventory.py:7-10; last run pass at 2026-10-11T23:47:42.074Z, commit e3216d3b9f  link 01M4PNTSB3
-```
-
-Leave notes on code with **annotations**, and record **decisions**:
-
-```
-$ resonance annotate record --kind instruction --text 'keep record() idempotent: callers retry on timeout'
-$ resonance decision add --title 'Store items in memory' --decision 'Keep items in a dict; no database yet'
-$ resonance link 'Store items in memory' constrains record
-```
-
-Ask **why** a piece of code exists:
-
-```
-$ resonance why record
-Code unit inventory.py::record (function)
-  at inventory.py:12-15 [attached]
-  inside: inventory.py
-Satisfies:
-  [asserted] FR-001: Recording an item stores its name and quantity.  link 01M4PNTS5X
-Constrained by:
-  [asserted] Store items in memory: Keep items in a dict; no database yet
-Covered by tests:
-  (none)
-Annotations:
-  instruction: keep record() idempotent: callers retry on timeout
-```
-
-`resonance context FR-001 FR-002` gathers everything about a set of requirements into one **context pack**: the requirements, decisions, code locations, tests with their latest results, and annotations.
-
-## 9. Change things and watch Resonance keep up
-
-Resonance follows your files as they change, whatever editor or tool changes them. In your editor, add an import and a logger below the docstring at the top of `inventory.py`, for example:
-
-```python
-"""A tiny in-memory inventory."""
-
-import logging
-
-log = logging.getLogger(__name__)
-
-
-def normalize(name):
-```
-
-Save, and ask again:
-
-```
-$ resonance why record
-Code unit inventory.py::record (function)
-  at inventory.py:16-19 [attached]
-...
-```
-
-The unit moved with its code. (Your line numbers depend on how many lines you added.) Rename the file and it follows again:
-
-```
-$ git mv inventory.py stock.py
-$ resonance unit list
-stock.py:8-9                     stock.py::normalize                      unit  function   attached
-stock.py:16-19                   stock.py::record                         unit  function   attached
-...
-```
-
-Now change a requirement. In `docs/requirements.md`, edit FR-003 to read "Item names are trimmed, lower-cased and never empty." Its links become `stale`, because what they promised has changed:
-
-```
-$ resonance trace FR-003
-FR-003 [active, functional]
-  Item names are trimmed, lower-cased and never empty.
-  source: docs/requirements.md:5
-Satisfied by:
-  [stale] stock.py::normalize at stock.py:8-9  link 01M4PNTS8X
-Verified by:
-  [stale] tests/test_inventory.py::test_record at tests/test_inventory.py:7-10; ...  link 01M4PNTSCN
-```
-
-`resonance status` shows the counts and the **repair list**, which holds everything that needs a person's or an agent's judgment, each item with a suggested command:
-
-```
-$ resonance status
-...
-Repair list (2):
-  [stale link] stock.py::normalize satisfies FR-003: an endpoint changed
-      | def normalize(name):
-      |     return name.strip().lower()
-      -> check that it still holds and run `resonance confirm 01M4PNTS8X0DTFQ0SPMV9KC8AN`, or `resonance unlink 01M4PNTS8X0DTFQ0SPMV9KC8AN`
-  ...
-```
-
-Delete code that a unit points to and the unit becomes `orphaned`, with its last known location kept on the repair list. Put the code back (for example by switching back to a branch) and the unit is restored. See [The repair list](repair-list.md).
-
-When you're done experimenting, rename the file back with `git mv stock.py inventory.py`, since the example's tests import `inventory`.
-
-## 10. Connect Claude Code
-
-```
-$ resonance agent install
-```
-
-This installs the agent kit: Resonance's MCP server for this project only (Claude Code's *local* scope), a skill, a hook that checks your agent's own git commands, and a short `CLAUDE.local.md` section. It shows what it will write and asks first; no tracked file changes. Start Claude Code in the repository and ask it for the Resonance orientation. Your agent can then trace requirements, ask why code exists, declare and link what it writes, and run linked tests. See [Working with agents](agents.md).
-
-## 11. Browse the spec
+## 8. Look at the spec yourself
 
 ```
 $ resonance tui
 ```
 
-lists your requirements and decisions; `enter` shows one (`j`/`k` scroll a long item, `n`/`p` move to the next), `a` adds one, and `l` shows the change log, which records your spec edits for your agent to pick up. See [The TUI and the change log](tui-and-change-log.md).
+lists your requirements and decisions; `enter` shows one with its links and latest test results, `e` edits it and `a` adds one. Your edits land in a short change log that your agent reads and handles before its next commit. See [The TUI and the change log](tui-and-change-log.md).
+
+## 9. Check on it
+
+```
+$ resonance status
+```
+
+shows counts, the **repair list** (what needs judgment after code changed, for example a function rewritten beyond recognition), pending change-log entries and the state of the agent kit. Your agent works through the repair list; you can ask it to:
+
+> Work through the Resonance repair list.
+
+When git and the graph disagree after a pull or a rebase, `resonance recover` shows what happened and lets you undo any automatic resolution. See [Recovery](recovery.md).
 
 ## Where to go next
 
 - [Concepts](concepts.md): the ideas behind what you just did.
-- [Code units and tests](code-units-and-tests.md): how anchors follow edits, and what to do when they can't.
+- [Working with your agent](agents.md): what your agent is told, what to ask it, and the gate on its git commands.
 - [Sharing the graph](sharing.md): when your team is ready, commit the graph with the code.
-- [CLI reference](cli-reference.md): every command and option.
 - [Removing Resonance](troubleshooting.md#removing-resonance-from-a-repository): `resonance eject` exports your graph, then removes every trace from the repository.

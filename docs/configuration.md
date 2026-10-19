@@ -11,21 +11,15 @@ stage = 1
 # The oldest resonance version that may write this repository's data.
 minVersion = ""
 
-[intent]
-# Requirement documents imported with `resonance import`.
-sources = []
-
 [ingest]
 # Extra ignore patterns (globs over repository-relative paths), on top of .gitignore and
 # the built-in defaults.
 ignore = []
 # Files larger than this are recorded by hash and size only.
 maxBlobBytes = 5242880
-# Read `@satisfies FR-042` / `@verifies FR-042` tags from file text.
-sourceTags = false
 
 [test]
-# Fallback for tests declared without --run; {name}, {path} and {address} are substituted.
+# Fallback for tests declared without a run command; {name}, {path} and {address} are substituted.
 command = ""
 # Output that means no test actually ran; such a run is recorded as `error`, never `pass`.
 zeroTestsPattern = "running 0 tests"
@@ -55,10 +49,8 @@ includeAgents = false
 | --- | --- | --- |
 | `repository.stage` | `1` | The adoption stage. `resonance share` sets it to 2; don't change it by hand. See [Sharing the graph](sharing.md). |
 | `repository.minVersion` | `""` | The oldest Resonance version that may write this repository's data. Written by `share`. |
-| `intent.sources` | `[]` | Imported requirement documents, in import order. `resonance import` adds to it. Remove a path to stop importing that document. |
 | `ingest.ignore` | `[]` | Extra glob patterns of files and directories not to read, for example `["vendor/**", "*.min.js"]`. |
 | `ingest.maxBlobBytes` | `5242880` (5 MiB) | Larger files are recorded by hash and size only, with no copy of their content. |
-| `ingest.sourceTags` | `false` | Create links from tags in code comments: `// @satisfies FR-003` links the innermost code unit around the tag. Removing the tag removes the link. |
 | `test.command` | `""` | The run command for tests declared without `--run`. `{name}`, `{path}` and `{address}` are replaced with the test's name, file path and address. |
 | `test.zeroTestsPattern` | `"running 0 tests"` | If a test's output contains this text, the run is recorded as `error`, because nothing actually ran. Set it to what your test runner prints when a filter matches nothing (for pytest, `"no tests ran"`). |
 | `test.timeoutSeconds` | `600` | A test still running after this is stopped and recorded as `error`. |
@@ -70,7 +62,7 @@ includeAgents = false
 
 ## Environment variables
 
-Every setting except `intent.sources` can be overridden for one command, or for a whole shell session, with an environment variable:
+Most settings can be overridden for one command, or for a whole shell session, with an environment variable:
 
 | Variable | Overrides |
 | --- | --- |
@@ -84,10 +76,10 @@ Every setting except `intent.sources` can be overridden for one command, or for 
 For example:
 
 ```
-RESONANCE_TEST_TIMEOUT_SECONDS=60 resonance test FR-001
+RESONANCE_TEST_TIMEOUT_SECONDS=60 claude
 ```
 
-These variables travel with each command, so they apply even though an already-running daemon serves it.
+These variables travel with each request, from the CLI, the TUI and your agent's MCP server alike, so they apply even though an already-running daemon serves it.
 
 Two more variables control how Resonance runs rather than what it does:
 
@@ -95,7 +87,7 @@ Two more variables control how Resonance runs rather than what it does:
 | --- | --- |
 | `RESONANCE_NO_DAEMON=1` | Run every command in its own process instead of through the daemon, like `--no-daemon`. |
 | `RESONANCE_RUNTIME_DIR` | Where daemon sockets go (see [The daemon](daemon.md#files)). Keep it short: socket paths are limited to about 100 characters. |
-| `RESONANCE_ACTOR` | Who is running the command: `agent:<name>` for an agent (the agent kit sets `agent:claude-code` for Claude Code), or `human:<email>`. Without it, you are identified by `git config user.email`. Agent changes aren't recorded in the change log by default. |
+| `RESONANCE_ACTOR` | Who is running a `resonance` command: `agent:<name>` for an agent (the agent kit sets `agent:claude-code` for Claude Code), or `human:<email>`. Without it, you are identified by `git config user.email`. |
 | `RESONANCE_OVERRIDE=1` | Before a git command, tells the [agent gate](agents.md#the-agent-gate) that you told the agent to proceed. |
 
 Precedence, from highest to lowest: command-line flags, environment variables, `.resonance/config.toml`, built-in defaults.
@@ -113,13 +105,7 @@ Resonance reads every file in the repository except:
 
 Files that are read but contain NUL bytes, or are larger than `ingest.maxBlobBytes`, are recorded by hash and size only. You can link and annotate them as files, but they can't hold code units.
 
-To check whether a file is read, ask Resonance about it:
-
-```
-resonance show path/to/file
-```
-
-An ignored file isn't in the graph, so `show` reports that nothing matches.
+To check whether a file is read, look at the file count in `resonance status`, or ask your agent whether Resonance knows the file: an ignored file isn't in the graph.
 
 ## The repository root
 

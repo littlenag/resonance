@@ -12,39 +12,30 @@ The TUI is a client of the daemon, so it stays current as files, git and other t
 
 | Screen | Keys |
 | --- | --- |
-| **List**: key, type, status, title, links (and how many are stale), and `doc` for items imported from a document | `↑`/`↓` or `j`/`k` move · `enter` details · `/` filter by text · `t` cycle the type filter · `s` cycle the status filter · `esc` clear filters |
-| **Details**: every field (including `specStatus` and `alsoDefinedIn`), links with their statuses and latest test results, annotations, and the source document | `j`/`k` or `↑`/`↓` scroll · `pgup`/`pgdn` scroll a page · `n`/`p` next and previous item · `esc` back |
+| **List**: key, type, status, title, links (and how many are stale), and `doc` for items your agent brought in from a document | `↑`/`↓` or `j`/`k` move · `enter` details · `/` filter by text · `t` cycle the type filter · `s` cycle the status filter · `esc` clear filters |
+| **Details**: every field, links with their statuses and latest test results, annotations, and the document and line the item came from | `j`/`k` or `↑`/`↓` scroll · `pgup`/`pgdn` scroll a page · `n`/`p` next and previous item · `esc` back |
 | **Edit** (`e`) | `tab`/`↑`/`↓` move between fields · type to change short fields · `enter` on a long field (requirement text, decision text) opens it in `$VISUAL` or `$EDITOR` · `ctrl-s` or `F2` save · `esc` cancel |
 | **Add** (`a`) | `←`/`→` on the type row changes the type · the key is prefilled with the next free key for its prefix (`FR-043`, `ADR-0007`) · an existing key is refused |
 | **Retire** (`r`) | Asks first, and shows how many links the item has. Items are retired, never deleted, and their links stay. |
 | **Change log** (`l`) | The pending entries, read-only. `j`/`k` or `↑`/`↓` scroll · `pgup`/`pgdn` scroll a page · `esc` back |
 | Anywhere | `?` help · `g` reload · `q` quit |
 
-Items imported from a document are owned by that document. For them, `e` and `r` open the document in your editor at the item's line; Resonance picks up your edit when you save. The TUI itself writes no project files.
+Every item is edited here, in place: the graph is the source of truth. For an item your agent brought in from a document, the edit makes its link to the document stale, and your agent updates the document to match (see [Your spec documents](spec-documents.md)). The TUI itself writes no project files.
 
-The same operations are available as commands: `resonance spec list`, `spec show <ref>`, `req add|edit|retire|supersede`, `decision add|edit`, `design add|edit|retire|supersede`, `constraint add|edit|retire|supersede`.
+Everything the TUI does, your agent can do too: ask it to add, change or retire items, or to show you one.
 
 ## The change log
 
-People change the spec in the TUI, with the CLI, in imported documents, or by pulling teammates' work. Agents need to know: a new requirement may need code, a changed one may make tests stale. The change log tells them.
-
-```
-resonance changes
-```
+People change the spec in the TUI, and teammates' changes arrive when you pull. Your agent needs to know: a new requirement may need code, a changed one may make tests stale. The change log tells it. You can see the pending entries in the TUI (`l`), and `resonance status` shows how many there are:
 
 ```
   12  2026-10-18 09:14  tui    FR-043 created: Exports are signed  (human:dev@example.com)
-  13  2026-10-18 09:20  import FR-007 edited (text): Saving is atomic  (tool:resonance)
   14  2026-10-18 09:41  git    ADR-0007 created: Use SQLite  (human:mate@example.com)
 ```
 
-Each entry has a sequence number, a time, who made the change, the item, the kind of change (`created`, `edited`, `retired`, `superseded`), the fields that changed, a one-line summary, and where it came from (`tui`, `cli`, `import` or `git`). There's at most one entry per item: a newer change replaces the pending entry with a new one, keeping the item's state from before the first change.
+Each entry has a sequence number, a time, who made the change, the item, the kind of change (`created`, `edited`, `retired`, `superseded`), the fields that changed, a one-line summary, and where it came from (`tui` or `git`). There's at most one entry per item: a newer change replaces the pending entry with a new one, keeping the item's state from before the first change.
 
-| Command | What it does |
-| --- | --- |
-| `resonance changes [--since SEQ]` | Pending entries, optionally only those after `SEQ`. |
-| `resonance changes show <seq>` | One entry in full, with the item's fields before and after. |
-| `resonance changes done <seq>… [--note TEXT]` | Remove handled entries. The changes themselves stay in the graph's history. |
+Your agent reads and clears the log through the MCP server (`resonance_changes`, `resonance_changes_show` for an entry's before and after, and `resonance_changes_done`). Clearing an entry removes it from the log only; the change itself stays in the graph's history.
 
 Agents keep, in their own memory, the sequence number of the last entry they read. At the start of work and before git operations they read the entries after it, act on each one, and clear what they've handled. Changes agents make themselves aren't logged, unless you set `changes.includeAgents = true`.
 

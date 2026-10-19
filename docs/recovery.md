@@ -43,8 +43,4 @@ Recovery records live in `.resonance/local/recovery/`, and every graph operation
 
 ## What Resonance did for you
 
-```
-resonance value
-```
-
-summarizes, locally, what Resonance did: traces and context packs served, anchors that followed edits on their own, repairs and their recorded cost, divergences by class, and how well the agent kit works (agent commits checked, how many passed on the first attempt, denials and overrides). Offline, it also says what improves when you share the graph. Nothing leaves your machine.
+Ask your agent "What has Resonance done for me here?" It summarizes, locally, what Resonance did: traces and context packs served, anchors that followed edits on their own, repairs and their recorded cost, divergences by class, and how well the agent kit works (agent commits checked, how many passed on the first attempt, denials and overrides). Offline, it also says what improves when you share the graph. Nothing leaves your machine.
