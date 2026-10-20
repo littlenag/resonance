@@ -10,14 +10,16 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::{Engine, UnitEdit, UnitInput};
-use crate::anchors::Anchor;
+use super::Engine;
+use crate::anchors::{Anchor, AnchorState};
 use crate::error::{Error, Result};
-use crate::links::anchor_of;
-use crate::model::{EdgeType, LinkStatus, Node, NodeType, ids};
-use crate::store::{EdgeQuery, NodeQuery};
+use crate::ingest::reconcile::{put_anchor, recompute_containment};
+use crate::links::{self, anchor_of, new_link, new_link_props};
+use crate::model::{Edge, EdgeType, Layer, LinkStatus, Node, NodeType, Props, ids, new_id};
+use crate::ops::{Tx, hlc, kind};
+use crate::store::{EdgeQuery, GraphRead, NodeQuery};
 
 /// The kind of the code units that hold a spec item's source text.
 pub const SPEC_UNIT_KIND: &str = "spec";
@@ -62,6 +64,12 @@ pub struct ImportStep {
     /// The region moved, or is new.
     #[serde(default)]
     pub region_changed: bool,
+    /// Status of the item's document link before this call, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_status: Option<String>,
+    /// Apply confirms that link, taking the current text and region as its baseline.
+    #[serde(default)]
+    pub refresh_link: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// After applying: the item's ID and its source unit's address.
@@ -106,8 +114,6 @@ struct Checked {
     ntype: NodeType,
     existing: Option<Node>,
     anchor: Anchor,
-    region: String,
-    match_text: Option<String>,
     changed: Vec<String>,
 }
 
@@ -129,20 +135,7 @@ impl Engine {
 
     /// The live `spec` code unit an item was imported from, if any (FR-124).
     pub(crate) fn source_unit(&self, item_id: &str) -> Result<Option<Node>> {
-        let r = self.reader();
-        for e in r.find_edges(&EdgeQuery::from(item_id).of_type(EdgeType::DerivedFrom))? {
-            if e.removed {
-                continue;
-            }
-            if let Some(n) = r.get_node(&e.dst)?
-                && n.ntype == NodeType::CodeUnit
-                && !n.retired
-                && n.str_prop("kind") == Some(SPEC_UNIT_KIND)
-            {
-                return Ok(Some(n));
-            }
-        }
-        Ok(None)
+        spec_source_unit(self.reader(), item_id)
     }
 
     fn check_import_item(&self, document: &str, item: &ImportItem) -> Result<Checked> {
@@ -193,6 +186,11 @@ impl Engine {
                 )));
             }
             Some(n) => {
+                for k in required(ntype) {
+                    if item.fields.get(*k).is_some_and(|v| v.trim().is_empty()) {
+                        return Err(Error::Usage(format!("the {ntype} {k} must not be empty")));
+                    }
+                }
                 for (k, v) in &item.fields {
                     if prop_text(n, k).trim() != v.trim() {
                         changed.push(k.clone());
@@ -229,8 +227,6 @@ impl Engine {
             ntype,
             existing,
             anchor,
-            region,
-            match_text,
             changed,
         })
     }
@@ -306,6 +302,14 @@ impl Engine {
                     .into();
                     if let Some(n) = &c.existing {
                         step.id = Some(n.id.clone());
+                        if let Some(e) = document_edge(self.reader(), &n.id)? {
+                            step.link_status = Some(e.status.as_str().to_string());
+                        }
+                        // Confirming an unchanged item, or one whose text still disagrees
+                        // with the region, would erase a real drift (FR-124).
+                        let body = imported_body(c.ntype, &it.fields, Some(n));
+                        step.refresh_link =
+                            step.action != "unchanged" && quote_agrees(&c.anchor.quote, &body);
                     }
                     checked.push(Some(c));
                 }
@@ -321,71 +325,58 @@ impl Engine {
         if dry_run || plan.errors > 0 {
             return Ok(plan);
         }
-        for (i, c) in checked.into_iter().enumerate() {
-            let c = c.expect("validated");
-            let it = &items[i];
-            let key = plan.items[i].key.clone();
-            let id = match &c.existing {
-                None => {
-                    let fields: BTreeMap<String, String> = it
-                        .fields
-                        .iter()
-                        .filter(|(_, v)| !v.trim().is_empty())
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect();
-                    self.spec_add(c.ntype, Some(&key), &fields)?.id
-                }
-                Some(n) => {
-                    if !c.changed.is_empty() {
-                        let fields: BTreeMap<String, String> = c
-                            .changed
-                            .iter()
-                            .map(|k| (k.clone(), it.fields[k].clone()))
-                            .collect();
-                        self.spec_edit(&n.id, &fields)?;
+        // One change set, so a later failure does not leave the earlier items committed.
+        let write = plan.items.iter().any(|s| s.action != "unchanged");
+        let mut unit_ids = vec![None; items.len()];
+        if write {
+            let author = self.actor.id.clone();
+            let provenance = self.provenance().to_string();
+            let flags: Vec<(String, bool, bool)> = plan
+                .items
+                .iter()
+                .map(|s| (s.key.clone(), s.region_changed, s.refresh_link))
+                .collect();
+            let written = self.mutate(|tx| {
+                let mut out = Vec::with_capacity(checked.len());
+                for (i, c) in checked.iter().enumerate() {
+                    let c = c.as_ref().expect("validated");
+                    let (key, region_changed, refresh_link) = &flags[i];
+                    let id = write_spec(tx, c, &items[i].fields, key, &author)?;
+                    let unit = write_unit(tx, c, &id, key, &provenance, &author, *region_changed)?;
+                    ensure_derived(tx, &id, &unit, &provenance, &author)?;
+                    if *refresh_link {
+                        confirm_if_stale(tx, &id, &unit)?;
                     }
-                    n.id.clone()
+                    out.push((id, unit));
                 }
-            };
-            // The source region (FR-124).
-            let unit = match self.source_unit(&id)? {
-                Some(u) => {
-                    if plan.items[i].region_changed {
-                        self.unit_edit(
-                            &u.id,
-                            UnitEdit {
-                                region: Some(c.region.clone()),
-                                match_text: c.match_text.clone(),
-                                ..Default::default()
-                            },
-                        )?;
-                    }
-                    u.id
-                }
-                None => {
-                    self.unit_add(UnitInput {
-                        region: c.region.clone(),
-                        match_text: c.match_text.clone(),
-                        name: key.clone(),
-                        kind: Some(SPEC_UNIT_KIND.into()),
-                        run: None,
-                        test: false,
-                    })?
-                    .id
-                }
-            };
-            let link = self.link(&id, "derivedFrom", &unit, Some(1.0))?;
-            if !matches!(
-                link.link.status,
-                LinkStatus::Asserted | LinkStatus::Verified
-            ) {
-                self.confirm(&link.link.id)?;
+                Ok(out)
+            })?;
+            for (i, (id, unit)) in written.into_iter().enumerate() {
+                plan.items[i].id = Some(id);
+                unit_ids[i] = Some(unit);
             }
-            plan.items[i].id = Some(id);
+        } else {
+            for (i, c) in checked.iter().enumerate() {
+                let Some(n) = c.as_ref().and_then(|c| c.existing.as_ref()) else {
+                    continue;
+                };
+                plan.items[i].id = Some(n.id.clone());
+                if let Some(u) = self.source_unit(&n.id)? {
+                    unit_ids[i] = Some(u.id);
+                }
+            }
+        }
+        for (i, unit) in unit_ids.into_iter().enumerate() {
+            let Some(unit) = unit else { continue };
             plan.items[i].unit = self
                 .reader()
                 .get_node(&unit)?
                 .map(|n| crate::query::label_of(self.reader(), &n).unwrap_or(unit.clone()));
+            if let Some(id) = &plan.items[i].id
+                && let Some(e) = document_edge(self.reader(), id)?
+            {
+                plan.items[i].link_status = Some(e.status.as_str().to_string());
+            }
         }
         plan.applied = true;
         Ok(plan)
@@ -404,4 +395,269 @@ impl Engine {
             "unit": u.id,
         })))
     }
+}
+
+/// Spec items that still carry the removed importer's `source` property and have no
+/// document link. Their keys, for `doctor`.
+pub fn legacy_unlinked_sources(r: &dyn GraphRead) -> Result<Vec<String>> {
+    let mut keys = Vec::new();
+    for t in NodeType::SPEC_ITEMS {
+        for n in r.find_nodes(&NodeQuery::of_type(t).including_retired())? {
+            if n.props.get("source").is_none_or(Value::is_null) {
+                continue;
+            }
+            if spec_source_unit(r, &n.id)?.is_none() {
+                keys.push(n.str_prop("key").unwrap_or(n.id.as_str()).to_string());
+            }
+        }
+    }
+    keys.sort();
+    Ok(keys)
+}
+
+fn spec_source_unit(r: &dyn GraphRead, item_id: &str) -> Result<Option<Node>> {
+    for e in r.find_edges(&EdgeQuery::from(item_id).of_type(EdgeType::DerivedFrom))? {
+        if e.removed {
+            continue;
+        }
+        if let Some(n) = r.get_node(&e.dst)?
+            && n.ntype == NodeType::CodeUnit
+            && !n.retired
+            && n.str_prop("kind") == Some(SPEC_UNIT_KIND)
+        {
+            return Ok(Some(n));
+        }
+    }
+    Ok(None)
+}
+
+fn document_edge(r: &dyn GraphRead, item_id: &str) -> Result<Option<Edge>> {
+    let Some(u) = spec_source_unit(r, item_id)? else {
+        return Ok(None);
+    };
+    Ok(
+        r.find_edges(&EdgeQuery::from(item_id).of_type(EdgeType::DerivedFrom))?
+            .into_iter()
+            .find(|e| !e.removed && e.dst == u.id),
+    )
+}
+
+/// The item text this import would leave in the graph, to compare with the region quote.
+fn imported_body(
+    ntype: NodeType,
+    fields: &BTreeMap<String, String>,
+    existing: Option<&Node>,
+) -> String {
+    let key = match ntype {
+        NodeType::Decision => "decision",
+        NodeType::Design
+            if fields.get("text").is_some_and(|v| !v.trim().is_empty())
+                || (fields.get("text").is_none()
+                    && existing.is_some_and(|n| !prop_text(n, "text").trim().is_empty())) =>
+        {
+            "text"
+        }
+        NodeType::Design => "title",
+        _ => "text",
+    };
+    if let Some(v) = fields.get(key) {
+        return v.trim().to_string();
+    }
+    existing
+        .map(|n| prop_text(n, key).trim().to_string())
+        .unwrap_or_default()
+}
+
+/// The region quote and the item text describe the same passage.
+fn quote_agrees(quote: &str, text: &str) -> bool {
+    let q = quote.split_whitespace().collect::<Vec<_>>().join(" ");
+    let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    !t.is_empty() && !q.is_empty() && (q.contains(&t) || t.contains(&q))
+}
+
+fn spec_node_id(ntype: NodeType, key: &str) -> String {
+    match ntype {
+        NodeType::Requirement => ids::requirement_id(key),
+        NodeType::Decision => format!("dec:{key}"),
+        NodeType::Design => format!("design:{key}"),
+        NodeType::Constraint => format!("constraint:{key}"),
+        _ => new_id(),
+    }
+}
+
+fn field_value(fields: &BTreeMap<String, String>, key: &str) -> Option<String> {
+    fields
+        .get(key)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn write_spec(
+    tx: &mut Tx<'_>,
+    c: &Checked,
+    fields: &BTreeMap<String, String>,
+    key: &str,
+    author: &str,
+) -> Result<String> {
+    let Some(existing) = &c.existing else {
+        let id = spec_node_id(c.ntype, key);
+        let mut p = Props::new();
+        p.insert("key".into(), json!(key));
+        let status = field_value(fields, "status").unwrap_or_else(|| match c.ntype {
+            NodeType::Decision => "accepted".into(),
+            _ => "active".into(),
+        });
+        match c.ntype {
+            NodeType::Requirement => {
+                let text = field_value(fields, "text")
+                    .ok_or_else(|| Error::Usage("a requirement needs text".into()))?;
+                let kind = field_value(fields, "kind")
+                    .unwrap_or_else(|| ids::requirement_kind(key).to_string());
+                p.insert("text".into(), json!(text));
+                p.insert("kind".into(), json!(kind));
+                if let Some(v) = field_value(fields, "priority") {
+                    p.insert("priority".into(), json!(v));
+                }
+            }
+            NodeType::Decision => {
+                let title = field_value(fields, "title")
+                    .ok_or_else(|| Error::Usage("a decision needs a title".into()))?;
+                let decision = field_value(fields, "decision")
+                    .ok_or_else(|| Error::Usage("a decision needs its decision".into()))?;
+                p.insert("title".into(), json!(title));
+                p.insert("decision".into(), json!(decision));
+                p.insert("context".into(), json!(field_value(fields, "context")));
+                p.insert(
+                    "consequences".into(),
+                    json!(field_value(fields, "consequences")),
+                );
+            }
+            NodeType::Design | NodeType::Constraint => {
+                p.insert("title".into(), json!(field_value(fields, "title")));
+                p.insert("text".into(), json!(field_value(fields, "text")));
+                if c.ntype == NodeType::Constraint {
+                    p.insert("scope".into(), json!(field_value(fields, "scope")));
+                }
+            }
+            _ => {}
+        }
+        p.insert("status".into(), json!(status));
+        p.insert("author".into(), json!(author));
+        p.insert("createdAt".into(), json!(hlc::rfc3339(hlc::now_ms())));
+        tx.create_node(&id, c.ntype, Layer::Authored, p)?;
+        return Ok(id);
+    };
+    let mut changed = false;
+    for k in &c.changed {
+        let v = fields[k.as_str()].trim();
+        if existing.props.get(k).and_then(Value::as_str) != Some(v) {
+            tx.set_prop(&existing.id, k, json!(v))?;
+            changed = true;
+        }
+    }
+    if changed {
+        links::refresh_statuses(tx, &existing.id)?;
+        links::stale_document_links(tx, &existing.id)?;
+    }
+    Ok(existing.id.clone())
+}
+
+fn write_unit(
+    tx: &mut Tx<'_>,
+    c: &Checked,
+    item_id: &str,
+    key: &str,
+    provenance: &str,
+    author: &str,
+    region_changed: bool,
+) -> Result<String> {
+    if let Some(u) = spec_source_unit(tx.r(), item_id)? {
+        if region_changed {
+            let old =
+                anchor_of(&u).ok_or_else(|| Error::Store(format!("{} has no anchor", u.id)))?;
+            let new = &c.anchor;
+            if new.path != old.path {
+                put_anchor(tx, &u.id, &old, new)?;
+            } else {
+                tx.apply(
+                    kind::IDENTITY_RETARGET,
+                    json!({
+                        "id": u.id,
+                        "from": old.location(),
+                        "to": new.location(),
+                        "confidence": 1.0,
+                        "anchor": new,
+                    }),
+                )?;
+            }
+            if old.state == AnchorState::Orphaned {
+                links::restore_links(tx, &u.id)?;
+            }
+            links::refresh_statuses(tx, &u.id)?;
+            recompute_containment(tx, &old.path)?;
+            if new.path != old.path {
+                recompute_containment(tx, &new.path)?;
+            }
+        }
+        return Ok(u.id);
+    }
+    let id = new_id();
+    let mut p = Props::new();
+    p.insert("name".into(), json!(key));
+    p.insert("kind".into(), json!(SPEC_UNIT_KIND));
+    p.insert("path".into(), json!(c.anchor.path));
+    p.insert("anchor".into(), serde_json::to_value(&c.anchor)?);
+    p.insert("author".into(), json!(author));
+    p.insert("provenance".into(), json!(provenance));
+    p.insert("createdAt".into(), json!(hlc::rfc3339(hlc::now_ms())));
+    tx.create_node(&id, NodeType::CodeUnit, Layer::Authored, p)?;
+    recompute_containment(tx, &c.anchor.path)?;
+    Ok(id)
+}
+
+fn ensure_derived(
+    tx: &mut Tx<'_>,
+    src: &str,
+    dst: &str,
+    provenance: &str,
+    author: &str,
+) -> Result<()> {
+    let exists = tx
+        .r()
+        .find_edges(&EdgeQuery::from(src).of_type(EdgeType::DerivedFrom))?
+        .into_iter()
+        .any(|e| !e.removed && e.dst == dst);
+    if exists {
+        return Ok(());
+    }
+    let s = tx
+        .r()
+        .get_node(src)?
+        .ok_or_else(|| Error::NotFound(src.to_string()))?;
+    let d = tx
+        .r()
+        .get_node(dst)?
+        .ok_or_else(|| Error::NotFound(dst.to_string()))?;
+    super::check_link_types(EdgeType::DerivedFrom, &s, &d)?;
+    super::require_live(&s, src)?;
+    super::require_live(&d, dst)?;
+    let props = new_link_props(tx.r(), src, dst, provenance, author, Some(1.0))?;
+    let edge = new_link(EdgeType::DerivedFrom, src, dst, props);
+    tx.add_edge(&edge)
+}
+
+fn confirm_if_stale(tx: &mut Tx<'_>, src: &str, dst: &str) -> Result<()> {
+    let Some(e) = tx
+        .r()
+        .find_edges(&EdgeQuery::from(src).of_type(EdgeType::DerivedFrom))?
+        .into_iter()
+        .find(|e| !e.removed && e.dst == dst)
+    else {
+        return Ok(());
+    };
+    if e.status != LinkStatus::Stale {
+        return Ok(());
+    }
+    tx.set_edge(&e.id, "status", json!(LinkStatus::Asserted))?;
+    links::refresh_hashes(tx, &e)
 }

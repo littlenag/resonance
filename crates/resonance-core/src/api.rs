@@ -17,7 +17,9 @@ mod agent_hook;
 mod import;
 mod shared;
 pub use agent_hook::{GateDecision, git_subcommands};
-pub use import::{ImportItem, ImportPlan, ImportRegion, ImportStep, SPEC_UNIT_KIND};
+pub use import::{
+    ImportItem, ImportPlan, ImportRegion, ImportStep, SPEC_UNIT_KIND, legacy_unlinked_sources,
+};
 
 pub use shared::{
     CheckReport, Finding, JoinView, LeaveView, ReviewView, ShareView, governs, render_delta,
@@ -2226,6 +2228,8 @@ impl Engine {
             }
             if changed {
                 links::refresh_statuses(tx, &id)?;
+                // Status, priority and kind are not in `node_hash` (FR-124).
+                links::stale_document_links(tx, &id)?;
             }
             Ok(())
         })?;
@@ -2240,6 +2244,7 @@ impl Engine {
         self.mutate(|tx| {
             tx.set_prop(&id, "status", json!("retired"))?;
             links::refresh_statuses(tx, &id)?;
+            links::stale_document_links(tx, &id)?;
             Ok(())
         })?;
         Ok((self.spec_item(&id)?, link_count))

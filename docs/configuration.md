@@ -87,7 +87,7 @@ Two more variables control how Resonance runs rather than what it does:
 | --- | --- |
 | `RESONANCE_NO_DAEMON=1` | Run every command in its own process instead of through the daemon, like `--no-daemon`. |
 | `RESONANCE_RUNTIME_DIR` | Where daemon sockets go (see [The daemon](daemon.md#files)). Keep it short: socket paths are limited to about 100 characters. |
-| `RESONANCE_ACTOR` | Who is running a `resonance` command: `agent:<name>` for an agent (the agent kit sets `agent:claude-code` for Claude Code), or `human:<email>`. Without it, you are identified by `git config user.email`. |
+| `RESONANCE_ACTOR` | Who is running a `resonance` command: `agent:<name>` for an agent (the agent kit sets `agent:claude-code` for Claude Code), or `human:<email>`. Without it, you are identified by `git config user.email`. `resonance tui` is always that git user, so a TUI started from the agent's environment still records your edits. |
 | `RESONANCE_OVERRIDE=1` | Before a git command, tells the [agent gate](agents.md#the-agent-gate) that you told the agent to proceed. |
 
 Precedence, from highest to lowest: command-line flags, environment variables, `.resonance/config.toml`, built-in defaults.

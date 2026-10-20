@@ -194,8 +194,22 @@ fn check_repo(repo: &Repo, problems: &mut Vec<String>) -> RepoCheck {
     if !check.excluded && !mode.shared() {
         problems.push("/.resonance/ is missing from .git/info/exclude; git will see .resonance/ (run `resonance init` to restore it)".into());
     }
+    if let Ok(text) = std::fs::read_to_string(repo.config_path()) {
+        problems.extend(resonance_core::repo::config::legacy_config_notes(&text));
+    }
     match open_store(&repo.store_path()) {
         Ok(store) => {
+            if let Ok(keys) = resonance_core::api::legacy_unlinked_sources(&*store)
+                && !keys.is_empty()
+            {
+                problems.push(format!(
+                    "{} spec item{} still {} a legacy `source` property and no document link (for example {}). Re-import with `resonance_import_items`.",
+                    keys.len(),
+                    if keys.len() == 1 { "" } else { "s" },
+                    if keys.len() == 1 { "has" } else { "have" },
+                    keys[0]
+                ));
+            }
             check.schema_version = store.schema_version().ok();
             if check.schema_version.is_some_and(|v| v > SCHEMA_VERSION) {
                 problems.push(format!(

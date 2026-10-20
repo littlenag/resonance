@@ -225,6 +225,35 @@ pub fn refresh_statuses(tx: &mut Tx<'_>, node: &str) -> Result<StatusChanges> {
     Ok(changes)
 }
 
+/// Mark document links stale when a spec item's fields change (FR-124, FR-272).
+///
+/// `node_hash` covers only some of an item's text, so a change to `status`, `priority`
+/// or `kind` would otherwise leave `derivedFrom` asserted. The target is the document:
+/// a code unit of kind `spec`, or a file. Other `derivedFrom` edges (a requirement
+/// refined from another requirement) are left to the hash rules.
+pub fn stale_document_links(tx: &mut Tx<'_>, node: &str) -> Result<StatusChanges> {
+    let mut changes = StatusChanges::default();
+    for e in links_of(tx.r(), node)? {
+        if e.etype != EdgeType::DerivedFrom || e.src != node {
+            continue;
+        }
+        if matches!(e.status, LinkStatus::Orphaned | LinkStatus::Stale) {
+            continue;
+        }
+        let Some(dst) = tx.r().get_node(&e.dst)? else {
+            continue;
+        };
+        let document = dst.ntype == NodeType::File
+            || (dst.ntype == NodeType::CodeUnit && dst.str_prop("kind") == Some("spec"));
+        if !document {
+            continue;
+        }
+        tx.set_edge(&e.id, "status", json!(LinkStatus::Stale))?;
+        changes.stale += 1;
+    }
+    Ok(changes)
+}
+
 /// Refresh a link's endpoint hashes to the current content (on confirm and verification).
 pub fn refresh_hashes(tx: &mut Tx<'_>, edge: &Edge) -> Result<()> {
     let (src_hash, dst_hash) = endpoint_hashes(tx.r(), &edge.src, &edge.dst)?;

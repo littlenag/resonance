@@ -170,6 +170,30 @@ impl Config {
     }
 }
 
+/// Notes for configuration this build no longer reads (the removed document importer).
+pub fn legacy_config_notes(text: &str) -> Vec<String> {
+    let Ok(value) = toml::from_str::<toml::Value>(text) else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    if value.get("intent").and_then(|t| t.get("sources")).is_some() {
+        notes.push(
+            "`.resonance/config.toml` still has `intent.sources`, which Resonance no longer reads. Re-import those documents with `resonance_import_items`."
+                .into(),
+        );
+    }
+    if value
+        .get("ingest")
+        .is_some_and(|t| t.get("sourceTags").is_some() || t.get("source_tags").is_some())
+    {
+        notes.push(
+            "`.resonance/config.toml` still has `ingest.sourceTags`, which Resonance no longer reads. Re-import those documents with `resonance_import_items`."
+                .into(),
+        );
+    }
+    notes
+}
+
 /// Set one value in the configuration file, keeping every other line (and comments). `value`
 /// is a TOML literal, for example `2` or `"0.1.0"`.
 pub fn set_value(path: &Path, table: &str, key: &str, value: &str) -> Result<()> {

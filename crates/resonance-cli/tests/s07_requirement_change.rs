@@ -146,6 +146,101 @@ fn retired_requirements_with_links_are_listed() {
 }
 
 #[test]
+fn reimporting_an_unchanged_item_keeps_a_stale_document_link() {
+    let repo = TestRepo::with_project();
+    repo.import_sample();
+    let edited = "The store opens a database at a path, and creates it.";
+    repo.tool(
+        "resonance_edit_item",
+        json!({"ref": "FR-001", "fields": {"text": edited}}),
+    );
+    assert_eq!(source_link_status(&repo, "FR-001"), "stale");
+    let item = json!({"type": "Requirement", "key": "FR-001",
+        "fields": {"text": edited},
+        "region": {"startLine": 3, "endLine": 3}});
+    let plan = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": [item.clone()], "dryRun": true}),
+    );
+    assert_eq!(plan["items"][0]["action"], "unchanged", "{plan}");
+    assert_eq!(plan["items"][0]["linkStatus"], "stale", "{plan}");
+    assert_eq!(plan["items"][0]["refreshLink"], false, "{plan}");
+    let applied = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": [item]}),
+    );
+    assert_eq!(applied["applied"], true, "{applied}");
+    assert_eq!(applied["items"][0]["linkStatus"], "stale", "{applied}");
+    assert_eq!(source_link_status(&repo, "FR-001"), "stale");
+}
+
+#[test]
+fn reimporting_text_that_disagrees_with_the_region_does_not_reset_the_link() {
+    let repo = TestRepo::with_project();
+    repo.import_sample();
+    repo.replace(
+        "spec/requirements.md",
+        "The store opens a database at a path.",
+        "The store opens a database at a path, creating it if missing.",
+    );
+    assert_eq!(source_link_status(&repo, "FR-001"), "stale");
+    let old = json!({"type": "Requirement", "key": "FR-001",
+        "fields": {"text": "The store opens a database at a path."},
+        "region": {"startLine": 3, "endLine": 3}});
+    let plan = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": [old.clone()], "dryRun": true}),
+    );
+    assert_eq!(plan["items"][0]["action"], "unchanged", "{plan}");
+    assert_eq!(plan["items"][0]["refreshLink"], false, "{plan}");
+    repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": [old]}),
+    );
+    assert_eq!(source_link_status(&repo, "FR-001"), "stale");
+
+    let other = json!({"type": "Requirement", "key": "FR-001",
+        "fields": {"text": "A sentence that is not in the document."},
+        "region": {"startLine": 3, "endLine": 3}});
+    let plan = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": [other.clone()], "dryRun": true}),
+    );
+    assert_eq!(plan["items"][0]["action"], "update", "{plan}");
+    assert_eq!(plan["items"][0]["refreshLink"], false, "{plan}");
+    repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": [other]}),
+    );
+    assert_eq!(source_link_status(&repo, "FR-001"), "stale");
+    assert_eq!(
+        repo.tool("resonance_show_item", json!({"ref": "FR-001"}))["text"],
+        "A sentence that is not in the document."
+    );
+}
+
+#[test]
+fn editing_priority_or_retiring_stales_the_document_link() {
+    let repo = TestRepo::with_project();
+    repo.import_sample();
+    repo.tool(
+        "resonance_edit_item",
+        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+    );
+    assert_eq!(source_link_status(&repo, "FR-001"), "stale");
+    let kinds: Vec<String> = repo.json(&["status"])["repair"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["kind"].as_str().unwrap().to_string())
+        .collect();
+    assert!(kinds.contains(&"stale-link".to_string()), "{kinds:?}");
+
+    repo.tool("resonance_retire_item", json!({"ref": "FR-002"}));
+    assert_eq!(source_link_status(&repo, "FR-002"), "stale");
+}
+
+#[test]
 fn every_item_is_edited_through_the_graph() {
     let repo = TestRepo::with_project();
     repo.import_sample();

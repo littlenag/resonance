@@ -218,3 +218,40 @@ fn the_agent_previews_then_brings_items_in_linked_to_their_regions() {
     // Nothing here was written by Resonance into the documents.
     assert_eq!(repo.git_status(), "");
 }
+
+#[test]
+fn a_blank_update_is_rejected_before_anything_is_written() {
+    let repo = TestRepo::with_project();
+    repo.import_sample();
+    let before = repo.json(&["status"])["counts"]["requirements"].clone();
+    let items = json!([
+        {"type": "Requirement", "key": "FR-050", "fields": {"text": "A new requirement."},
+            "region": {"startLine": 3, "endLine": 3}},
+        {"type": "Requirement", "key": "FR-001", "fields": {"text": "  "},
+            "region": {"startLine": 3, "endLine": 3}},
+    ]);
+    let dry = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": items, "dryRun": true}),
+    );
+    assert_eq!(dry["applied"], false, "{dry}");
+    assert!(dry["errors"].as_u64().unwrap() >= 1, "{dry}");
+    assert!(
+        dry["items"][1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("must not be empty"),
+        "{dry}"
+    );
+    let applied = repo.tool(
+        "resonance_import_items",
+        json!({"document": "spec/requirements.md", "items": items}),
+    );
+    assert_eq!(applied["applied"], false, "{applied}");
+    assert_eq!(repo.json(&["status"])["counts"]["requirements"], before);
+    let missing = repo.tool_err("resonance_show_item", json!({"ref": "FR-050"}));
+    assert!(
+        missing.contains("FR-050") || missing.contains("not"),
+        "{missing}"
+    );
+}

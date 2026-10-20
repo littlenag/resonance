@@ -162,6 +162,7 @@ pub struct SpecItemView {
     pub kind: Option<String>,
     pub priority: Option<String>,
     /// The document region the item came from, from its `derivedFrom` link (FR-124).
+    /// A legacy `source` property left by the removed importer is not a document link.
     pub source: Option<Value>,
     /// Every property, for editors.
     pub props: Value,
@@ -195,7 +196,7 @@ pub fn spec_item_view(node: &Node) -> SpecItemView {
         status: status_of(node),
         kind: node.str_prop("kind").map(String::from),
         priority: node.str_prop("priority").map(String::from),
-        source: node.props.get("source").cloned().filter(|v| !v.is_null()),
+        source: None,
         props: Value::Object(node.props.clone()),
         pending_change: None,
         links: 0,
@@ -226,7 +227,7 @@ pub fn requirement_view(node: &Node) -> RequirementView {
         text: s(node, "text"),
         kind: s(node, "kind"),
         status: s(node, "status"),
-        source: node.props.get("source").cloned().filter(|v| !v.is_null()),
+        source: None,
         priority: node.str_prop("priority").map(String::from),
     }
 }

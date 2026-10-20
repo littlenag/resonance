@@ -86,7 +86,7 @@ Daemons:
 No problems found.
 ```
 
-`doctor` checks this repository (that the graph opens and passes an integrity check, its schema version, and that `.resonance/` is still excluded from git) and every daemon it knows about on this machine: whether it answers, its state, how far behind the disk it is, its last error, and whether it runs a different build of Resonance than yours. It lists any problems it finds. Run it from inside a repository, or from anywhere to see only the daemons.
+`doctor` checks this repository (that the graph opens and passes an integrity check, its schema version, and that `.resonance/` is still excluded from git) and every daemon it knows about on this machine: whether it answers, its state, how far behind the disk it is, its last error, and whether it runs a different build of Resonance than yours. It also reports a config that still has `intent.sources` or `ingest.sourceTags`, and spec items that still have a legacy `source` property and no document link: those came from the removed importer, and one `resonance_import_items` call replaces them. It lists any problems it finds. Run it from inside a repository, or from anywhere to see only the daemons.
 
 ## The registry (optional)
 

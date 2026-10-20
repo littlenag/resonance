@@ -12,14 +12,13 @@ use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use resonance_core::api::Engine;
 use resonance_core::lifecycle;
-use resonance_core::ops::Actor;
 use resonance_core::repo::Repo;
 use resonance_core::service::Direct;
 use serde_json::{Value, json};
 
 use super::app::{App, BackendClient, Client, Effect, Screen};
 use super::{editor_command, ui};
-use crate::commands::open_store;
+use crate::commands::{actor_from, open_store, person_actor};
 
 const SPEC: &str = "# Requirements\n\n- **FR-001** The store opens a database at a path.\n- **FR-002** Saving is atomic.\n";
 
@@ -51,15 +50,11 @@ fn setup() -> (tempfile::TempDir, App) {
     git(p, &["add", "-A"]);
     git(p, &["commit", "-q", "-m", "spec"]);
     let repo = Repo::discover(p).unwrap();
+    let actor = person_actor(&repo);
+    assert_eq!(actor.to_string(), "human:person@example.com");
     lifecycle::init(&repo, &open_store).unwrap();
     let store = open_store(&repo.store_path()).unwrap();
-    let engine = Engine::open(
-        repo,
-        store,
-        Actor::human("person@example.com"),
-        p.to_path_buf(),
-    )
-    .unwrap();
+    let engine = Engine::open(repo, store, actor, p.to_path_buf()).unwrap();
     let mut client = BackendClient(Box::new(Direct { engine }));
     client
         .call(
@@ -245,6 +240,27 @@ fn adds_with_a_suggested_key_and_refuses_a_duplicate() {
     assert_eq!(app.log[0].origin, "tui");
     assert_eq!(app.log[0].actor, "human:person@example.com");
     assert!(render(&mut app).contains("FR-003 created"));
+}
+
+#[test]
+fn a_tui_edit_is_logged_for_the_git_user_when_the_agent_kit_set_the_actor() {
+    let (_dir, mut app) = setup();
+    let repo = Repo::discover(_dir.path()).unwrap();
+    // The kit's value would make a CLI command an agent, whose edits are not logged.
+    assert_eq!(
+        actor_from(&repo, Some("agent:claude-code")).to_string(),
+        "agent:claude-code"
+    );
+    call(
+        &mut app,
+        "spec_edit",
+        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+    );
+    press(&mut app, 'l');
+    assert_eq!(app.log.len(), 1, "{:?}", app.log);
+    assert_eq!(app.log[0].origin, "tui");
+    assert_eq!(app.log[0].actor, "human:person@example.com");
+    assert_eq!(app.log[0].fields, vec!["priority".to_string()]);
 }
 
 #[test]

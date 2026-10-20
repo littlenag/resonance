@@ -18,7 +18,7 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use resonance_core::daemon::client::Remote;
 use resonance_core::error::{Error, Result};
 
-use crate::commands::{Ctx, exe, human_actor};
+use crate::commands::{Ctx, exe, person_actor};
 use app::{App, BackendClient, Effect};
 
 /// The editor: `$VISUAL`, then `$EDITOR`, then `vi`.
@@ -86,7 +86,7 @@ fn subscribe(ctx: &Ctx) -> Option<mpsc::Receiver<()>> {
         return None;
     }
     let repo = ctx.repo().ok()?;
-    let remote = Remote::connect(&repo, &exe().ok()?, human_actor(&repo), ctx.cwd.clone()).ok()?;
+    let remote = Remote::connect(&repo, &exe().ok()?, person_actor(&repo), ctx.cwd.clone()).ok()?;
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let _ = remote.subscribe(|_| tx.send(()).is_ok());
@@ -99,7 +99,8 @@ pub fn run(ctx: &Ctx) -> Result<()> {
     if !std::io::stdout().is_terminal() {
         return Err(Error::Usage("`resonance tui` needs a terminal".into()));
     }
-    let backend = ctx.backend()?;
+    // The TUI is the person, even when the agent kit set RESONANCE_ACTOR (MVP-040).
+    let backend = ctx.open_backend(person_actor(&ctx.repo()?))?;
     let mut app = App::new(Box::new(BackendClient(backend)))?;
     let changes = subscribe(ctx);
     let mut terminal = ratatui::init();

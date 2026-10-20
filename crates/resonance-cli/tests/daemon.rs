@@ -15,8 +15,10 @@ use std::time::{Duration, Instant};
 use common::TestRepo;
 use resonance_core::daemon::client::Remote;
 use resonance_core::daemon::runtime;
-use resonance_core::ops::Actor;
+use resonance_core::model::{Layer, NodeType};
+use resonance_core::ops::{Actor, Tx};
 use resonance_core::repo::Repo;
+use resonance_core::store::{GraphScope, GraphStore};
 use serde_json::{Value, json};
 
 /// A command that always goes through the daemon.
@@ -344,6 +346,41 @@ fn doctor_finds_daemons_without_the_registry() {
         text.contains("ready") && text.contains("No problems found"),
         "{text}"
     );
+}
+
+#[test]
+fn doctor_reports_a_removed_importer() {
+    let repo = TestRepo::with_project();
+    ok(&repo, &["daemon", "stop"]);
+    let cfg = repo.read(".resonance/config.toml");
+    repo.write(
+        ".resonance/config.toml",
+        &format!("{cfg}\n\n[intent]\nsources = [\"spec/requirements.md\"]\n"),
+    );
+    let root = Repo::discover(repo.path()).unwrap();
+    let mut store = resonance_store_sqlite::SqliteStore::open(&root.store_path()).unwrap();
+    store
+        .write(GraphScope::Primary, &mut |w| {
+            let mut tx = Tx::new(w, Actor::human("person@example.com"))?;
+            let mut props = serde_json::Map::new();
+            props.insert("key".into(), json!("FR-900"));
+            props.insert("text".into(), json!("Brought in by the old importer."));
+            props.insert("kind".into(), json!("functional"));
+            props.insert("status".into(), json!("active"));
+            props.insert("source".into(), json!({"path": "old/reqs.md", "line": 4}));
+            tx.create_node("req:FR-900", NodeType::Requirement, Layer::Authored, props)?;
+            tx.finish()?;
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    let item = repo.tool("resonance_show_item", json!({"ref": "FR-900"}));
+    assert!(item["source"].is_null(), "{item}");
+    let report = json(&repo, &["doctor"]);
+    let problems = report["problems"].to_string();
+    assert!(problems.contains("intent.sources"), "{problems}");
+    assert!(problems.contains("FR-900"), "{problems}");
+    assert!(problems.contains("resonance_import_items"), "{problems}");
 }
 
 #[test]

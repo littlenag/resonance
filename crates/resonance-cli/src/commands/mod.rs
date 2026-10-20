@@ -64,6 +64,12 @@ impl Ctx {
     /// The backend for an initialized repository: the daemon, or this process.
     pub fn backend(&self) -> Result<Box<dyn Backend>> {
         let repo = self.repo()?;
+        self.open_backend(human_actor(&repo))
+    }
+
+    /// The backend for an initialized repository, acting as `actor`.
+    pub fn open_backend(&self, actor: Actor) -> Result<Box<dyn Backend>> {
+        let repo = self.repo()?;
         if let Some(note) = resonance_core::lifecycle::ensure_layout(&repo, &open_store)? {
             self.note(&note);
         }
@@ -78,7 +84,6 @@ impl Ctx {
             }
             return Err(Error::NotInitialized);
         }
-        let actor = human_actor(&repo);
         if self.no_daemon {
             let store = open_store(&repo.store_path())?;
             let engine = Engine::open(repo, store, actor, self.cwd.clone())?;
@@ -148,17 +153,9 @@ pub fn exe() -> Result<PathBuf> {
     Ok(p.canonicalize().unwrap_or(p))
 }
 
-/// Who is running the CLI (MVP-040): the agent named by `RESONANCE_ACTOR` (`agent:<name>`,
-/// set by the agent kit in the agent's environment), or else the person from git's
-/// configuration.
-pub fn human_actor(repo: &Repo) -> Actor {
-    if let Ok(v) = std::env::var("RESONANCE_ACTOR") {
-        match v.split_once(':') {
-            Some(("agent", name)) if !name.is_empty() => return Actor::agent(name),
-            Some(("human", name)) if !name.is_empty() => return Actor::human(name),
-            _ => {}
-        }
-    }
+/// The person named by `git config user.email` (MVP-040). The TUI is this person even when
+/// the agent kit has set `RESONANCE_ACTOR`.
+pub fn person_actor(repo: &Repo) -> Actor {
     let id = repo
         .git(&["config", "user.email"])
         .ok()
@@ -166,6 +163,24 @@ pub fn human_actor(repo: &Repo) -> Actor {
         .or_else(|| std::env::var("USER").ok())
         .unwrap_or_else(|| "unknown".into());
     Actor::human(id)
+}
+
+/// Who is running the CLI (MVP-040): the agent named by `RESONANCE_ACTOR` (`agent:<name>`,
+/// set by the agent kit in the agent's environment), or else [`person_actor`].
+pub fn human_actor(repo: &Repo) -> Actor {
+    actor_from(repo, std::env::var("RESONANCE_ACTOR").ok().as_deref())
+}
+
+/// `resonance_actor` is the value of `RESONANCE_ACTOR`, when the caller has one.
+pub fn actor_from(repo: &Repo, resonance_actor: Option<&str>) -> Actor {
+    if let Some(v) = resonance_actor {
+        match v.split_once(':') {
+            Some(("agent", name)) if !name.is_empty() => return Actor::agent(name),
+            Some(("human", name)) if !name.is_empty() => return Actor::human(name),
+            _ => {}
+        }
+    }
+    person_actor(repo)
 }
 
 /// Ask a yes/no question on the terminal. Returns `None` when there is no terminal.
