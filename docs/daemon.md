@@ -11,7 +11,7 @@ Each repository that uses Resonance gets a background process, the **daemon**. I
 ## Life cycle
 
 - **Started on demand.** The first request in a repository (from your agent, the TUI or a `resonance` command) starts its daemon and waits until it's ready. A daemon that starts up first brings the graph up to date with everything that changed while none was running.
-- **One per repository.** A lock file (`.resonance/local/daemon.lock`) guarantees that only one daemon runs for each repository. A second one exits immediately.
+- **One per repository.** The running daemon is the process that holds the lock inode at `.resonance/local/daemon.lock`, or the one that answers on this repository's socket. A second daemon exits immediately. Deleting the lock file, the socket, or both does not make a running daemon gone: it keeps the store until it has reclaimed those files or stood down, and it never removes a socket a successor is listening on.
 - **Exits when idle.** After 30 minutes without requests the daemon exits. Change this with `daemon.idleSeconds` in [the configuration](configuration.md).
 - **Replaced after an upgrade.** If you install a new build of `resonance`, the next command stops the daemon from the old build and starts a new one.
 - **Recovers from crashes.** If the daemon is killed or crashes, the next command starts a new one, which catches up with the disk before answering. A missing daemon only ever costs a short delay, never a wrong answer.

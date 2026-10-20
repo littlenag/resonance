@@ -115,6 +115,76 @@ fn share_previews_then_leaves_new_files_to_commit() {
 }
 
 #[test]
+fn keep_local_annotations_survive_compaction() {
+    // FR-187: a private delta is in effect locally, but it is not committed history.
+    // Compaction must not fold it into graph.db or delete the file.
+    let repo = TestRepo::with_project();
+    repo.declare_sample();
+    repo.annotate("open", "note", "shared note");
+    let private = repo.annotate("close", "note", "private note");
+    let private_id = private["id"].as_str().unwrap().to_string();
+    repo.ok(&["share", "--yes", "--keep-local", &private_id]);
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "-q", "-m", "share the graph"]);
+
+    let private_dir = repo.path().join(".resonance/local/private");
+    let names = |dir: &Path| -> Vec<String> {
+        let mut v: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    };
+    let private_files = names(&private_dir);
+    assert!(!private_files.is_empty(), "the keep-local delta is on disk");
+
+    // Low enough that the next trunk commit auto-compacts, which uses the same count.
+    let cfg = repo.path().join(".resonance/config.toml");
+    let text = fs::read_to_string(&cfg)
+        .unwrap()
+        .replace("maxDeltas = 100", "maxDeltas = 1");
+    assert!(text.contains("maxDeltas = 1"), "{text}");
+    fs::write(&cfg, text).unwrap();
+
+    repo.annotate("open", "note", "after share");
+    repo.write("AFTER.md", "a\n");
+    repo.git(&["add", "-A"]);
+    repo.git(&["commit", "-q", "-m", "a shared delta"]);
+    assert_eq!(
+        names(&private_dir),
+        private_files,
+        "auto-compact deleted the private delta"
+    );
+
+    let c = repo.tool("resonance_compact", json!({"commit": true}));
+    for id in c["folded"].as_array().unwrap() {
+        let id = id.as_str().unwrap();
+        assert!(
+            !private_files.iter().any(|n| n.contains(id)),
+            "private delta {id} was folded: {c}"
+        );
+    }
+    assert_eq!(annotations_on(&repo, "close"), ["private note"]);
+    assert_eq!(names(&private_dir), private_files);
+    assert!(
+        !tracked(&repo).iter().any(|p| p.contains("local/private")),
+        "a private delta is never committed"
+    );
+
+    let mate = TestRepo::clone_of(repo.path());
+    mate.ok(&["init", "--no-agent"]);
+    assert_eq!(
+        annotations_on(&mate, "open"),
+        ["after share", "shared note"]
+    );
+    assert!(
+        !annotations_on(&mate, "close").contains(&"private note".to_string()),
+        "a clone must not receive the keep-local annotation"
+    );
+}
+
+#[test]
 fn a_fresh_clone_joins_and_rebuilds_the_graph_from_git() {
     let (repo, bare) = shared_repo();
     let mate = TestRepo::clone_of(bare.path());

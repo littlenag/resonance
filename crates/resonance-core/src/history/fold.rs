@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use super::delta::{self, Delta};
 use super::{
-    HeadMove, Location, Mode, OpenDelta, keys, on_head_moved, read_open, records, signature, sync,
+    HeadMove, Location, Mode, OpenDelta, keys, on_head_moved, read_open, records, reflog_tip,
+    signature, sync,
 };
 use crate::error::Result;
 use crate::ops::{self, Hlc, Op};
@@ -135,6 +136,10 @@ pub fn collect(
             let key = if mode.associates(loc) {
                 match recs.get(&id).and_then(|r| r.commit.clone()) {
                     Some(c) => match ancestors.get(&c) {
+                        // A private layer over a shared graph stays on this machine (FR-187).
+                        // It still folds into the live graph, but it is not committed history:
+                        // compaction must not count it, write it into the snapshot, or delete it.
+                        Some(_) if mode.shared() && loc == Location::Private => (1, 0, id.clone()),
                         Some(pos) => (0, *pos, id.clone()),
                         None => continue, // Another branch, or the detached pool.
                     },
@@ -313,13 +318,22 @@ pub fn catch_up(
     sync(repo, store, mode, writer)?;
     let head = repo.head_commit();
     let last_head = store.get_meta(keys::HEAD)?;
-    if last_head.is_some() && head != last_head {
+    let reflog_at = store.get_meta(keys::REFLOG)?;
+    let tip = reflog_tip(repo);
+    // A checkout can leave and come back to the same commit. The hash is unchanged, but the
+    // reflog moved, and a commit made on the excursion still has to seal the open delta (MVP-030).
+    let reflog_advanced = tip
+        .as_ref()
+        .is_some_and(|now| reflog_at.as_deref() != Some(now.as_str()));
+    let git_moved = last_head.is_some() && (head != last_head || reflog_advanced);
+    if git_moved {
         out.head_move = Some(on_head_moved(
             repo,
             store,
             mode,
             writer,
             last_head.as_deref(),
+            reflog_at.as_deref(),
         )?);
         sync(repo, store, mode, writer)?;
     }
@@ -328,13 +342,18 @@ pub fn catch_up(
     let unchanged = store.get_meta(keys::SIGNATURE)?.as_deref() == Some(sig.as_str());
     let record_head = |store: &mut dyn GraphStore, sig: &str| -> Result<()> {
         let head = head.clone().unwrap_or_default();
+        let tip = tip.clone();
         store.write(GraphScope::Primary, &mut |w| {
             w.set_meta(keys::HEAD, &head)?;
-            w.set_meta(keys::SIGNATURE, sig)
+            w.set_meta(keys::SIGNATURE, sig)?;
+            if let Some(tip) = &tip {
+                w.set_meta(keys::REFLOG, tip)?;
+            }
+            Ok(())
         })
     };
     if unchanged && !force {
-        if last_head.is_none() {
+        if last_head.is_none() || reflog_advanced {
             record_head(store, &sig)?;
         }
         return Ok(out);
@@ -362,7 +381,7 @@ pub fn catch_up(
         .iter()
         .filter(|c| !target.contains(c.as_str()))
         .count();
-    if missing > 0 && !force && head == last_head {
+    if missing > 0 && !force && !git_moved {
         // Operations would disappear although nothing in git moved: `.resonance/` changed
         // unexpectedly (C6). Keep the graph and wait for `resonance rebuild` or recovery.
         let held = serde_json::to_string(&Held {

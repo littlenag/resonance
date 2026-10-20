@@ -91,6 +91,13 @@ struct Shared {
     health: Health,
 }
 
+/// The lock inodes this daemon holds. On macOS, closing any descriptor of a file releases the
+/// process's flock on it, so each inode is opened once and never duplicated.
+struct DaemonLock {
+    path: PathBuf,
+    files: Mutex<Vec<fs::File>>,
+}
+
 fn rfc_now() -> String {
     hlc::rfc3339(hlc::now_ms())
 }
@@ -110,13 +117,16 @@ pub fn run(
     if !repo.is_initialized() {
         return Err(Error::NotInitialized);
     }
-    // One daemon per repository: the lock, not the registry, guarantees it (FR-082).
+    // One daemon per repository (FR-082). The guarantee is the lock inode at `daemon.lock`, or a
+    // daemon that still answers on this repository's socket. Deleting either file, or both, does
+    // not make a running daemon gone.
+    let lock_path = runtime::lock_path(&repo);
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(runtime::lock_path(&repo))
+        .open(&lock_path)
         .map_err(|e| Error::io("opening .resonance/local/daemon.lock", e))?;
     if lock.try_lock().is_err() {
         let pid = runtime::read_info(&repo.root)
@@ -137,9 +147,35 @@ pub fn run(
             .unwrap_or_else(|| "unknown".into());
         return Err(Error::AlreadyRunning(pid));
     }
+    // The previous daemon may still be inside its owner thread after losing both files. Wait
+    // until that process has left the store before binding or opening it ourselves.
+    if let Some(prev) = runtime::read_info(&repo.root)
+        && prev.pid != std::process::id()
+        && runtime::process_alive(prev.pid)
+        && process_looks_like_daemon(prev.pid)
+    {
+        eprintln!(
+            "[{}] waiting for daemon {} to release the store",
+            rfc_now(),
+            prev.pid
+        );
+        let exited = wait_until_exited(prev.pid, Duration::from_secs(15));
+        if !exited || runtime::listener_alive(&repo.root) {
+            return Err(Error::AlreadyRunning(prev.pid.to_string()));
+        }
+    }
+    // Do not bind or unlink unless this process holds the inode now at `daemon.lock`.
+    if runtime::fd_id(&lock) != runtime::file_id(&lock_path) {
+        let pid = runtime::read_info(&repo.root)
+            .map(|i| i.pid.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        return Err(Error::AlreadyRunning(pid));
+    }
     let _ = fs::remove_file(&endpoint); // A stale socket: nobody answers on it.
     let listener = bind_socket(&endpoint)?;
-    // Which socket is ours, so that we never unlink a successor's (see below).
+    // The path inode, taken while this process holds the lock, so no other daemon can have
+    // replaced the socket between bind and this stat. `fstat` of the listener is not that
+    // inode: on macOS it does not name the socket file.
     let our_socket = runtime::file_id(&endpoint);
 
     let info = DaemonInfo {
@@ -179,13 +215,21 @@ pub fn run(
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel::<Job>();
 
+    // One set of lock fds. See [`DaemonLock`].
+    let locks = Arc::new(DaemonLock {
+        path: lock_path,
+        files: Mutex::new(vec![lock]),
+    });
     // Accept connections.
     let accept = {
         let tx = tx.clone();
         let shared = Arc::clone(&shared);
         let stop = Arc::clone(&stop);
         let endpoint = endpoint.clone();
-        thread::spawn(move || accept_loop(listener, &endpoint, our_socket, tx, shared, stop))
+        let locks = Arc::clone(&locks);
+        thread::spawn(move || {
+            accept_loop(listener, &endpoint, our_socket, &locks, tx, shared, stop)
+        })
     };
     // Registry heartbeat (P5: failures are ignored), and keeping the lock file in place: if
     // `daemon.lock` is deleted or replaced, lock the file now at that path too, so that the
@@ -194,13 +238,14 @@ pub fn run(
         let stop = Arc::clone(&stop);
         let info = info.clone();
         let dir = dir.clone();
-        let lock_path = runtime::lock_path(&repo);
-        let first = lock.try_clone().ok();
+        let locks = Arc::clone(&locks);
         thread::spawn(move || {
-            let mut locks: Vec<fs::File> = first.into_iter().collect();
             while !stop.load(Ordering::SeqCst) {
                 crate::registry::heartbeat(&dir, &info);
-                keep_lock(&lock_path, &mut locks);
+                {
+                    let mut held = locks.files.lock().expect("locks");
+                    keep_lock(&locks.path, &mut held);
+                }
                 for _ in 0..(HEARTBEAT.as_millis() / 100) {
                     if stop.load(Ordering::SeqCst) {
                         break;
@@ -209,7 +254,6 @@ pub fn run(
                 }
             }
             crate::registry::unregister(&dir, &info);
-            locks
         })
     };
 
@@ -227,23 +271,46 @@ pub fn run(
     }
 
     stop.store(true, Ordering::SeqCst);
-    // The socket may have been bound again while the daemon ran (`keep_socket`).
-    let our_socket = accept.join().unwrap_or(our_socket);
-    let extra_locks = heartbeat.join().unwrap_or_default();
-    // Remove our endpoint, unless a newer daemon already replaced it: daemon.json only if it
-    // still names this process, and the socket only if the path is still the socket we bound.
-    // Both happen before the lock is released.
+    // `accept_loop` unlinks the socket, if it is still ours, before it drops the listener.
+    let _ = accept.join();
+    // Remove our endpoint record only if it still names this process. The lock is still held.
     if runtime::read_info(&repo.root).is_some_and(|i| i.pid == info.pid) {
         let _ = fs::remove_file(runtime::info_path(&repo));
     }
-    if our_socket.is_some() && runtime::file_id(&endpoint) == our_socket {
-        let _ = fs::remove_file(&endpoint);
-    }
+    let _ = heartbeat.join();
     let _ = fs::remove_dir_all(repo.local_dir().join("cookies"));
     eprintln!("[{}] daemon exited", rfc_now());
-    drop(extra_locks);
-    drop(lock);
+    drop(locks);
     result
+}
+
+/// Wait until `pid` is no longer running.
+fn wait_until_exited(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while runtime::process_alive(pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    true
+}
+
+/// Whether `pid` is a Resonance process. A recycled pid must not block startup.
+fn process_looks_like_daemon(pid: u32) -> bool {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+    else {
+        return true;
+    };
+    if !out.status.success() {
+        return true;
+    }
+    String::from_utf8_lossy(&out.stdout).contains("resonance")
 }
 
 /// If the lock file at `path` is not one this daemon holds (it was deleted or replaced), create
@@ -303,10 +370,22 @@ enum SocketCheck {
 /// Clients find the daemon only through its socket file, so if that file is deleted while the
 /// daemon runs (or the runtime directory is cleaned), bind it again rather than leave clients
 /// unable to connect until the daemon goes idle.
-fn keep_socket(endpoint: &Path, ours: Option<(u64, u64)>) -> SocketCheck {
+///
+/// Rebinding unlinks and binds. That happens only while this process holds the inode currently
+/// at `daemon.lock`. Otherwise another daemon owns the repository, and this one must not take
+/// its socket or remove it (FR-082).
+fn keep_socket(endpoint: &Path, ours: Option<(u64, u64)>, locks: &DaemonLock) -> SocketCheck {
     let current = runtime::file_id(endpoint);
     if current.is_some() && current == ours {
         return SocketCheck::Fine;
+    }
+    {
+        let mut held = locks.files.lock().expect("locks");
+        if !holds_lock(&locks.path, &held) && !relock(&locks.path, &mut held) {
+            // No lock on the path. Stand down whether or not a listener is there yet: the
+            // process that holds the new inode is about to bind, or already has.
+            return SocketCheck::Taken;
+        }
     }
     if current.is_some() && UnixStream::connect(endpoint).is_ok() {
         return SocketCheck::Taken;
@@ -317,32 +396,53 @@ fn keep_socket(endpoint: &Path, ours: Option<(u64, u64)>) -> SocketCheck {
     let _ = fs::remove_file(endpoint); // Nobody answers on whatever is there.
     match bind_socket(endpoint) {
         Ok(listener) => {
+            // The flock is still held, so this stat is the socket just bound.
+            let id = runtime::file_id(endpoint);
             eprintln!(
                 "[{}] {} was deleted or replaced; listening on it again",
                 rfc_now(),
                 endpoint.display()
             );
-            SocketCheck::Rebound(listener, runtime::file_id(endpoint))
+            SocketCheck::Rebound(listener, id)
         }
         Err(_) => SocketCheck::Fine, // Try again at the next check.
     }
 }
 
-/// Accept connections until stopped, keeping the socket file in place. Returns the identity
-/// of the socket file this daemon last bound, for the clean-up on exit.
+/// Whether one of `locks` is the inode currently at `path`.
+fn holds_lock(path: &Path, locks: &[fs::File]) -> bool {
+    let Some(current) = runtime::file_id(path) else {
+        return false;
+    };
+    locks.iter().any(|f| runtime::fd_id(f) == Some(current))
+}
+
+/// Open and lock `path` when it is not one of `locks`. Returns whether this process then holds
+/// the inode at `path`.
+fn relock(path: &Path, locks: &mut Vec<fs::File>) -> bool {
+    keep_lock(path, locks);
+    holds_lock(path, locks)
+}
+
+/// Accept connections until stopped, keeping the socket file in place.
 fn accept_loop(
     mut listener: UnixListener,
     endpoint: &Path,
     mut ours: Option<(u64, u64)>,
+    locks: &DaemonLock,
     tx: Sender<Job>,
     shared: Arc<Mutex<Shared>>,
     stop: Arc<AtomicBool>,
-) -> Option<(u64, u64)> {
+) {
     let mut checked = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         if checked.elapsed() >= SOCKET_CHECK {
             checked = Instant::now();
-            match keep_socket(endpoint, ours) {
+            {
+                let mut held = locks.files.lock().expect("locks");
+                keep_lock(&locks.path, &mut held);
+            }
+            match keep_socket(endpoint, ours, locks) {
                 SocketCheck::Fine => {}
                 SocketCheck::Rebound(l, id) => {
                     listener = l;
@@ -350,12 +450,14 @@ fn accept_loop(
                 }
                 SocketCheck::Taken => {
                     eprintln!(
-                        "[{}] another daemon answers on {}; this one stops",
+                        "[{}] this daemon no longer holds {} or {}; it stops",
                         rfc_now(),
+                        locks.path.display(),
                         endpoint.display()
                     );
                     let (reply, _) = mpsc::channel();
                     let _ = tx.send(Job::Shutdown { reply });
+                    // The successor owns the path. Forgetting ours keeps exit from unlinking it.
                     ours = None;
                     break;
                 }
@@ -378,7 +480,29 @@ fn accept_loop(
             Err(_) => thread::sleep(Duration::from_millis(100)),
         }
     }
-    ours
+    // Unlink before dropping the listener, and only while this process holds the lock inode
+    // now at `daemon.lock`. Opening a Unix socket path fails (ENOTSUP on macOS), so the check
+    // is the path inode recorded at bind. The listener stays open across that check: dropping
+    // it first would let a successor bind into the gap and then be unlinked.
+    unlink_bound_socket(&listener, endpoint, ours, locks);
+}
+
+/// Remove `endpoint` only when it is still the socket this daemon bound and this daemon holds
+/// the lock. `listener` stays in scope so that socket is open until the check finishes.
+fn unlink_bound_socket(
+    listener: &UnixListener,
+    endpoint: &Path,
+    ours: Option<(u64, u64)>,
+    locks: &DaemonLock,
+) {
+    let _open = listener;
+    let Some(ours) = ours else {
+        return;
+    };
+    let held = locks.files.lock().expect("locks");
+    if holds_lock(&locks.path, &held) && runtime::file_id(endpoint) == Some(ours) {
+        let _ = fs::remove_file(endpoint);
+    }
 }
 
 fn write_line(stream: &mut UnixStream, v: &Value) -> std::io::Result<()> {

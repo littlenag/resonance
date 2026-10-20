@@ -40,6 +40,9 @@ pub mod keys {
     pub const JOURNAL_SEQ: &str = "history.journalSeq";
     /// `HEAD` when the history was last caught up.
     pub const HEAD: &str = "git.head";
+    /// The `.git/logs/HEAD` line catch-up last observed. A round trip can return to the same
+    /// commit, so the hash alone cannot tell a new excursion from nothing happening (MVP-030).
+    pub const REFLOG: &str = "git.reflog";
     /// The signature of the history inputs at the last catch-up.
     pub const SIGNATURE: &str = "history.signature";
     /// Operations a fold could not apply, for `doctor`.
@@ -445,6 +448,38 @@ pub struct HeadMove {
     pub detached: usize,
 }
 
+/// The last line of `.git/logs/HEAD`: the reflog position of a catch-up.
+pub fn reflog_tip(repo: &Repo) -> Option<String> {
+    head_log(repo).and_then(|text| {
+        text.lines()
+            .rev()
+            .find(|l| !l.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn head_log(repo: &Repo) -> Option<String> {
+    let rel = repo.git(&["rev-parse", "--git-path", "logs/HEAD"]).ok()?;
+    let path = PathBuf::from(rel.trim());
+    let path = if path.is_absolute() {
+        path
+    } else {
+        repo.root.join(path)
+    };
+    fs::read_to_string(path).ok()
+}
+
+/// The new commit hash of a reflog line whose message records a commit, if it is one.
+fn reflog_commit_hash(line: &str) -> Option<String> {
+    let (meta, message) = line.split_once('\t')?;
+    if !message.starts_with("commit") {
+        return None;
+    }
+    let mut parts = meta.split_whitespace();
+    let _old = parts.next()?;
+    Some(parts.next()?.to_string())
+}
+
 /// The oldest commit created (by `commit`, `commit (amend)`, `commit (merge)` and so on)
 /// since `HEAD` was `from`, from the reflog. `None` when no commit was made, or when `from`
 /// is not in the recent reflog (then the newest commit, if the newest move made one).
@@ -470,6 +505,24 @@ pub fn first_commit_since(repo: &Repo, from: Option<&str>) -> Option<String> {
         }
     }
     newest_commit_entry
+}
+
+/// The oldest commit appended to `.git/logs/HEAD` after `cursor` (a line previously returned
+/// by [`reflog_tip`]). A round trip that comes back to `from` is still visible, because the
+/// walk starts at the recorded line rather than at the first entry with that hash. When
+/// `cursor` is missing or no longer in the log, falls back to [`first_commit_since`].
+pub fn first_commit_after(repo: &Repo, from: Option<&str>, cursor: Option<&str>) -> Option<String> {
+    let Some(cursor) = cursor else {
+        return first_commit_since(repo, from);
+    };
+    let Some(text) = head_log(repo) else {
+        return first_commit_since(repo, from);
+    };
+    let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
+    let Some(at) = lines.iter().rposition(|l| *l == cursor) else {
+        return first_commit_since(repo, from);
+    };
+    lines[at + 1..].iter().find_map(|l| reflog_commit_hash(l))
 }
 
 /// The newest reflog subject of `HEAD`.
@@ -498,6 +551,7 @@ pub fn on_head_moved(
     mode: Mode,
     writer: &str,
     from: Option<&str>,
+    reflog_at: Option<&str>,
 ) -> Result<HeadMove> {
     let to = repo.head_commit();
     let operation = reflog_subject(repo);
@@ -513,7 +567,7 @@ pub fn on_head_moved(
     let open = read_open(&*store)?;
     // The first commit made since `from`: uncommitted graph changes belong to it, as
     // working-tree changes do, even when later commits or checkouts followed it.
-    let first_commit = first_commit_since(repo, from);
+    let first_commit = first_commit_after(repo, from, reflog_at);
     let is_commit = first_commit.is_some();
     if let Some(open) = &open {
         if mode.associates(open.location) {

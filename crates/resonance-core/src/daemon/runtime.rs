@@ -158,6 +158,26 @@ pub fn file_id(path: &Path) -> Option<(u64, u64)> {
     fs::symlink_metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
+/// The device and inode of an open file.
+pub fn fd_id(file: &fs::File) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().ok().map(|m| (m.dev(), m.ino()))
+}
+
+/// Whether `pid` is a running process of this user.
+pub fn process_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// Whether some process holds the lock file at `path`.
 pub fn lock_file_held(path: &Path) -> bool {
     let Ok(f) = OpenOptions::new().read(true).write(true).open(path) else {

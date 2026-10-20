@@ -44,6 +44,34 @@ fn offline_graph_changes_follow_branches() {
 }
 
 #[test]
+fn a_round_trip_to_the_recorded_commit_seals_the_branch_delta() {
+    // Offline has no post-commit hook. Leaving a commit and returning to the same hash
+    // before catch-up must still seal the open delta onto the commit made in between,
+    // not onto the next commit on the original branch (MVP-030).
+    let repo = committed_sample();
+    repo.ok(&["status"]);
+    repo.git(&["checkout", "-q", "-b", "feature"]);
+    repo.annotate("open", "note", "feature only");
+    repo.ok(&["daemon", "stop"]);
+    repo.write("FEATURE.md", "f\n");
+    repo.commit_all("feature work");
+    repo.git(&["checkout", "-q", "main"]);
+
+    assert!(
+        annotations_on(&repo, "open").is_empty(),
+        "the feature note is not open on main"
+    );
+    repo.write("MAIN.md", "m\n");
+    repo.commit_all("main continues");
+    assert!(
+        annotations_on(&repo, "open").is_empty(),
+        "the next main commit must not adopt the feature note"
+    );
+    repo.git(&["checkout", "-q", "feature"]);
+    assert_eq!(annotations_on(&repo, "open"), ["feature only"]);
+}
+
+#[test]
 fn uncommitted_graph_changes_travel_with_checkouts() {
     let repo = committed_sample();
     repo.annotate("open", "note", "not committed yet");

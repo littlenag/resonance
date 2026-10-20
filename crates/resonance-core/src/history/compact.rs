@@ -167,18 +167,27 @@ pub fn compact(
     let snap = snapshot(ops, folded);
     store.write_snapshot(&repo.snapshot_path(), &snap)?;
     let recs = records(&*store)?;
+    // Private deltas are a local layer (FR-187). They are not in `newly` — `collect` keeps
+    // them out of committed history — and a compaction must not delete them even if an id
+    // collides with one.
     for id in &newly {
-        for loc in [Location::Deltas, Location::Private] {
-            let p = delta_path(repo, loc, id);
-            if p.is_file() {
-                fs::remove_file(&p)
-                    .map_err(|e| Error::io(format!("removing {}", p.display()), e))?;
-            }
+        if recs
+            .get(id)
+            .is_some_and(|r| r.location == Location::Private)
+        {
+            continue;
+        }
+        let p = delta_path(repo, Location::Deltas, id);
+        if p.is_file() {
+            fs::remove_file(&p).map_err(|e| Error::io(format!("removing {}", p.display()), e))?;
         }
     }
     let gone: Vec<String> = newly
         .iter()
-        .filter(|id| recs.contains_key(*id))
+        .filter(|id| {
+            recs.get(*id)
+                .is_some_and(|r| r.location != Location::Private)
+        })
         .map(|id| format!("{}{id}", keys::DELTA_PREFIX))
         .collect();
     store.write(GraphScope::Primary, &mut |w| {

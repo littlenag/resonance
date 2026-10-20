@@ -101,7 +101,7 @@ Your agent puts a summary of the graph changes in the pull request description: 
 
 Deltas are new files, so branches that both change the graph merge without conflicts in `.resonance/`. When both sides changed the same item in incompatible ways, the result is a `Conflict` node, listed by `resonance recover` and `check` (`R006`), never a broken merge.
 
-Deltas accumulate. **Compaction** folds them into a new snapshot. Resonance compacts on its own when the trunk (`compaction.trunk`, by default the remote's default branch) has more than `compaction.maxDeltas` sealed deltas, leaving the new snapshot and the removed deltas as changes to commit. To compact sooner, or in a commit of its own, ask your agent. Branches made before a compaction still merge cleanly. If two compactions collide, the snapshot merge driver combines them; without the driver, `resonance recover repair-snapshot` does the same after the merge.
+Deltas accumulate. **Compaction** folds them into a new snapshot. Resonance compacts on its own when the trunk (`compaction.trunk`, by default the remote's default branch) has more than `compaction.maxDeltas` sealed deltas, leaving the new snapshot and the removed deltas as changes to commit. To compact sooner, or in a commit of its own, ask your agent. Annotations kept with `--keep-local` are not sealed deltas: compaction leaves them in `.resonance/local/private/` and out of the snapshot. Branches made before a compaction still merge cleanly. If two compactions collide, the snapshot merge driver combines them; without the driver, `resonance recover repair-snapshot` does the same after the merge.
 
 ## Stepping back
 

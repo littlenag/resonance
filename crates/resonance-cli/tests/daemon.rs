@@ -509,6 +509,78 @@ fn a_daemon_that_finds_another_on_its_socket_stops_and_leaves_it_alone() {
 }
 
 #[test]
+fn deleting_the_lock_and_the_socket_leaves_one_writer() {
+    // FR-082: flock stays on the unlinked inode, and a missing socket is not a live listener.
+    // Removing both at once must not leave two daemons writing the store, and the one that
+    // stands down must not unlink the survivor's socket.
+    let repo = TestRepo::with_project_daemon();
+    ok(&repo, &["status"]);
+    let first = info(&repo);
+    let endpoint = std::path::PathBuf::from(&first.endpoint);
+    fs::remove_file(repo.path().join(".resonance/local/daemon.lock")).unwrap();
+    fs::remove_file(&endpoint).unwrap();
+
+    let mut child = daemon_cmd(&repo, &["daemon", "run"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("timed out with two daemons, or with none");
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            let mut err = String::new();
+            if let Some(mut stderr) = child.stderr.take() {
+                use std::io::Read;
+                stderr.read_to_string(&mut err).unwrap();
+            }
+            assert!(
+                !status.success(),
+                "a second daemon started and then exited on its own: {err}"
+            );
+            assert!(
+                err.contains("already running"),
+                "the first daemon reclaimed both files: {err}"
+            );
+            let health = json(&repo, &["daemon"]);
+            assert_eq!(
+                health["pid"], first.pid,
+                "the first daemon is still the writer"
+            );
+            assert!(endpoint.exists(), "the survivor's socket stays");
+            ok(&repo, &["daemon", "stop"]);
+            assert!(!endpoint.exists(), "the owner removes its own socket");
+            break;
+        }
+        if let Some(now) = runtime::read_info(&root(&repo))
+            && now.pid != first.pid
+            && endpoint.exists()
+            && !runtime::process_alive(first.pid)
+        {
+            // The second daemon waited out the first and is the only writer.
+            let health = json(&repo, &["daemon"]);
+            assert_eq!(health["pid"], now.pid);
+            assert!(endpoint.exists());
+            ok(&repo, &["daemon", "stop"]);
+            assert!(
+                !endpoint.exists(),
+                "stopping the successor must not have been undone by the first daemon"
+            );
+            let status = child.wait().unwrap();
+            assert!(
+                status.success(),
+                "the successor daemon exits cleanly when stopped"
+            );
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
 fn a_deleted_socket_is_bound_again_and_clients_reconnect() {
     let repo = TestRepo::with_project_daemon();
     ok(&repo, &["status"]);
