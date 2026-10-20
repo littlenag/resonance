@@ -449,3 +449,69 @@ fn the_daemon_leaves_git_status_unchanged() {
         "cookies, sockets and logs are invisible to git"
     );
 }
+
+#[test]
+fn a_deleted_lock_file_never_lets_a_second_daemon_take_over() {
+    // FR-082: flock locks an inode, so deleting daemon.lock under a running daemon must not
+    // make it look gone.
+    let repo = TestRepo::with_project_daemon();
+    ok(&repo, &["status"]);
+    let first = info(&repo).pid;
+    fs::remove_file(repo.path().join(".resonance/local/daemon.lock")).unwrap();
+    assert!(
+        runtime::lock_held(&root(&repo)),
+        "a daemon answering on its socket is running"
+    );
+
+    // A second daemon refuses to start, and leaves the first one's socket alone.
+    let out = daemon_cmd(&repo, &["daemon", "run"]).output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("already running"), "{err}");
+    let health = json(&repo, &["daemon"]);
+    assert_eq!(
+        health["pid"], first,
+        "commands still reach the first daemon"
+    );
+
+    // Stopping waits until the first daemon is really gone; then a new one starts cleanly.
+    ok(&repo, &["daemon", "stop"]);
+    assert!(!runtime::lock_held(&root(&repo)));
+    ok(&repo, &["status"]);
+    assert_ne!(info(&repo).pid, first);
+    ok(&repo, &["daemon", "stop"]);
+}
+
+#[test]
+fn an_exiting_daemon_leaves_a_successors_socket_alone() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    let repo = TestRepo::with_project_daemon();
+    ok(&repo, &["status"]);
+    let endpoint = std::path::PathBuf::from(info(&repo).endpoint);
+    // The daemon's own socket moves aside, and a successor's socket takes the path.
+    let aside = endpoint.with_extension("old");
+    fs::rename(&endpoint, &aside).unwrap();
+    let successor = UnixListener::bind(&endpoint).unwrap();
+
+    // The first daemon shuts down.
+    let mut stream = UnixStream::connect(&aside).unwrap();
+    writeln!(
+        stream,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"shutdown","params":{{}}}}"#
+    )
+    .unwrap();
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).unwrap();
+    let lock = repo.path().join(".resonance/local/daemon.lock");
+    wait_until("the first daemon to exit", Duration::from_secs(15), || {
+        !runtime::lock_file_held(&lock)
+    });
+    assert!(
+        endpoint.exists(),
+        "the successor's socket must survive the old daemon's exit"
+    );
+    drop(successor);
+    let _ = fs::remove_file(&endpoint);
+    let _ = fs::remove_file(&aside);
+}

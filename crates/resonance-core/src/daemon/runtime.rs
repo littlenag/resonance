@@ -129,9 +129,33 @@ pub fn read_info(root: &Path) -> Option<DaemonInfo> {
     serde_json::from_str(&text).ok()
 }
 
-/// Whether some process holds the daemon lock of the repository at `root` (FR-082).
+/// Whether a daemon is running for the repository at `root` (FR-082): some process holds the
+/// daemon lock, or a daemon answers on the repository's socket.
+///
+/// `flock` locks an inode, not a path: if `daemon.lock` is deleted (or replaced) while a daemon
+/// runs, the daemon still holds the old inode and the path no longer shows it. A live listener
+/// on the socket is therefore also proof of a running daemon.
 pub fn lock_held(root: &Path) -> bool {
     lock_file_held(&root.join(".resonance").join("local").join("daemon.lock"))
+        || listener_alive(root)
+}
+
+/// Whether a daemon accepts connections on one of the sockets of the repository at `root`.
+pub fn listener_alive(root: &Path) -> bool {
+    let mut paths = Vec::new();
+    if let Some(info) = read_info(root) {
+        paths.push(PathBuf::from(info.endpoint));
+    }
+    paths.push(socket_path(&runtime_dir(), root));
+    paths
+        .iter()
+        .any(|p| std::os::unix::net::UnixStream::connect(p).is_ok())
+}
+
+/// The device and inode of a path, to tell one file from its replacement.
+pub fn file_id(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
 /// Whether some process holds the lock file at `path`.

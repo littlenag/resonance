@@ -113,14 +113,14 @@ impl Remote {
                 // It may have lost a race with another daemon; that one will answer.
                 if !status.success() && !runtime::lock_held(&repo.root) {
                     return Err(Error::Daemon(format!(
-                        "the daemon exited ({status}) before it was ready; see .resonance/daemon.log:\n{}",
+                        "the daemon exited ({status}) before it was ready; see .resonance/local/daemon.log:\n{}",
                         log_tail(repo)
                     )));
                 }
             }
             if Instant::now() >= deadline {
                 return Err(Error::Daemon(format!(
-                    "the daemon did not start within {}s; see .resonance/daemon.log, or run with --no-daemon",
+                    "the daemon did not start within {}s; see .resonance/local/daemon.log, or run with --no-daemon",
                     START_TIMEOUT.as_secs()
                 )));
             }
@@ -146,7 +146,7 @@ impl Remote {
                 .map_err(|e| Error::Daemon(format!("lost the connection: {e}")))?;
             if n == 0 {
                 return Err(Error::Daemon(
-                    "the daemon closed the connection before answering (see .resonance/daemon.log)"
+                    "the daemon closed the connection before answering (see .resonance/local/daemon.log)"
                         .into(),
                 ));
             }
@@ -211,7 +211,7 @@ fn log_tail(repo: &Repo) -> String {
     lines[lines.len().saturating_sub(10)..].join("\n")
 }
 
-/// Start `exe daemon run` for `repo`, detached, logging to `.resonance/daemon.log`.
+/// Start `exe daemon run` for `repo`, detached, logging to `.resonance/local/daemon.log`.
 pub fn start(repo: &Repo, exe: &Path) -> Result<Child> {
     let log = runtime::log_path(repo);
     if fs::metadata(&log).is_ok_and(|m| m.len() > LOG_LIMIT) {
@@ -221,7 +221,7 @@ pub fn start(repo: &Repo, exe: &Path) -> Result<Child> {
         .create(true)
         .append(true)
         .open(&log)
-        .map_err(|e| Error::io("opening .resonance/daemon.log", e))?;
+        .map_err(|e| Error::io("opening .resonance/local/daemon.log", e))?;
     let mut cmd = Command::new(exe);
     cmd.arg("-C")
         .arg(&repo.root)

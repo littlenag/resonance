@@ -126,9 +126,20 @@ pub fn run(
     let dir = runtime::runtime_dir();
     runtime::ensure_dir(&dir)?;
     let endpoint = runtime::socket_path(&dir, &repo.root);
-    let _ = fs::remove_file(&endpoint); // A stale socket: we hold the lock.
+    // Holding the lock is not enough: if `daemon.lock` was deleted under a running daemon, that
+    // daemon still holds the old inode. A daemon that answers on the socket is running; never
+    // take its socket away (FR-082).
+    if runtime::listener_alive(&repo.root) {
+        let pid = runtime::read_info(&repo.root)
+            .map(|i| i.pid.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        return Err(Error::AlreadyRunning(pid));
+    }
+    let _ = fs::remove_file(&endpoint); // A stale socket: nobody answers on it.
     let listener = UnixListener::bind(&endpoint)
         .map_err(|e| Error::io(format!("listening on {}", endpoint.display()), e))?;
+    // Which socket is ours, so that we never unlink a successor's (see below).
+    let our_socket = runtime::file_id(&endpoint);
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600));
@@ -181,14 +192,20 @@ pub fn run(
         let stop = Arc::clone(&stop);
         thread::spawn(move || accept_loop(listener, tx, shared, stop))
     };
-    // Registry heartbeat (P5: failures are ignored).
+    // Registry heartbeat (P5: failures are ignored), and keeping the lock file in place: if
+    // `daemon.lock` is deleted or replaced, lock the file now at that path too, so that the
+    // documented lock keeps showing this daemon (FR-082).
     let heartbeat = {
         let stop = Arc::clone(&stop);
         let info = info.clone();
         let dir = dir.clone();
+        let lock_path = runtime::lock_path(&repo);
+        let first = lock.try_clone().ok();
         thread::spawn(move || {
+            let mut locks: Vec<fs::File> = first.into_iter().collect();
             while !stop.load(Ordering::SeqCst) {
                 crate::registry::heartbeat(&dir, &info);
+                keep_lock(&lock_path, &mut locks);
                 for _ in 0..(HEARTBEAT.as_millis() / 100) {
                     if stop.load(Ordering::SeqCst) {
                         break;
@@ -197,6 +214,7 @@ pub fn run(
                 }
             }
             crate::registry::unregister(&dir, &info);
+            locks
         })
     };
 
@@ -215,16 +233,51 @@ pub fn run(
 
     stop.store(true, Ordering::SeqCst);
     let _ = accept.join();
-    let _ = heartbeat.join();
-    // Remove our endpoint, unless a newer daemon already replaced it.
+    let extra_locks = heartbeat.join().unwrap_or_default();
+    // Remove our endpoint, unless a newer daemon already replaced it: daemon.json only if it
+    // still names this process, and the socket only if the path is still the socket we bound.
+    // Both happen before the lock is released.
     if runtime::read_info(&repo.root).is_some_and(|i| i.pid == info.pid) {
         let _ = fs::remove_file(runtime::info_path(&repo));
     }
-    let _ = fs::remove_file(&endpoint);
+    if our_socket.is_some() && runtime::file_id(&endpoint) == our_socket {
+        let _ = fs::remove_file(&endpoint);
+    }
     let _ = fs::remove_dir_all(repo.local_dir().join("cookies"));
     eprintln!("[{}] daemon exited", rfc_now());
+    drop(extra_locks);
     drop(lock);
     result
+}
+
+/// If the lock file at `path` is not one this daemon holds (it was deleted or replaced), create
+/// or open it and lock it as well. Failures are left for the next heartbeat.
+fn keep_lock(path: &std::path::Path, locks: &mut Vec<fs::File>) {
+    use std::os::unix::fs::MetadataExt;
+    let current = runtime::file_id(path);
+    let held = locks.iter().any(|f| {
+        f.metadata()
+            .ok()
+            .is_some_and(|m| Some((m.dev(), m.ino())) == current)
+    });
+    if held {
+        return;
+    }
+    if let Ok(f) = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        && f.try_lock().is_ok()
+    {
+        eprintln!(
+            "[{}] {} was deleted or replaced; locked it again",
+            rfc_now(),
+            path.display()
+        );
+        locks.push(f);
+    }
 }
 
 fn accept_loop(
