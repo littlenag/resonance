@@ -483,30 +483,22 @@ fn a_deleted_lock_file_never_lets_a_second_daemon_take_over() {
 }
 
 #[test]
-fn an_exiting_daemon_leaves_a_successors_socket_alone() {
-    use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::{UnixListener, UnixStream};
+fn a_daemon_that_finds_another_on_its_socket_stops_and_leaves_it_alone() {
+    use std::os::unix::net::UnixListener;
     let repo = TestRepo::with_project_daemon();
     ok(&repo, &["status"]);
     let endpoint = std::path::PathBuf::from(info(&repo).endpoint);
-    // The daemon's own socket moves aside, and a successor's socket takes the path.
+    // The daemon's own socket moves aside, and another daemon's socket takes the path.
     let aside = endpoint.with_extension("old");
     fs::rename(&endpoint, &aside).unwrap();
     let successor = UnixListener::bind(&endpoint).unwrap();
 
-    // The first daemon shuts down.
-    let mut stream = UnixStream::connect(&aside).unwrap();
-    writeln!(
-        stream,
-        r#"{{"jsonrpc":"2.0","id":1,"method":"shutdown","params":{{}}}}"#
-    )
-    .unwrap();
-    let mut line = String::new();
-    BufReader::new(stream).read_line(&mut line).unwrap();
+    // The first daemon notices that it can no longer be reached, and stops (FR-082) ...
     let lock = repo.path().join(".resonance/local/daemon.lock");
-    wait_until("the first daemon to exit", Duration::from_secs(15), || {
+    wait_until("the first daemon to stop", Duration::from_secs(15), || {
         !runtime::lock_file_held(&lock)
     });
+    // ... without removing the other daemon's socket.
     assert!(
         endpoint.exists(),
         "the successor's socket must survive the old daemon's exit"
@@ -514,4 +506,34 @@ fn an_exiting_daemon_leaves_a_successors_socket_alone() {
     drop(successor);
     let _ = fs::remove_file(&endpoint);
     let _ = fs::remove_file(&aside);
+}
+
+#[test]
+fn a_deleted_socket_is_bound_again_and_clients_reconnect() {
+    let repo = TestRepo::with_project_daemon();
+    ok(&repo, &["status"]);
+    let first = info(&repo).pid;
+    let endpoint = std::path::PathBuf::from(info(&repo).endpoint);
+    fs::remove_file(&endpoint).unwrap();
+    assert!(
+        runtime::lock_held(&root(&repo)),
+        "the lock still shows the daemon"
+    );
+
+    // The next command reaches the same daemon once it has bound its socket again, without
+    // waiting for the daemon to go idle.
+    let started = Instant::now();
+    let health = json(&repo, &["daemon"]);
+    assert_eq!(health["pid"], first, "{health}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(endpoint.exists());
+    ok(&repo, &["daemon", "stop"]);
+    assert!(
+        !endpoint.exists(),
+        "its own socket is removed when it stops"
+    );
 }

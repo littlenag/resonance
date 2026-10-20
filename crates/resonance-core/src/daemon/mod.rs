@@ -47,6 +47,8 @@ const COOKIE_TIMEOUT: Duration = Duration::from_secs(5);
 const GIT_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 /// Registry heartbeat interval (MVP-022).
 const HEARTBEAT: Duration = Duration::from_secs(10);
+/// How often the daemon checks that its socket file is still in place.
+const SOCKET_CHECK: Duration = Duration::from_secs(1);
 /// JSON-RPC error code for operation failures; `data.exitCode` carries the CLI exit code.
 pub const OPERATION_FAILED: i64 = -32000;
 
@@ -136,17 +138,9 @@ pub fn run(
         return Err(Error::AlreadyRunning(pid));
     }
     let _ = fs::remove_file(&endpoint); // A stale socket: nobody answers on it.
-    let listener = UnixListener::bind(&endpoint)
-        .map_err(|e| Error::io(format!("listening on {}", endpoint.display()), e))?;
+    let listener = bind_socket(&endpoint)?;
     // Which socket is ours, so that we never unlink a successor's (see below).
     let our_socket = runtime::file_id(&endpoint);
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&endpoint, fs::Permissions::from_mode(0o600));
-    }
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| Error::io("configuring the socket", e))?;
 
     let info = DaemonInfo {
         root: repo.root.display().to_string(),
@@ -190,7 +184,8 @@ pub fn run(
         let tx = tx.clone();
         let shared = Arc::clone(&shared);
         let stop = Arc::clone(&stop);
-        thread::spawn(move || accept_loop(listener, tx, shared, stop))
+        let endpoint = endpoint.clone();
+        thread::spawn(move || accept_loop(listener, &endpoint, our_socket, tx, shared, stop))
     };
     // Registry heartbeat (P5: failures are ignored), and keeping the lock file in place: if
     // `daemon.lock` is deleted or replaced, lock the file now at that path too, so that the
@@ -232,7 +227,8 @@ pub fn run(
     }
 
     stop.store(true, Ordering::SeqCst);
-    let _ = accept.join();
+    // The socket may have been bound again while the daemon ran (`keep_socket`).
+    let our_socket = accept.join().unwrap_or(our_socket);
     let extra_locks = heartbeat.join().unwrap_or_default();
     // Remove our endpoint, unless a newer daemon already replaced it: daemon.json only if it
     // still names this process, and the socket only if the path is still the socket we bound.
@@ -280,13 +276,91 @@ fn keep_lock(path: &std::path::Path, locks: &mut Vec<fs::File>) {
     }
 }
 
+/// Listen on `endpoint`, readable only by this user, without blocking.
+fn bind_socket(endpoint: &Path) -> Result<UnixListener> {
+    let listener = UnixListener::bind(endpoint)
+        .map_err(|e| Error::io(format!("listening on {}", endpoint.display()), e))?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(endpoint, fs::Permissions::from_mode(0o600));
+    }
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| Error::io("configuring the socket", e))?;
+    Ok(listener)
+}
+
+/// What to do about the socket file at `endpoint`.
+enum SocketCheck {
+    /// It is ours, or it could not be repaired this time.
+    Fine,
+    /// It was deleted (or replaced by a file nobody listens on) and is bound again.
+    Rebound(UnixListener, Option<(u64, u64)>),
+    /// Another daemon answers there: this one must not compete with it (FR-082).
+    Taken,
+}
+
+/// Clients find the daemon only through its socket file, so if that file is deleted while the
+/// daemon runs (or the runtime directory is cleaned), bind it again rather than leave clients
+/// unable to connect until the daemon goes idle.
+fn keep_socket(endpoint: &Path, ours: Option<(u64, u64)>) -> SocketCheck {
+    let current = runtime::file_id(endpoint);
+    if current.is_some() && current == ours {
+        return SocketCheck::Fine;
+    }
+    if current.is_some() && UnixStream::connect(endpoint).is_ok() {
+        return SocketCheck::Taken;
+    }
+    if let Some(dir) = endpoint.parent() {
+        let _ = runtime::ensure_dir(dir);
+    }
+    let _ = fs::remove_file(endpoint); // Nobody answers on whatever is there.
+    match bind_socket(endpoint) {
+        Ok(listener) => {
+            eprintln!(
+                "[{}] {} was deleted or replaced; listening on it again",
+                rfc_now(),
+                endpoint.display()
+            );
+            SocketCheck::Rebound(listener, runtime::file_id(endpoint))
+        }
+        Err(_) => SocketCheck::Fine, // Try again at the next check.
+    }
+}
+
+/// Accept connections until stopped, keeping the socket file in place. Returns the identity
+/// of the socket file this daemon last bound, for the clean-up on exit.
 fn accept_loop(
-    listener: UnixListener,
+    mut listener: UnixListener,
+    endpoint: &Path,
+    mut ours: Option<(u64, u64)>,
     tx: Sender<Job>,
     shared: Arc<Mutex<Shared>>,
     stop: Arc<AtomicBool>,
-) {
+) -> Option<(u64, u64)> {
+    let mut checked = Instant::now();
     while !stop.load(Ordering::SeqCst) {
+        if checked.elapsed() >= SOCKET_CHECK {
+            checked = Instant::now();
+            match keep_socket(endpoint, ours) {
+                SocketCheck::Fine => {}
+                SocketCheck::Rebound(l, id) => {
+                    listener = l;
+                    ours = id;
+                }
+                SocketCheck::Taken => {
+                    eprintln!(
+                        "[{}] another daemon answers on {}; this one stops",
+                        rfc_now(),
+                        endpoint.display()
+                    );
+                    let (reply, _) = mpsc::channel();
+                    let _ = tx.send(Job::Shutdown { reply });
+                    ours = None;
+                    break;
+                }
+            }
+        }
         match listener.accept() {
             Ok((stream, _)) => {
                 let _ = stream.set_nonblocking(false);
@@ -304,6 +378,7 @@ fn accept_loop(
             Err(_) => thread::sleep(Duration::from_millis(100)),
         }
     }
+    ours
 }
 
 fn write_line(stream: &mut UnixStream, v: &Value) -> std::io::Result<()> {
