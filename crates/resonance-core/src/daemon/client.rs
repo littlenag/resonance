@@ -89,21 +89,28 @@ impl Remote {
             return Err(Error::NotInitialized);
         }
         let ours = runtime::binary_id(exe);
-        if let Some(mut remote) = Remote::connect_existing(repo, actor.clone(), cwd.clone()) {
+        // `listener_alive` is a short health probe. Connecting and then calling `health`
+        // would wait forever on a process that accepts and never answers.
+        if runtime::listener_alive(&repo.root)
+            && let Some(mut remote) = Remote::connect_existing(repo, actor.clone(), cwd.clone())
+        {
             match remote.health() {
                 Ok(h) if h.binary_id == ours => return Ok(remote),
-                _ => {
-                    // An older (or newer) build: replace it.
+                Ok(_) => {
+                    // This repository's daemon, from another build: replace it.
                     let _ = remote.request("shutdown", json!({}));
                     drop(remote);
                     wait_for_lock_release(repo, STOP_TIMEOUT);
                 }
+                Err(_) => drop(remote),
             }
         }
         let mut child = start(repo, exe)?;
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
-            if let Some(stream) = try_connect(repo) {
+            if runtime::listener_alive(&repo.root)
+                && let Some(stream) = try_connect(repo)
+            {
                 let mut remote = Remote::from_stream(stream, actor.clone(), cwd.clone())?;
                 if remote.health().is_ok() {
                     return Ok(remote);
@@ -253,6 +260,10 @@ fn wait_for_lock_release(repo: &Repo, timeout: Duration) -> bool {
 
 /// Ask the daemon for `repo` to stop, and wait until it has. Returns whether one was running.
 pub fn stop(repo: &Repo) -> Result<bool> {
+    // A copied record or a foreign listener is not this repository's daemon.
+    if !runtime::listener_alive(&repo.root) {
+        return Ok(false);
+    }
     let Some(mut remote) = Remote::connect_existing(repo, Actor::resonance(), repo.root.clone())
     else {
         return Ok(false);

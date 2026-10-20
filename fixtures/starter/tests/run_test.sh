@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs one named test; exit code 0 is a pass. Use as:
-#   resonance test add tests/run_test.sh:7-10 --name normalize --run "sh tests/run_test.sh normalize"
+#   resonance_declare_test path tests/run_test.sh, lines 7-10, name normalize, run "sh tests/run_test.sh normalize"
 set -u
 name="${1:-}"
 case "$name" in

@@ -305,6 +305,51 @@ fn the_agent_gate_holds_commits_until_the_log_is_empty_or_overridden() {
 }
 
 #[test]
+fn init_no_agent_leaves_an_installed_kit_in_place() {
+    let mut repo = TestRepo::with_project();
+    repo.fake_claude();
+    repo.ok(&["init"]);
+    let kit = repo.path().join(".resonance/local/agent-kit.json");
+    assert!(kit.is_file());
+    let instructions = repo.read("CLAUDE.local.md");
+    let again = repo.ok(&["init", "--no-agent"]);
+    assert!(again.contains("left installed"), "{again}");
+    assert!(!again.contains("No agent kit installed"), "{again}");
+    assert!(
+        !again.contains("refreshed its hooks and agent kit"),
+        "{again}"
+    );
+    assert!(kit.is_file(), "the installed kit record stays");
+    assert_eq!(repo.read("CLAUDE.local.md"), instructions);
+    assert_eq!(repo.json(&["status"])["agentKit"]["installed"], true);
+}
+
+#[test]
+fn a_gate_that_cannot_run_denies_commit_push_and_pull() {
+    let repo = TestRepo::with_project();
+    repo.ok(&["daemon", "stop"]);
+    repo.write(".resonance/config.toml", "[\n");
+    let denied = gate(&repo, "git commit -m notes");
+    let d: Value = serde_json::from_str(&denied).unwrap_or_else(|e| panic!("{e}: {denied}"));
+    assert_eq!(d["hookSpecificOutput"]["permissionDecision"], "deny");
+    let reason = d["hookSpecificOutput"]["permissionDecisionReason"]
+        .as_str()
+        .unwrap();
+    assert!(
+        reason.contains("could not run") && reason.contains("commit") && reason.contains("denied"),
+        "{reason}"
+    );
+    assert!(!reason.contains("git hooks still check"), "{reason}");
+    assert!(gate(&repo, "git push").contains("deny"));
+    assert!(gate(&repo, "git pull origin").contains("deny"));
+    assert_eq!(
+        gate(&repo, "git status"),
+        "",
+        "a command the gate does not stop is still allowed"
+    );
+}
+
+#[test]
 fn leaving_removes_the_kit_but_keeps_other_settings() {
     let (mut repo, _bare) = shared_repo();
     repo.write(

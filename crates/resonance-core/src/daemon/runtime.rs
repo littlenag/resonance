@@ -2,8 +2,10 @@
 //! `daemon.json`, the daemon lock and the list of known repositories (MVP-019, MVP-022).
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -130,26 +132,62 @@ pub fn read_info(root: &Path) -> Option<DaemonInfo> {
 }
 
 /// Whether a daemon is running for the repository at `root` (FR-082): some process holds the
-/// daemon lock, or a daemon answers on the repository's socket.
+/// daemon lock, or a daemon for this repository answers `health` on its socket.
 ///
 /// `flock` locks an inode, not a path: if `daemon.lock` is deleted (or replaced) while a daemon
-/// runs, the daemon still holds the old inode and the path no longer shows it. A live listener
-/// on the socket is therefore also proof of a running daemon.
+/// runs, the daemon still holds the old inode and the path no longer shows it. A listener that
+/// reports this repository is therefore also proof of a running daemon. A process that merely
+/// accepts connections is not.
 pub fn lock_held(root: &Path) -> bool {
     lock_file_held(&root.join(".resonance").join("local").join("daemon.lock"))
         || listener_alive(root)
 }
 
-/// Whether a daemon accepts connections on one of the sockets of the repository at `root`.
+/// How long a health probe waits for an answer. A foreign listener must not stall startup.
+const HEALTH_PROBE: Duration = Duration::from_millis(500);
+
+/// Whether `reported` and `root` are the same repository.
+pub fn same_root(reported: &str, root: &Path) -> bool {
+    let reported_path = Path::new(reported);
+    if reported_path == root {
+        return true;
+    }
+    match (fs::canonicalize(reported_path), fs::canonicalize(root)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// Whether `endpoint` is a Resonance daemon for `root`: `health` returns that root.
+pub fn serves_repo(endpoint: &Path, root: &Path) -> bool {
+    probe_health(endpoint).is_some_and(|h| same_root(&h.root, root))
+}
+
+/// Ask `endpoint` for `health`. `None` when nothing answers as a Resonance daemon.
+fn probe_health(endpoint: &Path) -> Option<Health> {
+    let mut stream = UnixStream::connect(endpoint).ok()?;
+    stream.set_read_timeout(Some(HEALTH_PROBE)).ok()?;
+    stream.set_write_timeout(Some(HEALTH_PROBE)).ok()?;
+    let msg = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "health", "params": {}});
+    writeln!(stream, "{msg}").ok()?;
+    stream.flush().ok()?;
+    let mut line = String::new();
+    BufReader::new(stream).read_line(&mut line).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&line).ok()?;
+    serde_json::from_value(v.get("result")?.clone()).ok()
+}
+
+/// Whether a daemon for `root` answers on one of its sockets.
 pub fn listener_alive(root: &Path) -> bool {
     let mut paths = Vec::new();
     if let Some(info) = read_info(root) {
         paths.push(PathBuf::from(info.endpoint));
     }
-    paths.push(socket_path(&runtime_dir(), root));
-    paths
-        .iter()
-        .any(|p| std::os::unix::net::UnixStream::connect(p).is_ok())
+    let computed = socket_path(&runtime_dir(), root);
+    if !paths.iter().any(|p| p == &computed) {
+        paths.push(computed);
+    }
+    paths.iter().any(|p| serves_repo(p, root))
 }
 
 /// The device and inode of a path, to tell one file from its replacement.

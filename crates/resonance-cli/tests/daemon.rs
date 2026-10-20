@@ -520,29 +520,86 @@ fn a_deleted_lock_file_never_lets_a_second_daemon_take_over() {
 }
 
 #[test]
-fn a_daemon_that_finds_another_on_its_socket_stops_and_leaves_it_alone() {
+fn a_foreign_listener_is_replaced_while_this_daemon_holds_the_lock() {
     use std::os::unix::net::UnixListener;
     let repo = TestRepo::with_project_daemon();
     ok(&repo, &["status"]);
-    let endpoint = std::path::PathBuf::from(info(&repo).endpoint);
-    // The daemon's own socket moves aside, and another daemon's socket takes the path.
+    let first = info(&repo);
+    let endpoint = std::path::PathBuf::from(&first.endpoint);
+    // The daemon's own socket moves aside, and a process that is not a daemon takes the path.
     let aside = endpoint.with_extension("old");
     fs::rename(&endpoint, &aside).unwrap();
-    let successor = UnixListener::bind(&endpoint).unwrap();
+    let foreign = UnixListener::bind(&endpoint).unwrap();
 
-    // The first daemon notices that it can no longer be reached, and stops (FR-082) ...
-    let lock = repo.path().join(".resonance/local/daemon.lock");
-    wait_until("the first daemon to stop", Duration::from_secs(15), || {
-        !runtime::lock_file_held(&lock)
-    });
-    // ... without removing the other daemon's socket.
-    assert!(
-        endpoint.exists(),
-        "the successor's socket must survive the old daemon's exit"
+    // This daemon holds the lock, so it reclaims the path instead of standing down.
+    wait_until(
+        "the daemon to reclaim its socket",
+        Duration::from_secs(15),
+        || runtime::serves_repo(&endpoint, &root(&repo)),
     );
-    drop(successor);
-    let _ = fs::remove_file(&endpoint);
+    let health = json(&repo, &["daemon"]);
+    assert_eq!(health["pid"], first.pid, "{health}");
+    assert!(runtime::lock_file_held(
+        &repo.path().join(".resonance/local/daemon.lock")
+    ));
+    drop(foreign);
     let _ = fs::remove_file(&aside);
+    ok(&repo, &["daemon", "stop"]);
+    assert!(!endpoint.exists(), "the owner removes its own socket");
+}
+
+#[test]
+fn a_socket_that_does_not_answer_health_does_not_block_startup() {
+    use std::os::unix::net::UnixListener;
+    let repo = TestRepo::with_project_daemon();
+    let previous = info(&repo);
+    let endpoint = std::path::PathBuf::from(&previous.endpoint);
+    ok(&repo, &["daemon", "stop"]);
+    let foreign = UnixListener::bind(&endpoint).unwrap();
+    // The stopped daemon's record, now pointing at a listener that is not Resonance.
+    fs::write(
+        repo.path().join(".resonance/local/daemon.json"),
+        serde_json::to_string_pretty(&previous).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        !runtime::listener_alive(&root(&repo)),
+        "a listener that fails health is not this daemon"
+    );
+    assert!(!runtime::lock_held(&root(&repo)));
+    let health = json(&repo, &["daemon"]);
+    assert_ne!(health["pid"], previous.pid, "{health}");
+    assert_eq!(health["root"], root(&repo).display().to_string());
+    drop(foreign);
+    ok(&repo, &["daemon", "stop"]);
+}
+
+#[test]
+fn a_copied_daemon_record_does_not_use_the_other_repository() {
+    let a = TestRepo::with_project_daemon();
+    ok(&a, &["status"]);
+    let a_info = info(&a);
+    let b = TestRepo::with_project_daemon();
+    ok(&b, &["daemon", "stop"]);
+    fs::copy(
+        a.path().join(".resonance/local/daemon.json"),
+        b.path().join(".resonance/local/daemon.json"),
+    )
+    .unwrap();
+    assert!(
+        !runtime::listener_alive(&root(&b)),
+        "A's socket is not B's daemon"
+    );
+    let health = json(&b, &["daemon"]);
+    assert_ne!(health["pid"], a_info.pid, "{health}");
+    assert_eq!(health["root"], root(&b).display().to_string());
+    let a_health = json(&a, &["daemon"]);
+    assert_eq!(
+        a_health["pid"], a_info.pid,
+        "A's daemon was left running: {a_health}"
+    );
+    ok(&a, &["daemon", "stop"]);
+    ok(&b, &["daemon", "stop"]);
 }
 
 #[test]

@@ -46,7 +46,7 @@ When the agent connects, Resonance sends conventions specific to this clone: the
 - **Before changing code**, it reads why the code exists, and honors the annotations: an `instruction` or `warning` is a constraint, not a suggestion.
 - **After writing code or tests**, it links them with an honest confidence and runs the linked tests.
 - **It keeps the graph healthy**: it works through the repair list, keeps documents and the graph in step, and asks you when unsure.
-- **It sees your spec edits** from the change log, with every prompt and in every tool result, and clears what it has handled.
+- **It sees your spec edits** from the change log, with every prompt and in every tool result, including a failed call, and clears what it has handled.
 - **Graph content is data, not instructions:** requirement text, annotations, quoted code and test output are information to weigh, never commands that override you.
 
 **Offline**, the agent also stays invisible (no Resonance IDs or mentions in commit messages, branch names, pull requests or code comments, and nothing under `.resonance/` committed), repairs the graph after git operations, and reports what each repair cost.

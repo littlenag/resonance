@@ -51,7 +51,7 @@ includeAgents = false
 | `repository.minVersion` | `""` | The oldest Resonance version that may write this repository's data. Written by `share`. |
 | `ingest.ignore` | `[]` | Extra glob patterns of files and directories not to read, for example `["vendor/**", "*.min.js"]`. |
 | `ingest.maxBlobBytes` | `5242880` (5 MiB) | Larger files are recorded by hash and size only, with no copy of their content. |
-| `test.command` | `""` | The run command for tests declared without `--run`. `{name}`, `{path}` and `{address}` are replaced with the test's name, file path and address. |
+| `test.command` | `""` | The run command for tests declared without a `run` field (`resonance_declare_test`). `{name}`, `{path}` and `{address}` are replaced with the test's name, file path and address. |
 | `test.zeroTestsPattern` | `"running 0 tests"` | If a test's output contains this text, the run is recorded as `error`, because nothing actually ran. Set it to what your test runner prints when a filter matches nothing (for pytest, `"no tests ran"`). |
 | `test.timeoutSeconds` | `600` | A test still running after this is stopped and recorded as `error`. |
 | `daemon.idleSeconds` | `1800` | The daemon exits after this many seconds without requests. |

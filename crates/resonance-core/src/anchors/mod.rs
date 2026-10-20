@@ -256,7 +256,7 @@ pub struct RegionSpec {
 }
 
 /// Parse `path:START-END` or `path:LINE`. A path without a line suffix is returned as is
-/// (to be combined with `--match`).
+/// (to be combined with the `match` field of `resonance_declare_unit`).
 pub fn parse_region(spec: &str) -> Result<RegionSpec> {
     if let Some((path, range)) = spec.rsplit_once(':') {
         let parsed = match range.split_once('-') {

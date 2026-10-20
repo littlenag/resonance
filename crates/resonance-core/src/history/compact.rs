@@ -123,7 +123,7 @@ pub fn compact(
     let branch = current_branch(repo);
     if !anywhere && branch.as_deref() != Some(trunk.as_str()) {
         return Err(Error::Invalid(format!(
-            "compaction runs on the trunk ({trunk}) only, so that branches merge without conflicts (FR-155); you are on {}. Use --anywhere to override.",
+            "compaction runs on the trunk ({trunk}) only, so that branches merge without conflicts (FR-155); you are on {}. Pass anywhere to resonance_compact to override.",
             branch.as_deref().unwrap_or("a detached HEAD")
         )));
     }

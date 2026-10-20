@@ -211,6 +211,15 @@ fn pending_changes_reach_the_agent_without_asking_and_never_get_committed() {
         "{reminder}"
     );
 
+    // A failed call keeps its error and still carries the reminder. The change-log tools do not.
+    let err = repo.tool_err("resonance_show_item", json!({"ref": "NO-SUCH"}));
+    assert!(
+        err.contains("NO-SUCH") && err.contains("pending change-log"),
+        "{err}"
+    );
+    let changes_err = repo.tool_err("resonance_changes_show", json!({"seq": 999_999}));
+    assert!(!changes_err.contains("pending change-log"), "{changes_err}");
+
     // With every prompt, the harness hook puts the entries in front of the agent.
     let out = prompt_hook(&repo);
     let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));

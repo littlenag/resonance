@@ -510,7 +510,13 @@ impl App {
                 self.back = Screen::Log;
                 self.screen = Screen::Help;
             }
-            KeyCode::Esc | KeyCode::Backspace => self.screen = self.back,
+            KeyCode::Esc | KeyCode::Backspace => {
+                self.screen = self.back;
+                // Clearing the log reloads the list, not the detail that was open underneath.
+                if self.screen == Screen::Detail {
+                    self.load_detail()?;
+                }
+            }
             KeyCode::Down | KeyCode::Char('j') => self.scroll_log(1),
             KeyCode::Up | KeyCode::Char('k') => self.scroll_log(-1),
             KeyCode::PageDown => self.scroll_log(10),

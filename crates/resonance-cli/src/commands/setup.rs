@@ -67,10 +67,26 @@ pub fn init(ctx: &Ctx, agent_choice: AgentChoice, offline: bool) -> Result<()> {
                 }
                 out.push_str("Your commits are now checked for consistency with the graph (pre-commit, pre-push). `resonance leave` steps out.\n");
             }
-            None if setup.already_initialized => out.push_str(&format!(
-                "Resonance is already set up in {}; refreshed its hooks and agent kit.\n",
-                repo.root.display()
-            )),
+            None if setup.already_initialized => {
+                let kept_kit =
+                    matches!(agent_choice, AgentChoice::None) && agent::kit_record(&repo).is_some();
+                if kept_kit {
+                    out.push_str(&format!(
+                        "Resonance is already set up in {}; refreshed its hooks. The existing agent kit was left installed.\n",
+                        repo.root.display()
+                    ));
+                } else if matches!(agent_choice, AgentChoice::None) {
+                    out.push_str(&format!(
+                        "Resonance is already set up in {}; refreshed its hooks.\n",
+                        repo.root.display()
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "Resonance is already set up in {}; refreshed its hooks and agent kit.\n",
+                        repo.root.display()
+                    ));
+                }
+            }
             None => {
                 out.push_str(&format!(
                     "Initialized Resonance in {}/.resonance ({}).\n",
@@ -98,6 +114,8 @@ pub fn init(ctx: &Ctx, agent_choice: AgentChoice, offline: bool) -> Result<()> {
         }
         match &kit {
             Some(k) => out.push_str(&kit_text(k)),
+            // `--no-agent` skips installation. An existing kit stays; it was not refreshed.
+            None if agent::kit_record(&repo).is_some() => {}
             None => out.push_str("No agent kit installed; `resonance init --agent claude-code` (or `generic`) installs it (FR-210).\n"),
         }
         out
@@ -208,10 +226,29 @@ pub fn agent_hook(ctx: &Ctx, event: &str) -> Result<()> {
     let d: GateDecision = match ctx.run("agent_gate", json!({"command": command})) {
         Ok(d) => d,
         Err(e) => {
-            ctx.note(&format!(
-                "resonance: the agent gate could not run ({e}); the git hooks still check"
-            ));
-            return Ok(());
+            // People's git hooks only warn about a pending change log (FR-277). When the
+            // gate itself cannot run, deny the commands it would have stopped.
+            let gated = git
+                .iter()
+                .any(|g| matches!(g.as_str(), "commit" | "push" | "pull"));
+            if !gated {
+                ctx.note(&format!(
+                    "resonance: the agent gate could not run ({e}); `{command}` is allowed"
+                ));
+                return Ok(());
+            }
+            let reason = format!(
+                "resonance: the agent gate could not run ({e}), so this git {} is denied until it can",
+                git.join(", ")
+            );
+            let out = json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            });
+            return ctx.emit(&out, |o| format!("{o}\n"));
         }
     };
     if ctx.json {

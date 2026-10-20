@@ -1,6 +1,6 @@
 ## 13. Packaging and distribution
 
-Resonance is distributed as **one binary** (§11). Everything a developer, an agent or a CI job needs locally is in it. Installing it changes nothing in any repository; per-repository setup always happens through explicit commands (`init`, `agent install`, and so on). Other deliverables come later, once the MVP has matured, and each sits on top of the binary rather than beside it. [Decided]
+Resonance is distributed as **one binary** (§11). Everything a developer, an agent or a CI job needs locally is in it. Installing it changes nothing in any repository; per-repository setup always happens through explicit commands (`resonance init`, and so on). Other deliverables come later, once the MVP has matured, and each sits on top of the binary rather than beside it. [Decided]
 
 ### 13.1 The binary
 

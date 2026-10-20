@@ -991,14 +991,14 @@ impl Engine {
         let (start, end) = match (spec.lines, match_text) {
             (Some(_), Some(_)) => {
                 return Err(Error::Usage(
-                    "give either a line range or --match, not both".into(),
+                    "give either a line range or `match`, not both (resonance_declare_unit or resonance_declare_test)".into(),
                 ));
             }
             (Some((a, b)), None) => anchors::lines_to_bytes(&content, a, b)?,
             (None, Some(m)) => anchors::find_unique(&content, m)?,
             (None, None) => {
                 return Err(Error::Usage(format!(
-                    "give a line range ({path}:START-END) or an exact snippet with --match"
+                    "give a line range ({path}:START-END) or an exact snippet in `match` (resonance_declare_unit or resonance_declare_test)"
                 )));
             }
         };
@@ -1098,7 +1098,9 @@ impl Engine {
             Self::check_name(name)?;
         }
         if edit.run.is_some() && n.ntype != NodeType::Test {
-            return Err(Error::Usage("--run is only for tests".into()));
+            return Err(Error::Usage(
+                "`run` is only for tests (resonance_edit_unit)".into(),
+            ));
         }
         let new_anchor = match (&edit.region, &edit.match_text) {
             (None, None) => None,
@@ -1175,7 +1177,7 @@ impl Engine {
     pub fn unit_split(&mut self, reference: &str, into: &[String]) -> Result<IdentityChange> {
         if into.is_empty() {
             return Err(Error::Usage(
-                "give the units it was split into with --into".into(),
+                "give the units it was split into in `into` (resonance_split_unit)".into(),
             ));
         }
         let old = self.anchored(reference)?;
@@ -1695,7 +1697,10 @@ impl Engine {
                 exit_code: None,
                 output_tail: String::new(),
                 duration_ms: 0,
-                error: Some("the test has no --run command and test.command is not set".into()),
+                error: Some(
+                    "the test has no `run` command (resonance_declare_test) and test.command is not set"
+                        .into(),
+                ),
             },
         };
         let edges: Vec<Edge> = self

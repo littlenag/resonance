@@ -137,7 +137,7 @@ fn tests_run_by_requirement_test_or_link_and_fall_back_to_the_configured_command
         "no test verifies the unit itself"
     );
 
-    // test.command with substitutions, for tests declared without --run.
+    // test.command with substitutions, for tests declared without a run command.
     let config = repo.read(".resonance/config.toml").replace(
         "command = \"\"",
         "command = \"sh tests/store_test.sh {name} # {path} {address}\"",

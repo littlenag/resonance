@@ -95,6 +95,8 @@ struct Shared {
 /// process's flock on it, so each inode is opened once and never duplicated.
 struct DaemonLock {
     path: PathBuf,
+    /// The repository this daemon serves. A socket counts only when `health` names it.
+    root: PathBuf,
     files: Mutex<Vec<fs::File>>,
 }
 
@@ -139,8 +141,8 @@ pub fn run(
     runtime::ensure_dir(&dir)?;
     let endpoint = runtime::socket_path(&dir, &repo.root);
     // Holding the lock is not enough: if `daemon.lock` was deleted under a running daemon, that
-    // daemon still holds the old inode. A daemon that answers on the socket is running; never
-    // take its socket away (FR-082).
+    // daemon still holds the old inode. A daemon whose `health` names this repository is
+    // running; never take its socket away (FR-082). A listener that does not is not that daemon.
     if runtime::listener_alive(&repo.root) {
         let pid = runtime::read_info(&repo.root)
             .map(|i| i.pid.to_string())
@@ -150,6 +152,7 @@ pub fn run(
     // The previous daemon may still be inside its owner thread after losing both files. Wait
     // until that process has left the store before binding or opening it ourselves.
     if let Some(prev) = runtime::read_info(&repo.root)
+        && runtime::same_root(&prev.root, &repo.root)
         && prev.pid != std::process::id()
         && runtime::process_alive(prev.pid)
         && process_looks_like_daemon(prev.pid)
@@ -218,6 +221,7 @@ pub fn run(
     // One set of lock fds. See [`DaemonLock`].
     let locks = Arc::new(DaemonLock {
         path: lock_path,
+        root: repo.root.clone(),
         files: Mutex::new(vec![lock]),
     });
     // Accept connections.
@@ -387,7 +391,9 @@ fn keep_socket(endpoint: &Path, ours: Option<(u64, u64)>, locks: &DaemonLock) ->
             return SocketCheck::Taken;
         }
     }
-    if current.is_some() && UnixStream::connect(endpoint).is_ok() {
+    // We hold the lock. Stand down only for a daemon that reports this repository.
+    // Anything else is not ours: unlink it and bind again.
+    if current.is_some() && runtime::serves_repo(endpoint, &locks.root) {
         return SocketCheck::Taken;
     }
     if let Some(dir) = endpoint.parent() {

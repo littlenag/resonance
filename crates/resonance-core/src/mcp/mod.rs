@@ -166,10 +166,18 @@ fn tool_result(outcome: Result<Value>, reminder: Option<String>) -> Value {
                 "isError": false,
             })
         }
-        Err(e) => json!({
-            "content": [{"type": "text", "text": e.to_string()}],
-            "isError": true,
-        }),
+        Err(e) => {
+            // Keep the error text. The reminder follows it, so a failure is not an empty log.
+            let mut text = e.to_string();
+            if let Some(r) = reminder {
+                text.push_str("\n\n");
+                text.push_str(&r);
+            }
+            json!({
+                "content": [{"type": "text", "text": text}],
+                "isError": true,
+            })
+        }
     }
 }
 

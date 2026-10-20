@@ -318,6 +318,38 @@ fn pending_changes_are_marked_and_the_person_can_clear_them() {
 }
 
 #[test]
+fn escaping_the_log_back_to_detail_reloads_it() {
+    let (_dir, mut app) = setup();
+    call(
+        &mut app,
+        "spec_edit",
+        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+    );
+    app.refresh();
+    select(&mut app, "FR-001");
+    app.on_key(key(KeyCode::Enter));
+    assert!(render(&mut app).contains("Pending change"),);
+    press(&mut app, 'l');
+    assert_eq!(app.screen, Screen::Log);
+    let idx = app
+        .log
+        .iter()
+        .position(|e| e.item.key == "FR-001")
+        .expect("the edit is in the log");
+    for _ in 0..idx {
+        app.on_key(key(KeyCode::Char('j')));
+    }
+    press(&mut app, 'd');
+    app.on_key(key(KeyCode::Esc));
+    assert_eq!(app.screen, Screen::Detail);
+    let screen = render(&mut app);
+    assert!(
+        !screen.contains("Pending change"),
+        "the detail still showed the cleared entry: {screen}"
+    );
+}
+
+#[test]
 fn edits_and_retires_graph_native_items_in_place() {
     let (_dir, mut app) = setup();
     call(
