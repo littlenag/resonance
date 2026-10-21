@@ -24,6 +24,10 @@ test:
 test-direct:
     RESONANCE_TEST_DIRECT=1 cargo test -p resonance-cli --locked
 
+# Line coverage (docs/testing.md). Not part of `check`. Args: summary (default), html, or lcov.
+coverage *args:
+    bash scripts/coverage.sh {{args}}
+
 # Format all Rust code in place.
 fmt:
     cargo fmt --all

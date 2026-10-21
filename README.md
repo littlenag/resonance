@@ -34,6 +34,7 @@ Repeatable tasks are recipes in the [`justfile`](justfile); run `just` to list t
 | `just check` | Everything CI should run: `fmt-check`, `lint`, `test`, `test-direct`, `boundary`, `spec-check` |
 | `just build` / `just test` | Build or test the whole workspace against the committed `Cargo.lock` |
 | `just test-direct` | Run the CLI acceptance tests in direct mode (`--no-daemon`) |
+| `just coverage [summary\|html\|lcov]` | Line coverage for both test modes ([docs/testing.md](docs/testing.md)); not part of `just check` |
 | `just fmt` / `just fmt-check` | Format Rust code, or fail if it is not formatted |
 | `just lint` | Clippy, with warnings as errors |
 | `just boundary` | Fail if `resonance-core` depends on SQLite or a source-code parser (FR-110, FR-161) |
@@ -44,6 +45,6 @@ Repeatable tasks are recipes in the [`justfile`](justfile); run `just` to list t
 
 Field-test on fixture repositories and other small repositories, not on this one: running Resonance on its own repository is backlog item *Self-dogfood*, done once the MVP is judged reliable.
 
-The workspace has three crates (MVP-001): `resonance-core` (the model, store API, ingest, anchor tracking, queries, MCP, daemon and registry, all engine-neutral), `resonance-store-sqlite` (the only crate that knows SQLite), and `resonance-cli` (the `resonance` binary). The acceptance tests for [`spec/mvp.md`](spec/mvp.md) §5 are in `crates/resonance-cli/tests/`; the anchor-tracking scenarios are in `crates/resonance-core/tests/anchors.rs`; the store conformance suite is in `crates/resonance-core/src/store/conformance.rs`.
+The workspace has three crates (MVP-001): `resonance-core` (the model, store API, ingest, anchor tracking, queries, MCP, daemon and registry, all engine-neutral), `resonance-store-sqlite` (the only crate that knows SQLite), and `resonance-cli` (the `resonance` binary). The acceptance tests for [`spec/mvp.md`](spec/mvp.md) §5 are in `crates/resonance-cli/tests/`; the anchor-tracking scenarios are in `crates/resonance-core/tests/anchors.rs`; the store conformance suite is in `crates/resonance-core/src/store/conformance.rs`. How to run them, how to read coverage, and which git workflows have tests is in [docs/testing.md](docs/testing.md).
 
 The specification is in [`spec/`](spec/): the working MVP spec is [`spec/mvp.md`](spec/mvp.md), and the remaining work is in [`spec/backlog.md`](spec/backlog.md).

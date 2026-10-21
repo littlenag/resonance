@@ -438,6 +438,49 @@ fn leave_rejoin_and_unshare_lose_nothing() {
 }
 
 #[test]
+fn files_outside_governance_paths_are_not_consistency_errors() {
+    // FR-178: opted-in checks apply only inside `[governance] paths`.
+    let (repo, _bare) = shared_repo();
+    let cfg = repo
+        .read(".resonance/config.toml")
+        .replace("paths = []", "paths = [\"src/*\"]");
+    assert!(cfg.contains("paths = [\"src/*\"]"));
+    repo.write(".resonance/config.toml", &cfg);
+    repo.commit_all("govern src only");
+
+    repo.write("NOTES.md", "outside the governed paths\n");
+    repo.git(&["add", "NOTES.md"]);
+    repo.git(&[
+        "commit",
+        "-q",
+        "--no-verify",
+        "-m",
+        "a note, hooks bypassed",
+    ]);
+    repo.ok(&["check", "--range", "HEAD~1..HEAD"]);
+
+    repo.replace("src/store.rs", "conn.check();", "conn.check(); // governed");
+    repo.git(&["add", "src/store.rs"]);
+    repo.git(&[
+        "commit",
+        "-q",
+        "--no-verify",
+        "-m",
+        "source edited with hooks bypassed",
+    ]);
+    // Findings are printed before the non-zero exit, so look at both streams.
+    let out = repo.run(&["check", "--range", "HEAD~1..HEAD"]);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(3), "{text}");
+    assert!(text.contains("R002"), "{text}");
+    assert!(text.contains("src/store.rs"), "{text}");
+}
+
+#[test]
 fn deltas_render_for_people() {
     let (repo, _bare) = shared_repo();
     repo.annotate("close", "note", "readable");

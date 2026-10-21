@@ -170,6 +170,54 @@ fn export_and_restore_round_trip() {
 }
 
 #[test]
+fn restore_into_a_live_graph_adds_what_is_missing_and_keeps_the_rest() {
+    let repo = TestRepo::with_project();
+    repo.declare_sample();
+    repo.annotate("open", "warning", "from the export");
+    repo.tool(
+        "resonance_create_decision",
+        json!({"title": "Exported", "decision": "from the source graph"}),
+    );
+    let export = repo.home().join("export-live.jsonl");
+    repo.ok(&["export", "--out", export.to_str().unwrap()]);
+
+    let other = TestRepo::with_project();
+    other.import_sample();
+    other.declare("src/store.rs:11-14", "local_only");
+    other.tool(
+        "resonance_create_decision",
+        json!({"title": "Kept", "decision": "stays on the target"}),
+    );
+    let out = other.json(&["restore", export.to_str().unwrap()]);
+    assert!(out["applied"].as_u64().unwrap() > 0, "{out}");
+    assert!(out["skipped"].as_u64().unwrap() > 0, "{out}");
+
+    let kept = other.tool("resonance_show", json!({"ref": "Kept"}));
+    assert_eq!(kept["properties"]["decision"], "stays on the target");
+    let local = other.tool("resonance_show", json!({"ref": "local_only"}));
+    assert_eq!(local["node"]["type"], "CodeUnit");
+    assert_eq!(local["location"]["state"], "attached");
+    let why = other.tool("resonance_why", json!({"ref": "open"}));
+    let notes: Vec<&str> = why["annotations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["text"].as_str().unwrap())
+        .collect();
+    assert!(notes.contains(&"from the export"), "{notes:?}");
+    let exported = other.tool("resonance_show", json!({"ref": "Exported"}));
+    assert_eq!(exported["properties"]["decision"], "from the source graph");
+
+    let again = other.json(&["restore", export.to_str().unwrap()]);
+    assert_eq!(again["applied"], 0, "{again}");
+    assert_eq!(
+        other.tool("resonance_show", json!({"ref": "Kept"}))["properties"]["decision"],
+        "stays on the target"
+    );
+    let _ = fs::remove_file(export);
+}
+
+#[test]
 fn a_repository_in_the_earlier_layout_is_migrated() {
     let repo = TestRepo::with_project();
     repo.declare_sample();

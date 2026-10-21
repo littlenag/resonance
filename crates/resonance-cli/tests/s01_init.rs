@@ -234,3 +234,96 @@ fn the_cli_offers_operations_only() {
     repo.fails(&["import", "spec/requirements.md"], 2);
     repo.fails(&["trace", "FR-001"], 2);
 }
+
+/// Offline init installs the notification hooks only. A manager, or a hook that is not a
+/// shell script, means `manual`: print the block and do not write the hook file (FR-177).
+fn assert_hook_left_manual(repo: &TestRepo, manager_or_note: &str, absent: &str) {
+    let out = repo.ok(&["init", "--no-agent"]);
+    assert!(out.contains(manager_or_note), "{out}");
+    assert!(
+        out.lines()
+            .any(|l| l.contains("post-checkout") && l.contains("manual")),
+        "{out}"
+    );
+    assert!(
+        !repo.path().join(absent).exists(),
+        "init must not create {absent} while {manager_or_note} owns the hooks\n{out}"
+    );
+}
+
+#[test]
+fn a_hook_manager_is_left_for_its_owner() {
+    // FR-177: husky keeps its hooks. Resonance prints the block to add.
+    let repo = project();
+    fs::create_dir_all(repo.path().join(".husky")).unwrap();
+    fs::write(repo.path().join(".husky/pre-commit"), "#!/bin/sh\n").unwrap();
+    assert_hook_left_manual(&repo, "husky", ".git/hooks/post-checkout");
+}
+
+#[test]
+fn a_pre_commit_config_is_left_for_its_owner() {
+    let repo = project();
+    repo.write(".pre-commit-config.yaml", "repos: []\n");
+    assert_hook_left_manual(&repo, "pre-commit", ".git/hooks/post-checkout");
+}
+
+#[test]
+fn lefthook_yml_is_left_for_its_owner() {
+    let repo = project();
+    repo.write("lefthook.yml", "pre-commit:\n  commands: {}\n");
+    assert_hook_left_manual(&repo, "lefthook", ".git/hooks/post-checkout");
+}
+
+#[test]
+fn lefthook_yaml_is_left_for_its_owner() {
+    let repo = project();
+    repo.write("lefthook.yaml", "pre-commit:\n  commands: {}\n");
+    assert_hook_left_manual(&repo, "lefthook", ".git/hooks/post-checkout");
+}
+
+#[test]
+fn core_hooks_path_inside_the_work_tree_is_left_alone() {
+    let repo = project();
+    fs::create_dir_all(repo.path().join(".githooks")).unwrap();
+    repo.git(&["config", "core.hooksPath", ".githooks"]);
+    assert_hook_left_manual(&repo, "core.hooksPath", ".githooks/post-checkout");
+    assert!(!repo.path().join(".git/hooks/post-checkout").exists());
+}
+
+#[test]
+fn a_non_shell_hook_is_left_unchanged() {
+    let repo = project();
+    let hook = repo.path().join(".git/hooks/post-checkout");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    let body = "#!/usr/bin/env python3\nprint('keep')\n";
+    fs::write(&hook, body).unwrap();
+    let out = repo.ok(&["init", "--no-agent"]);
+    assert!(
+        out.lines()
+            .any(|l| l.contains("post-checkout") && l.contains("manual")),
+        "{out}"
+    );
+    assert!(out.contains("not a shell script"), "{out}");
+    assert_eq!(fs::read_to_string(&hook).unwrap(), body);
+}
+
+#[test]
+fn a_unit_in_a_file_past_max_blob_bytes_stays_attached() {
+    // Declaring reads the file from disk, so a unit can be anchored in text that ingest
+    // refuses to store. `resonance rebuild` re-checks anchors against stored blobs only
+    // and is not asserted here.
+    let repo = TestRepo::with_project();
+    let config = repo
+        .read(".resonance/config.toml")
+        .replace("maxBlobBytes = 5242880", "maxBlobBytes = 64");
+    repo.write(".resonance/config.toml", &config);
+    let body = "pub fn wide() {\n    let value = 1;\n}\n".repeat(4);
+    assert!(body.len() > 64, "{}", body.len());
+    repo.write("src/wide.rs", &body);
+    let file = repo.tool("resonance_show", json!({"ref": "src/wide.rs"}));
+    assert_eq!(file["properties"]["stored"], false, "{file}");
+    repo.declare("src/wide.rs:1-3", "wide");
+    let show = repo.tool("resonance_show", json!({"ref": "wide"}));
+    assert_eq!(show["location"]["path"], "src/wide.rs");
+    assert_eq!(show["location"]["state"], "attached", "{show}");
+}

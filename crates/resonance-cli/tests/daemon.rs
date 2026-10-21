@@ -469,6 +469,65 @@ fn registry_install_previews_and_changes_nothing_without_confirmation() {
 }
 
 #[test]
+fn registry_install_and_uninstall_write_a_user_service() {
+    // A fake launchctl or systemctl is first on PATH, so this never loads a service into
+    // the user's real session. The plan itself is chosen at compile time.
+    let mut repo = TestRepo::with_project_daemon();
+    let bin_dir = repo.home().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let log = bin_dir.join("service.log");
+    let tool = if cfg!(target_os = "macos") {
+        "launchctl"
+    } else {
+        "systemctl"
+    };
+    let script = bin_dir.join(tool);
+    fs::write(
+        &script,
+        format!("#!/bin/sh\necho \"$*\" >> '{}'\nexit 0\n", log.display()),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    repo.with_path(bin_dir);
+
+    let installed = ok(&repo, &["registry", "install", "--yes"]);
+    assert!(installed.contains("Installed and started"), "{installed}");
+    let unit = if cfg!(target_os = "macos") {
+        repo.home()
+            .join("Library/LaunchAgents/dev.resonance.registry.plist")
+    } else {
+        repo.home()
+            .join(".config/systemd/user/resonance-registry.service")
+    };
+    let body = fs::read_to_string(&unit).unwrap();
+    assert!(body.contains("registry"), "{body}");
+    assert!(body.contains("run"), "{body}");
+    let calls = fs::read_to_string(&log).unwrap();
+    if cfg!(target_os = "macos") {
+        assert!(
+            calls.contains("bootstrap") && calls.contains("gui/"),
+            "{calls}"
+        );
+    } else {
+        assert!(
+            calls.contains("daemon-reload") && calls.contains("enable --now"),
+            "{calls}"
+        );
+    }
+
+    let removed = ok(&repo, &["registry", "uninstall", "--yes"]);
+    assert!(removed.contains("Stopped and removed"), "{removed}");
+    assert!(!unit.exists(), "uninstall removes the service file");
+    let calls = fs::read_to_string(&log).unwrap();
+    if cfg!(target_os = "macos") {
+        assert!(calls.contains("bootout"), "{calls}");
+    } else {
+        assert!(calls.contains("disable --now"), "{calls}");
+    }
+}
+
+#[test]
 fn the_daemon_leaves_git_status_unchanged() {
     let repo = TestRepo::with_project_daemon();
     repo.declare_sample();

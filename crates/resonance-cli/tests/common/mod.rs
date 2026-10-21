@@ -15,6 +15,9 @@ pub struct TestRepo {
     /// A short directory for daemon sockets (socket paths are limited to about 100 bytes).
     runtime: TempDir,
     extra_path: Option<PathBuf>,
+    /// Run `resonance` in this directory instead of the repository root.
+    /// Used for a linked worktree, which is its own root. `git` stays in the main tree.
+    work_dir: Option<PathBuf>,
     /// Always go through a daemon, even when the suite runs in direct mode.
     force_daemon: bool,
 }
@@ -46,6 +49,7 @@ impl TestRepo {
                 .tempdir_in("/tmp")
                 .expect("runtime dir"),
             extra_path: None,
+            work_dir: None,
             force_daemon: false,
         };
         repo.git(&["init", "-q", "-b", "main"]);
@@ -68,6 +72,7 @@ impl TestRepo {
                 .tempdir_in("/tmp")
                 .expect("runtime dir"),
             extra_path: None,
+            work_dir: None,
             force_daemon: false,
         };
         let out = Command::new("git")
@@ -141,6 +146,12 @@ impl TestRepo {
     /// Prepend a directory to PATH for every `resonance` run.
     pub fn with_path(&mut self, dir: PathBuf) {
         self.extra_path = Some(dir);
+    }
+
+    /// Run later `resonance` commands in `dir` (a linked worktree). Pass `None` to return to
+    /// the main working tree. `git` helpers keep using the main tree.
+    pub fn set_work_dir(&mut self, dir: Option<PathBuf>) {
+        self.work_dir = dir;
     }
 
     pub fn write(&self, rel: &str, content: &str) {
@@ -225,7 +236,7 @@ impl TestRepo {
     pub fn command(&self, args: &[&str]) -> Command {
         let mut cmd = Command::new(bin());
         cmd.args(args)
-            .current_dir(self.path())
+            .current_dir(self.work_dir.as_deref().unwrap_or_else(|| self.path()))
             .env("HOME", self.home())
             .env("GIT_CONFIG_NOSYSTEM", "1");
         for (k, _) in std::env::vars() {
