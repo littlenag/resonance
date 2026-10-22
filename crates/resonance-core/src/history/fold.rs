@@ -121,6 +121,7 @@ pub fn collect(
         .unwrap_or_default();
     let recs = records(store)?;
     let ancestors = super::ancestry(repo);
+    let mut patch_at: Option<HashMap<String, usize>> = None;
     let committed = if mode.shared() {
         introduced(repo)
     } else {
@@ -135,13 +136,32 @@ pub fn collect(
             }
             let key = if mode.associates(loc) {
                 match recs.get(&id).and_then(|r| r.commit.clone()) {
-                    Some(c) => match ancestors.get(&c) {
+                    Some(c) => match ancestors.get(&c).copied() {
                         // A private layer over a shared graph stays on this machine (FR-187).
                         // It still folds into the live graph, but it is not committed history:
                         // compaction must not count it, write it into the snapshot, or delete it.
                         Some(_) if mode.shared() && loc == Location::Private => (1, 0, id.clone()),
-                        Some(pos) => (0, *pos, id.clone()),
-                        None => continue, // Another branch, or the detached pool.
+                        Some(pos) => (0, pos, id.clone()),
+                        // Not an ancestor of HEAD. A cherry-pick of this commit, or a squash
+                        // whose tree matches the branch that still has it, still includes it.
+                        // The record stays on the source commit.
+                        None => {
+                            let pos = {
+                                let at = patch_at
+                                    .get_or_insert_with(|| super::patch_index(repo, &ancestors));
+                                super::patch_id(repo, &c)
+                                    .as_ref()
+                                    .and_then(|p| at.get(p).copied())
+                            };
+                            let pos = pos.or_else(|| super::squash_position(repo, &c, &ancestors));
+                            match pos {
+                                Some(_) if mode.shared() && loc == Location::Private => {
+                                    (1, 0, id.clone())
+                                }
+                                Some(pos) => (0, pos, id.clone()),
+                                None => continue,
+                            }
+                        }
                     },
                     None => (1, 0, id.clone()),
                 }
@@ -359,11 +379,11 @@ pub fn catch_up(
         return Ok(out);
     }
     let inputs = collect(repo, &*store, mode, open.as_ref())?;
-    let (base, open_ops) = inputs.ops();
-    let target: BTreeSet<&str> = base
+    let (base, mut open_ops) = inputs.ops();
+    let mut target: BTreeSet<String> = base
         .iter()
         .chain(open_ops.iter())
-        .map(|o| o.op_id.as_str())
+        .map(|o| o.op_id.clone())
         .collect();
     let current: BTreeSet<String> = store
         .ops_after(0, usize::MAX)?
@@ -371,16 +391,32 @@ pub fn catch_up(
         .filter(|r| !delta::is_file_content_op(&r.op.kind))
         .map(|r| r.op.op_id)
         .collect();
+    // A deleted delta file must not drop operations the journal still has (FR-194).
+    // Only when git moved and a delta that is in effect at HEAD is missing its file.
+    // A disappearance with no git operation is C6: hold, and wait for rebuild or restore.
+    // Another branch, and the detached pool, keep their operations out of this checkout.
+    if git_moved
+        && missing_in_effect_file(repo, &*store, mode)?
+        && let Ok(journal) = super::journal_ops(repo)
+    {
+        for op in journal {
+            if delta::is_file_content_op(&op.kind)
+                || target.contains(&op.op_id)
+                || !current.contains(&op.op_id)
+            {
+                continue;
+            }
+            target.insert(op.op_id.clone());
+            open_ops.push(op);
+        }
+    }
     out.operations = target.len();
-    let same = current.len() == target.len() && current.iter().all(|c| target.contains(c.as_str()));
+    let same = current.len() == target.len() && current.iter().all(|c| target.contains(c));
     if same && !force {
         record_head(store, &sig)?;
         return Ok(out);
     }
-    let missing = current
-        .iter()
-        .filter(|c| !target.contains(c.as_str()))
-        .count();
+    let missing = current.iter().filter(|c| !target.contains(*c)).count();
     if missing > 0 && !force && !git_moved {
         // Operations would disappear although nothing in git moved: `.resonance/` changed
         // unexpectedly (C6). Keep the graph and wait for `resonance rebuild` or recovery.
@@ -461,6 +497,52 @@ pub fn refold(
         Ok(())
     })?;
     Ok(skipped.len())
+}
+
+/// A sealed delta that belongs at `HEAD` has no file. Its operations are only in the store
+/// and the journal.
+fn missing_in_effect_file(repo: &Repo, store: &dyn GraphStore, mode: Mode) -> Result<bool> {
+    let ancestors = super::ancestry(repo);
+    for (id, rec) in records(store)? {
+        if rec.detached || !mode.associates(rec.location) {
+            continue;
+        }
+        let in_effect = match &rec.commit {
+            None => true,
+            Some(c) => ancestors.contains_key(c),
+        };
+        if in_effect && !super::delta_path(repo, rec.location, &id).is_file() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// True when every path in `manifest` already ends at the same hash in a sealed delta
+/// that is in effect at `HEAD`. A fast-forward pull then has nothing new to record.
+pub fn manifest_covered(
+    repo: &Repo,
+    store: &dyn GraphStore,
+    mode: Mode,
+    manifest: &BTreeMap<String, delta::ManifestEntry>,
+) -> Result<bool> {
+    if manifest.is_empty() {
+        return Ok(false);
+    }
+    let open = read_open(store)?;
+    let inputs = collect(repo, store, mode, open.as_ref())?;
+    let mut sealed: BTreeMap<String, delta::ManifestEntry> = BTreeMap::new();
+    for (delta, (_, committed)) in inputs.deltas.iter().zip(inputs.groups.iter()) {
+        if !committed {
+            continue;
+        }
+        for (path, entry) in &delta.manifest {
+            sealed.insert(path.clone(), entry.clone());
+        }
+    }
+    Ok(manifest
+        .iter()
+        .all(|(path, entry)| sealed.get(path).is_some_and(|have| have.1 == entry.1)))
 }
 
 /// After a settle, file operations up to now are not changes of the open delta.

@@ -72,7 +72,56 @@ pub fn recover(ctx: &Ctx, action: Option<RecoverCommand>) -> Result<()> {
                 )
             })
         }
+        Some(RecoverCommand::TakeGraph { id, yes }) => {
+            confirm_recover(yes, "Write the graph's version over the file?")?;
+            let d: Divergence = ctx.run("recover", json!({"action": "take-graph", "id": id}))?;
+            ctx.emit(&d, |d| format!("Took the graph's version: {}\n", d.summary))
+        }
+        Some(RecoverCommand::TakeDisk { id, yes }) => {
+            confirm_recover(yes, "Keep the file's version and ingest it?")?;
+            let d: Divergence = ctx.run("recover", json!({"action": "take-disk", "id": id}))?;
+            ctx.emit(&d, |d| format!("Took the disk's version: {}\n", d.summary))
+        }
+        Some(RecoverCommand::KeepBoth { id, yes }) => {
+            confirm_recover(
+                yes,
+                "Keep the graph's version and write the other bytes beside the file?",
+            )?;
+            let d: Divergence = ctx.run("recover", json!({"action": "keep-both", "id": id}))?;
+            ctx.emit(&d, |d| format!("{}\n", d.resolution))
+        }
+        Some(RecoverCommand::Merge { id, yes }) => {
+            confirm_recover(yes, "Merge the file three ways?")?;
+            let d: Divergence = ctx.run("recover", json!({"action": "merge", "id": id}))?;
+            ctx.emit(&d, |d| {
+                format!(
+                    "Merged {}: {}\n",
+                    d.paths.first().map(String::as_str).unwrap_or("the file"),
+                    d.summary
+                )
+            })
+        }
+        Some(RecoverCommand::Inverse { delta, yes }) => {
+            confirm_recover(yes, &format!("Apply the inverse of delta {delta}?"))?;
+            let v: Value = ctx.run("recover", json!({"action": "inverse", "id": delta}))?;
+            ctx.emit(&v, |v| {
+                format!(
+                    "Applied {} inverse operation(s).\n`resonance recover undo` does not reverse these; the operations are in the open delta.\n",
+                    v["applied"].as_u64().unwrap_or(0)
+                )
+            })
+        }
     }
+}
+
+fn confirm_recover(yes: bool, question: &str) -> Result<()> {
+    let go = yes || confirm(question).unwrap_or(false);
+    if !go {
+        return Err(Error::Invalid(
+            "not applied; pass --yes to do this without a terminal".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn divergence_line(d: &Divergence) -> String {

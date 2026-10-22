@@ -151,7 +151,7 @@ fn tests_run_by_requirement_test_or_link_and_fall_back_to_the_configured_command
     let report = repo.tool("resonance_test", json!({"ref": "FR-003"}));
     assert_eq!(
         report["runs"][0]["command"],
-        "sh tests/store_test.sh open # tests/store_test.sh tests/store_test.sh::open"
+        "sh tests/store_test.sh 'open' # 'tests/store_test.sh' 'tests/store_test.sh::open'"
     );
     assert_eq!(report["passed"], 1);
 }

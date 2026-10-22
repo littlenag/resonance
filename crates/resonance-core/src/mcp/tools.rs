@@ -296,9 +296,9 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "resonance_recover",
-            "Divergences between git, the files and the graph (classified C1-C9 from git evidence), the detached pool and recovery records. action: list (default), undo <recovery id> (puts back what a resolution displaced), dismiss <divergence id>, attach <delta id> (detached delta onto HEAD), drop <delta id> (exports, then removes). Get the developer's confirmation before anything that cannot be undone.",
+            "Divergences between git, the files and the graph (classified C1-C9 from git evidence), the detached pool and recovery records. action: list (default), undo <recovery id> (puts back what a resolution displaced), dismiss <divergence id>, attach <delta id> (detached delta onto HEAD), drop <delta id> (exports, then removes), take-graph <divergence id>, take-disk <divergence id>, keep-both <divergence id>, merge <divergence id>, inverse <delta id> (apply the offered inverse of a reverted delta the snapshot already folded). take-graph, take-disk, keep-both, merge and inverse are undoable. Get the developer's confirmation before drop, and before anything that cannot be undone.",
             json!({
-                "action": s("list, undo, dismiss, attach or drop."),
+                "action": s("list, undo, dismiss, attach, drop, take-graph, take-disk, keep-both, merge or inverse."),
                 "id": s("The recovery record, divergence or delta ID (a unique prefix is enough)."),
                 "note": s("For dismiss: what was done."),
             }),

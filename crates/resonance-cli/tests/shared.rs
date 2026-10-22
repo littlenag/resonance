@@ -403,6 +403,11 @@ fn an_edit_made_while_resonance_was_down_is_restored_from_the_graph() {
         repo.read("src/store.rs").contains("conn.check();"),
         "restored from the graph"
     );
+    assert!(
+        !repo.git_status().contains(".resonance/deltas/"),
+        "the illicit edit is not an open delta: {}",
+        repo.git_status()
+    );
     let rec = c3["recovery"].as_str().unwrap().to_string();
     repo.ok(&["recover", "undo", &rec]);
     assert!(
@@ -435,6 +440,139 @@ fn leave_rejoin_and_unshare_lose_nothing() {
     assert_eq!(annotations_on(&repo, "open"), ["keep the signature"]);
     assert_eq!(repo.git_status(), "", "offline again: invisible");
     let _ = fs::remove_file(export);
+}
+
+#[test]
+fn leave_export_does_not_leave_the_open_delta_to_commit() {
+    let (repo, _bare) = shared_repo();
+    repo.annotate("open", "note", "leaving");
+    let export = repo.home().join("leave.delta");
+    repo.ok(&["leave", "--export", export.to_str().unwrap()]);
+    assert!(export.is_file());
+    assert!(!fs::read(&export).unwrap().is_empty());
+    repo.git(&["add", "-A"]);
+    let staged = repo.git(&["diff", "--cached", "--name-only"]);
+    assert!(
+        !staged.contains(".resonance/deltas/"),
+        "the exported open delta must not be staged: {staged}"
+    );
+}
+
+#[test]
+fn an_own_commit_without_a_manifest_is_c8() {
+    let (repo, _bare) = shared_repo();
+    let text = repo.read("src/store.rs");
+    repo.write("src/store.rs", &format!("{text}// bypass\n"));
+    repo.git(&["add", "src/store.rs"]);
+    repo.git(&["commit", "-q", "--no-verify", "-m", "bypass the hook"]);
+    repo.ok(&["status"]);
+    let list = repo.json(&["recover"]);
+    let c8 = list["divergences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["class"] == "C8")
+        .cloned()
+        .unwrap_or_else(|| panic!("{list}"));
+    assert_eq!(c8["level"], "action-required");
+    assert!(
+        c8["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "src/store.rs"),
+        "{c8}"
+    );
+}
+
+#[test]
+fn restoring_a_shared_backup_does_not_exclude_the_graph() {
+    let (repo, _bare) = shared_repo();
+    repo.ok(&["backup"]);
+    fs::remove_dir_all(repo.path().join(".resonance")).unwrap();
+    repo.ok(&["backup", "--restore"]);
+    let exclude = fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap_or_default();
+    assert!(
+        !exclude.lines().any(|l| l.trim() == "/.resonance/"),
+        "{exclude}"
+    );
+    let tracked = repo.git(&["ls-files", "--", ".resonance/graph.db"]);
+    assert!(tracked.contains(".resonance/graph.db"), "{tracked}");
+}
+
+#[test]
+fn restoring_an_offline_backup_still_excludes_resonance() {
+    let repo = TestRepo::with_project();
+    repo.ok(&["backup"]);
+    fs::remove_dir_all(repo.path().join(".resonance")).unwrap();
+    repo.ok(&["backup", "--restore"]);
+    let exclude = fs::read_to_string(repo.path().join(".git/info/exclude")).unwrap_or_default();
+    assert!(
+        exclude.lines().any(|l| l.trim() == "/.resonance/"),
+        "{exclude}"
+    );
+}
+
+#[test]
+fn reverting_a_folded_delta_offers_an_inverse() {
+    let (repo, _bare) = shared_repo();
+    repo.annotate("open", "note", "folded away");
+    repo.write("F.md", "f\n");
+    repo.commit_all("annotate");
+    // The delta this commit added. An earlier share commit may already have one,
+    // and that one can be manifest-only, with nothing to invert.
+    let listed = repo.git(&[
+        "diff-tree",
+        "--no-commit-id",
+        "--name-only",
+        "-r",
+        "--diff-filter=A",
+        "HEAD",
+        "--",
+        ".resonance/deltas",
+    ]);
+    let path = listed
+        .lines()
+        .find(|l| l.ends_with(".delta"))
+        .unwrap_or_else(|| panic!("{listed}"))
+        .to_string();
+    let id = path.rsplit('/').next().unwrap().trim_end_matches(".delta");
+    let id = id.to_string();
+    repo.tool("resonance_compact", json!({"commit": true}));
+    repo.git(&["checkout", "HEAD~1", "--", &path]);
+    repo.git(&["add", "--", &path]);
+    repo.git(&[
+        "commit",
+        "-q",
+        "--no-verify",
+        "-m",
+        "restore the folded delta file",
+    ]);
+    repo.git(&["revert", "--no-edit", "HEAD"]);
+    repo.ok(&["status"]);
+    assert!(
+        annotations_on(&repo, "open").contains(&"folded away".to_string()),
+        "the inverse is offered, not applied"
+    );
+    let list = repo.json(&["recover"]);
+    let offer = list["divergences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| {
+            d["resolution"]
+                .as_str()
+                .unwrap_or("")
+                .contains(&format!("inverse {id}"))
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("{list}"));
+    assert_eq!(offer["resolved"], false);
+    repo.ok(&["recover", "inverse", &id, "--yes"]);
+    assert!(
+        !annotations_on(&repo, "open").contains(&"folded away".to_string()),
+        "the inverse retires the annotation"
+    );
 }
 
 #[test]

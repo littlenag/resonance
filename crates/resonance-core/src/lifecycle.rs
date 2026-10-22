@@ -180,7 +180,11 @@ pub fn restore_backup(repo: &Repo, from: &Path) -> Result<()> {
         ));
     }
     copy_tree(from, &repo.resonance_dir())?;
-    exclude::add(repo)?;
+    // Stage 2 already tracks `.resonance/`. An exclude line would hide new shared files
+    // from this clone. Exclude only a tree git has never committed (stage 1).
+    if !repo.has_committed_data() {
+        exclude::add(repo)?;
+    }
     Ok(())
 }
 

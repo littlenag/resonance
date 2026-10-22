@@ -11,10 +11,11 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::error::{Error, Result};
 use crate::model::{content_hash, new_id};
-use crate::ops::hlc;
+use crate::ops::{self, Op, hlc, kind};
 use crate::repo::{Repo, abs_path};
 use crate::store::{GraphRead, GraphScope, GraphStore, GraphWrite};
 
@@ -545,6 +546,11 @@ pub fn classify(repo: &Repo, r: &dyn GraphRead, o: &Observed<'_>) -> Result<Vec<
                     out.push(d);
                 }
             }
+            // C8: this developer's own commits changed governed files and no delta in the
+            // range covers them (a hook was skipped). Offline graphs are not users.
+            if let Some(d) = own_uncovered(repo, from, to, o)? {
+                out.push(d);
+            }
         }
         // C5: a merge touched annotated or linked code.
         if op.starts_with("merge") || op.starts_with("pull") {
@@ -737,4 +743,350 @@ pub fn classify(repo: &Repo, r: &dyn GraphRead, o: &Observed<'_>) -> Result<Vec<
         }
     }
     Ok(out)
+}
+
+/// Own commits in `from..to` that changed governed files no delta manifest covers (C8).
+fn own_uncovered(
+    repo: &Repo,
+    from: &str,
+    to: &str,
+    o: &Observed<'_>,
+) -> Result<Option<Divergence>> {
+    if !o.mode.opted_in() && o.mode.stage < 3 {
+        return Ok(None);
+    }
+    let changed: Vec<String> = repo
+        .git(&["diff", "--name-only", from, to])
+        .unwrap_or_default()
+        .lines()
+        .filter(|p| !p.is_empty() && !p.starts_with(".resonance/"))
+        .filter(|p| crate::api::governs(o.config, p))
+        .map(String::from)
+        .collect();
+    if changed.is_empty() {
+        return Ok(None);
+    }
+    let mut covered = std::collections::BTreeSet::new();
+    let commits = repo
+        .git(&[
+            "log",
+            "--format=%H",
+            &format!("{from}..{to}"),
+            "--",
+            ".resonance/deltas",
+        ])
+        .unwrap_or_default();
+    for c in commits.lines() {
+        let added = repo
+            .git(&[
+                "diff-tree",
+                "--no-commit-id",
+                "--name-only",
+                "-r",
+                "-m",
+                "--diff-filter=AM",
+                c,
+                "--",
+                ".resonance/deltas",
+            ])
+            .unwrap_or_default();
+        for path in added.lines() {
+            if let Ok(bytes) = repo.git_bytes(&["show", &format!("{c}:{path}")])
+                && let Ok(d) = crate::history::Delta::parse(&bytes)
+            {
+                covered.extend(d.manifest.keys().cloned());
+            }
+        }
+    }
+    let mut mine = Vec::new();
+    for f in changed.into_iter().filter(|f| !covered.contains(f)) {
+        let authors = repo
+            .git(&["log", "--format=%ae", &format!("{from}..{to}"), "--", &f])
+            .unwrap_or_default();
+        if authors.lines().any(|e| e == o.me) {
+            mine.push(f);
+        }
+    }
+    if mine.is_empty() {
+        return Ok(None);
+    }
+    let mut d = Divergence::new(
+        Class::C8,
+        Level::ActionRequired,
+        format!(
+            "{} file(s) changed in your commits with no Resonance manifest",
+            mine.len()
+        ),
+    );
+    d.evidence.push(format!(
+        "range {}..{}",
+        &from[..from.len().min(8)],
+        &to[..to.len().min(8)]
+    ));
+    d.resolution = "commit the open delta that covers these files (`git add .resonance/deltas && git commit`); that resolves this".into();
+    d.paths = shorten(mine);
+    Ok(Some(d))
+}
+
+/// Manifest paths of the deltas committed at `HEAD`.
+pub fn committed_manifest_paths(repo: &Repo) -> std::collections::BTreeSet<String> {
+    let listed = repo
+        .git(&[
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "HEAD",
+            "--",
+            ".resonance/deltas",
+        ])
+        .unwrap_or_default();
+    paths_in_manifests(repo, listed.lines(), |path| format!("HEAD:{path}"))
+}
+
+/// Manifest paths of deltas staged in the index. A follow-up commit of the open delta
+/// is the repair for C8 and must not be blocked by the C8 it repairs (FR-203).
+pub fn staged_manifest_paths(repo: &Repo) -> std::collections::BTreeSet<String> {
+    let listed = repo
+        .git(&[
+            "diff",
+            "--cached",
+            "--name-only",
+            "--diff-filter=AM",
+            "--",
+            ".resonance/deltas",
+        ])
+        .unwrap_or_default();
+    paths_in_manifests(repo, listed.lines(), |path| format!(":{path}"))
+}
+
+fn paths_in_manifests<'a>(
+    repo: &Repo,
+    paths: impl Iterator<Item = &'a str>,
+    spec: impl Fn(&str) -> String,
+) -> std::collections::BTreeSet<String> {
+    let mut covered = std::collections::BTreeSet::new();
+    for path in paths {
+        let Ok(bytes) = repo.git_bytes(&["show", &spec(path)]) else {
+            continue;
+        };
+        let Ok(delta) = crate::history::Delta::parse(&bytes) else {
+            continue;
+        };
+        covered.extend(delta.manifest.keys().cloned());
+    }
+    covered
+}
+
+/// A C8 whose files a committed delta now covers is the repaired bypass. Resolve it.
+pub fn resolve_repaired_c8(repo: &Repo, store: &mut dyn GraphStore) -> Result<()> {
+    let covered = committed_manifest_paths(repo);
+    if covered.is_empty() {
+        return Ok(());
+    }
+    let open = list(&*store, false)?;
+    for d in open.into_iter().filter(|d| d.class == Class::C8) {
+        let paths: Vec<&str> = d
+            .paths
+            .iter()
+            .map(String::as_str)
+            .filter(|p| !p.starts_with('…'))
+            .collect();
+        if !paths.is_empty() && paths.iter().all(|p| covered.contains(*p)) {
+            resolve(store, &d.id, "a later delta manifest covers these files")?;
+        }
+    }
+    Ok(())
+}
+
+/// Inverse operations for a delta that a revert deleted after the snapshot had folded it
+/// (FR-159). Stored beside recovery records and applied only by `recover inverse`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InverseOffer {
+    delta_id: String,
+    divergence_id: String,
+    ops: Vec<Op>,
+}
+
+fn inverse_path(repo: &Repo, delta_id: &str) -> PathBuf {
+    repo.recovery_dir().join(format!("inverse-{delta_id}.json"))
+}
+
+fn inverse_ops(ops: &[Op]) -> Vec<Op> {
+    let mut out = Vec::new();
+    let change_set = new_id();
+    let actor = ops::Actor {
+        kind: ops::ActorKind::Tool,
+        id: "resonance recover".into(),
+    };
+    // Reverse order: an edge added after its nodes is removed before those nodes retire.
+    for op in ops.iter().rev() {
+        let (kind_s, payload) = match op.kind.as_str() {
+            kind::NODE_CREATE => (kind::NODE_RETIRE, json!({"id": op.payload["id"]})),
+            kind::EDGE_ADD => (kind::EDGE_REMOVE, json!({"id": op.payload["id"]})),
+            kind::NODE_SET => {
+                let Some(prev) = op
+                    .payload
+                    .get("prev")
+                    .or_else(|| op.payload.get("previous"))
+                else {
+                    continue;
+                };
+                (
+                    kind::NODE_SET,
+                    json!({"id": op.payload["id"], "key": op.payload["key"], "value": prev}),
+                )
+            }
+            _ => continue,
+        };
+        if payload["id"].as_str().unwrap_or("").is_empty() && payload.get("key").is_none() {
+            continue;
+        }
+        out.push(Op {
+            op_id: new_id(),
+            kind: kind_s.to_string(),
+            actor: actor.clone(),
+            hlc: hlc::rfc3339(hlc::now_ms()),
+            change_set: change_set.clone(),
+            schema: op.schema,
+            payload,
+        });
+    }
+    out
+}
+
+/// Notice a revert that deletes a delta the snapshot already folded. Does not apply anything.
+pub fn notice_reverted_deltas(
+    repo: &Repo,
+    store: &dyn crate::store::GraphStore,
+) -> Result<Vec<Divergence>> {
+    if !repo.snapshot_path().is_file() {
+        return Ok(Vec::new());
+    }
+    let snap = store.read_snapshot(&repo.snapshot_path())?;
+    let folded: std::collections::BTreeSet<&str> =
+        snap.meta.folded_deltas.iter().map(String::as_str).collect();
+    let deleted = repo
+        .git(&[
+            "diff",
+            "--name-only",
+            "--diff-filter=D",
+            "HEAD^",
+            "HEAD",
+            "--",
+            ".resonance/deltas",
+        ])
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for path in deleted.lines() {
+        let Some(id) = crate::history::delta::id_of(std::path::Path::new(path)) else {
+            continue;
+        };
+        if !folded.contains(id.as_str()) {
+            continue;
+        }
+        let Ok(bytes) = repo.git_bytes(&["show", &format!("HEAD^:{path}")]) else {
+            continue;
+        };
+        let Ok(delta) = crate::history::Delta::parse(&bytes) else {
+            continue;
+        };
+        let ops = inverse_ops(&delta.ops);
+        if ops.is_empty() {
+            continue;
+        }
+        let mut d = Divergence::new(
+            Class::C7,
+            Level::ActionRequired,
+            format!("reverted delta {id} is already in the snapshot"),
+        );
+        d.evidence.push(format!(
+            "deleted {path}; {} inverse operation(s) are offered and not applied",
+            ops.len()
+        ));
+        d.resolution = format!("run `resonance recover inverse {id}` to apply the inverse");
+        d.resolved = false;
+        let offer = InverseOffer {
+            delta_id: id.clone(),
+            divergence_id: d.id.clone(),
+            ops,
+        };
+        let file = inverse_path(repo, &id);
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir).map_err(|e| Error::io("creating the recovery directory", e))?;
+        }
+        fs::write(&file, serde_json::to_string(&offer)?)
+            .map_err(|e| Error::io("writing inverse operations", e))?;
+        out.push(d);
+    }
+    Ok(out)
+}
+
+/// The inverse operations offered for `delta_id` (a unique prefix is enough), and the
+/// offer file. The caller deletes the file after the operations apply.
+pub fn take_inverse(repo: &Repo, delta_id: &str) -> Result<(String, Vec<Op>, PathBuf)> {
+    let dir = repo.recovery_dir();
+    let mut matches: Vec<PathBuf> = fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("inverse-") && n.ends_with(".json"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    matches.retain(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.trim_start_matches("inverse-").starts_with(delta_id))
+    });
+    if matches.len() != 1 {
+        return Err(if matches.is_empty() {
+            Error::NotFound(format!("no inverse is offered for delta {delta_id}"))
+        } else {
+            Error::Invalid(format!(
+                "{delta_id} matches several inverse offers; give more of the delta ID"
+            ))
+        });
+    }
+    let path = matches.into_iter().next().expect("one");
+    let text = fs::read_to_string(&path).map_err(|e| Error::io("reading inverse operations", e))?;
+    let offer: InverseOffer = serde_json::from_str(&text)?;
+    Ok((offer.divergence_id, offer.ops, path))
+}
+
+/// Bytes a recovery record kept aside, when the divergence names one.
+pub fn displaced_bytes(repo: &Repo, recovery_id: &str) -> Result<Vec<u8>> {
+    let rec = find_record(repo, recovery_id)?;
+    fs::read(record_dir(repo, &rec.id).join("displaced"))
+        .map_err(|e| Error::io("reading a recovery copy", e))
+}
+
+/// Three-way merge of file bytes. Conflict markers are part of the result.
+pub fn merge_three(current: &[u8], base: &[u8], other: &[u8]) -> Result<Vec<u8>> {
+    let dir = std::env::temp_dir().join(format!("resonance-merge-{}", new_id()));
+    fs::create_dir_all(&dir).map_err(|e| Error::io("creating a merge directory", e))?;
+    let ours = dir.join("ours");
+    let base_path = dir.join("base");
+    let theirs = dir.join("theirs");
+    fs::write(&ours, current).map_err(|e| Error::io("writing a merge side", e))?;
+    fs::write(&base_path, base).map_err(|e| Error::io("writing a merge side", e))?;
+    fs::write(&theirs, other).map_err(|e| Error::io("writing a merge side", e))?;
+    let out = std::process::Command::new("git")
+        .args(["merge-file", "-p"])
+        .arg(&ours)
+        .arg(&base_path)
+        .arg(&theirs)
+        .output()
+        .map_err(|e| Error::Git(format!("could not run git merge-file: {e}")))?;
+    let _ = fs::remove_dir_all(&dir);
+    // Exit status is the conflict count. The merged text is still on standard output.
+    if out.stdout.is_empty() && !out.status.success() {
+        return Err(Error::Git(format!(
+            "git merge-file failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(out.stdout)
 }

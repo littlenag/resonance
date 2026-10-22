@@ -167,6 +167,67 @@ fn an_edit_discarded_by_git_can_be_put_back() {
     );
 }
 
+fn discarded_edit() -> (TestRepo, String) {
+    let repo = committed_sample();
+    repo.replace("src/store.rs", "conn.check();", "conn.check_everything();");
+    repo.ok(&["status"]);
+    repo.git(&["checkout", "--", "src/store.rs"]);
+    let list = repo.json(&["recover"]);
+    let id = list["divergences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["class"] == "C4")
+        .unwrap_or_else(|| panic!("{list}"))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (repo, id)
+}
+
+#[test]
+fn recover_can_take_the_graph_the_disk_or_both() {
+    let (repo, id) = discarded_edit();
+    assert!(!repo.read("src/store.rs").contains("check_everything"));
+    repo.ok(&["recover", "keep-both", &id, "--yes"]);
+    assert!(!repo.read("src/store.rs").contains("check_everything"));
+    let sidecar = repo.read("src/store.rs.resonance-other");
+    assert!(sidecar.contains("check_everything"), "{sidecar}");
+    let still = repo.json(&["recover"]);
+    assert!(
+        !still["divergences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["id"] == id),
+        "{still}"
+    );
+
+    let (repo, id) = discarded_edit();
+    repo.ok(&["recover", "take-disk", &id, "--yes"]);
+    assert!(repo.read("src/store.rs").contains("check_everything"));
+
+    let (repo, id) = discarded_edit();
+    repo.ok(&["recover", "take-graph", &id, "--yes"]);
+    assert!(!repo.read("src/store.rs").contains("check_everything"));
+    let gone = repo.json(&["recover"]);
+    assert!(
+        !gone["divergences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["class"] == "C4"),
+        "{gone}"
+    );
+
+    let (repo, id) = discarded_edit();
+    repo.ok(&["recover", "merge", &id, "--yes"]);
+    assert!(
+        repo.read("src/store.rs").contains("check_everything"),
+        "ours matches the base, so the three-way result is the displaced edit"
+    );
+}
+
 #[test]
 fn a_pull_with_teammates_commits_is_classified() {
     let repo = committed_sample();

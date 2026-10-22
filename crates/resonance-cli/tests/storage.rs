@@ -218,6 +218,59 @@ fn restore_into_a_live_graph_adds_what_is_missing_and_keeps_the_rest() {
 }
 
 #[test]
+fn restore_does_not_retire_a_node_the_target_already_has() {
+    let repo = TestRepo::with_project();
+    repo.import_sample();
+    let made = repo.tool(
+        "resonance_create_decision",
+        json!({"title": "Kept", "decision": "stays active"}),
+    );
+    let id = made["id"].as_str().unwrap().to_string();
+    assert_eq!(made["status"], "accepted");
+    let export = repo.home().join("retire-live.jsonl");
+    let body = format!(
+        "{{\"format\":\"resonance-export\",\"formatVersion\":1,\"schema\":1,\"repository\":\"demo\",\"exportedAt\":\"2026-01-01T00:00:00Z\",\"resonance\":\"test\"}}\n{{\"opId\":\"01RETIREOP0000000000000001\",\"kind\":\"node.retire\",\"actor\":{{\"kind\":\"tool\",\"id\":\"export\"}},\"hlc\":\"2026-01-01T00:00:00.000Z\",\"changeSet\":\"cs\",\"schema\":1,\"payload\":{{\"id\":\"{id}\"}}}}\n"
+    );
+    fs::write(&export, body).unwrap();
+    let out = repo.json(&["restore", export.to_str().unwrap()]);
+    assert_eq!(out["applied"], 0, "{out}");
+    assert!(out["skipped"].as_u64().unwrap() >= 1, "{out}");
+    let show = repo.tool("resonance_show", json!({"ref": "Kept"}));
+    assert_eq!(show["node"]["status"], "accepted", "{show}");
+    let again = repo.json(&["restore", export.to_str().unwrap()]);
+    assert_eq!(again["applied"], 0, "{again}");
+    let _ = fs::remove_file(export);
+}
+
+#[test]
+fn dismissing_a_conflict_records_c9() {
+    let repo = TestRepo::with_project();
+    repo.import_sample();
+    let export = repo.home().join("conflict.jsonl");
+    let body = "\
+{\"format\":\"resonance-export\",\"formatVersion\":1,\"schema\":1,\"repository\":\"demo\",\"exportedAt\":\"2026-01-01T00:00:00Z\",\"resonance\":\"test\"}
+{\"opId\":\"01CONFLICTOP000000000000001\",\"kind\":\"node.create\",\"actor\":{\"kind\":\"human\",\"id\":\"dev\"},\"hlc\":\"2026-01-01T00:00:00.000Z\",\"changeSet\":\"cs\",\"schema\":1,\"payload\":{\"id\":\"conflict:test\",\"type\":\"Conflict\",\"layer\":\"authored\",\"props\":{\"description\":\"two splits\",\"status\":\"open\"}}}
+";
+    fs::write(&export, body).unwrap();
+    let restored = repo.json(&["restore", export.to_str().unwrap()]);
+    assert!(restored["applied"].as_u64().unwrap() >= 1, "{restored}");
+    let dismissed = repo.json(&[
+        "recover",
+        "dismiss",
+        "conflict:test",
+        "--note",
+        "kept the first split",
+    ]);
+    assert_eq!(dismissed["class"], "C9", "{dismissed}");
+    let value = repo.tool("resonance_value", json!({}));
+    assert!(
+        value["divergences"]["C9"].as_u64().unwrap_or(0) >= 1,
+        "{value}"
+    );
+    let _ = fs::remove_file(export);
+}
+
+#[test]
 fn a_repository_in_the_earlier_layout_is_migrated() {
     let repo = TestRepo::with_project();
     repo.declare_sample();

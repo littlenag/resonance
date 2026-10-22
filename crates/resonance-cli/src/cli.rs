@@ -246,6 +246,46 @@ pub enum RecoverCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Write the graph's stored version of a divergence's file.
+    TakeGraph {
+        /// A divergence ID (a unique prefix is enough).
+        id: String,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Keep the file's version, or the displaced disk version, and ingest it.
+    TakeDisk {
+        /// A divergence ID (a unique prefix is enough).
+        id: String,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Leave the graph's version in place and write the other bytes beside the file.
+    KeepBoth {
+        /// A divergence ID (a unique prefix is enough).
+        id: String,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Merge the file three ways: the current bytes, HEAD, and the displaced version.
+    Merge {
+        /// A divergence ID (a unique prefix is enough).
+        id: String,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Apply the inverse of a reverted delta that the snapshot already folded (FR-159).
+    Inverse {
+        /// The delta ID from the recover list.
+        delta: String,
+        /// Do not ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

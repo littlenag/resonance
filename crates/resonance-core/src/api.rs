@@ -474,8 +474,20 @@ impl Engine {
             me: &self.me,
             config: &self.config,
         };
-        let divs = crate::recovery::classify(&self.repo, self.reader(), &observed)?;
+        let mut divs = crate::recovery::classify(&self.repo, self.reader(), &observed)?;
+        if cu
+            .head_move
+            .as_ref()
+            .is_some_and(|m| m.operation.starts_with("revert"))
+        {
+            divs.extend(crate::recovery::notice_reverted_deltas(
+                &self.repo,
+                &*self.store,
+            )?);
+        }
         crate::recovery::record(&mut *self.store, &divs)?;
+        // A follow-up commit that covers a bypassed file repairs that C8 (FR-203).
+        crate::recovery::resolve_repaired_c8(&self.repo, &mut *self.store)?;
         if self.actor.kind == ActorKind::Agent && !divs.is_empty() {
             crate::recovery::count(
                 &mut *self.store,
@@ -491,6 +503,89 @@ impl Engine {
             )],
         )?;
         report.divergences = divs;
+        Ok(())
+    }
+
+    /// Record the reverse of a C3 restore so the open delta does not keep the illicit hash.
+    fn reingest_restored(&mut self, report: &ReconcileReport) -> Result<()> {
+        let paths: Vec<String> = report
+            .divergences
+            .iter()
+            .filter(|d| {
+                d.class == crate::recovery::Class::C3 && d.resolution.contains("restored the graph")
+            })
+            .flat_map(|d| d.paths.clone())
+            .collect();
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let _ = crate::ingest::reconcile_paths(
+            &mut *self.store,
+            &self.repo.root,
+            &self.config,
+            &paths,
+            &mut self.index,
+        )?;
+        Ok(())
+    }
+
+    /// A start-up restore puts the graph's bytes back (C3). The ingest of the illicit edit
+    /// and the re-ingest of the restore are a round trip. When the open delta held nothing
+    /// else, drop that round trip so the next commit does not record it.
+    fn quiet_restored_round_trip(&mut self, report: &ReconcileReport, before: u64) -> Result<()> {
+        let restored: BTreeSet<&str> = report
+            .divergences
+            .iter()
+            .filter(|d| {
+                d.class == crate::recovery::Class::C3 && d.resolution.contains("restored the graph")
+            })
+            .flat_map(|d| d.paths.iter().map(String::as_str))
+            .collect();
+        if restored.is_empty() {
+            return Ok(());
+        }
+        if report
+            .changed
+            .iter()
+            .any(|c| !restored.contains(c.path.as_str()))
+        {
+            return Ok(());
+        }
+        for path in &restored {
+            let diff = self
+                .repo
+                .git(&["diff", "--name-only", "HEAD", "--", path])
+                .unwrap_or_default();
+            if !diff.trim().is_empty() {
+                return Ok(());
+            }
+        }
+        let Some(open) = history::read_open(&*self.store)? else {
+            return Ok(());
+        };
+        let held = self.store.ops_after(open.after_seq, usize::MAX)?;
+        if held.iter().any(|r| r.seq <= before) {
+            return Ok(());
+        }
+        fold::rebase_open(&mut *self.store)?;
+        Ok(())
+    }
+
+    /// Drop a manifest-only open delta whose files a sealed delta at HEAD already covers.
+    fn settle_covered_manifest(&mut self, cu: &fold::CatchUp) -> Result<()> {
+        if cu.head_move.is_none() && !cu.refolded {
+            return Ok(());
+        }
+        let Some(open) = history::read_open(&*self.store)? else {
+            return Ok(());
+        };
+        let content = history::open_delta_content(&*self.store, &open)?;
+        if !content.ops.is_empty() || content.manifest.is_empty() {
+            return Ok(());
+        }
+        if fold::manifest_covered(&self.repo, &*self.store, self.mode, &content.manifest)? {
+            fold::mark_settled(&mut *self.store)?;
+        }
         Ok(())
     }
 
@@ -525,7 +620,11 @@ impl Engine {
         self.mode = history::mode(&self.repo, &self.config);
         let cu = fold::catch_up(&self.repo, &mut *self.store, self.mode, &self.writer, force)?;
         let settled = if cu.refolded {
-            let r = crate::ingest::reconcile::settle(&mut *self.store, &mut self.index)?;
+            let r = crate::ingest::reconcile::settle(
+                &mut *self.store,
+                &mut self.index,
+                &self.repo.root,
+            )?;
             fold::mark_settled(&mut *self.store)?;
             Some(r)
         } else {
@@ -640,11 +739,16 @@ impl Engine {
             opts,
             &mut self.index,
         )?;
+        // Restore disk before the open delta is written, then record the reverse file
+        // operation so a startup edit does not stay in the manifest (C3, FR-012b).
+        self.classify(&cu, &mut report)?;
+        self.reingest_restored(&report)?;
+        self.quiet_restored_round_trip(&report, seq)?;
+        self.settle_covered_manifest(&cu)?;
         self.after_write()?;
         if !fresh {
             self.log_reconcile(&cu, seq)?;
         }
-        self.classify(&cu, &mut report)?;
         if cu.head_move.is_some() {
             self.maybe_compact()?;
         }
@@ -676,9 +780,12 @@ impl Engine {
                 &mut self.index,
             )?
         };
+        self.classify(&cu, &mut report)?;
+        self.reingest_restored(&report)?;
+        self.quiet_restored_round_trip(&report, seq)?;
+        self.settle_covered_manifest(&cu)?;
         self.after_write()?;
         self.log_reconcile(&cu, seq)?;
-        self.classify(&cu, &mut report)?;
         if cu != fold::CatchUp::default() {
             report.history = Some(cu);
         }
@@ -1807,22 +1914,41 @@ impl Engine {
             );
         }
         let mut report = RestoreReport::default();
+        let mut created_nodes: BTreeSet<String> = BTreeSet::new();
+        let mut created_edges: BTreeSet<String> = BTreeSet::new();
         self.store.write(GraphScope::Primary, &mut |w| {
             report = RestoreReport::default();
+            created_nodes.clear();
+            created_edges.clear();
             for op in &ops {
                 let id = op.payload["id"].as_str().unwrap_or_default();
-                let exists = match op.kind.as_str() {
+                // Retire and remove apply only to nodes and edges this restore just
+                // created. An export must not retire something the target still has.
+                let skip = match op.kind.as_str() {
                     kind::NODE_CREATE => w.get_node(id)?.is_some(),
                     kind::EDGE_ADD => w.get_edge(id)?.is_some(),
+                    kind::NODE_RETIRE | "node.remove" => {
+                        w.get_node(id)?.is_some() && !created_nodes.contains(id)
+                    }
+                    kind::EDGE_REMOVE => w.get_edge(id)?.is_some() && !created_edges.contains(id),
                     _ => false,
                 };
-                if exists {
+                if skip {
                     report.skipped += 1;
                     continue;
                 }
                 if crate::ops::apply(w, op).is_ok() {
                     w.append_op(op)?;
                     report.applied += 1;
+                    match op.kind.as_str() {
+                        kind::NODE_CREATE => {
+                            created_nodes.insert(id.to_string());
+                        }
+                        kind::EDGE_ADD => {
+                            created_edges.insert(id.to_string());
+                        }
+                        _ => {}
+                    }
                 } else {
                     report.skipped += 1;
                 }
@@ -2378,6 +2504,7 @@ impl Engine {
                 format!("identity conflict {cid} resolved"),
             );
             d.resolution = "dismissed".into();
+            crate::recovery::record(&mut *self.store, std::slice::from_ref(&d))?;
             return Ok(d);
         }
         let how = if note.is_empty() {
@@ -2386,6 +2513,144 @@ impl Engine {
             format!("dismissed by {}: {note}", self.actor)
         };
         crate::recovery::resolve(&mut *self.store, id, &how)
+    }
+
+    fn divergence_path(&self, id: &str) -> Result<(crate::recovery::Divergence, String)> {
+        let d = crate::recovery::get(self.reader(), id)?;
+        let path = d
+            .paths
+            .iter()
+            .find(|p| !p.starts_with('…'))
+            .cloned()
+            .ok_or_else(|| Error::Invalid("this divergence names no file".into()))?;
+        Ok((d, path))
+    }
+
+    fn graph_file_bytes(&self, path: &str) -> Result<Vec<u8>> {
+        let file = self
+            .store
+            .get_file(path)?
+            .ok_or_else(|| Error::Invalid(format!("the graph has no file record for {path}")))?;
+        self.store
+            .get_blob(&file.blob)?
+            .ok_or_else(|| Error::Invalid(format!("the graph has no stored bytes for {path}")))
+    }
+
+    fn ingest_path(&mut self, path: &str) -> Result<()> {
+        let _ = crate::ingest::reconcile_paths(
+            &mut *self.store,
+            &self.repo.root,
+            &self.config,
+            &[path.to_string()],
+            &mut self.index,
+        )?;
+        self.after_write()?;
+        Ok(())
+    }
+
+    /// Write the graph's stored bytes over the file (FR-196). Undoable.
+    pub fn recover_take_graph(&mut self, id: &str) -> Result<crate::recovery::Divergence> {
+        let (d, path) = self.divergence_path(id)?;
+        let graph = self.graph_file_bytes(&path)?;
+        let abs = abs_path(&self.repo.root, &path);
+        let disk = fs::read(&abs).unwrap_or_default();
+        if disk != graph {
+            crate::recovery::keep(
+                &self.repo,
+                &path,
+                d.class,
+                "graph",
+                &disk,
+                Some(crate::model::content_hash(&graph)),
+                "took the graph's version",
+            )?;
+            crate::recovery::write_file(&abs, &graph)?;
+            self.ingest_path(&path)?;
+        }
+        crate::recovery::resolve(&mut *self.store, &d.id, "took the graph's version")
+    }
+
+    /// Keep the file's bytes, or the displaced disk version, and ingest them (FR-196).
+    pub fn recover_take_disk(&mut self, id: &str) -> Result<crate::recovery::Divergence> {
+        let (d, path) = self.divergence_path(id)?;
+        if let Some(rec) = &d.recovery {
+            let _ = self.recover_undo(rec)?;
+        } else {
+            self.ingest_path(&path)?;
+        }
+        crate::recovery::resolve(&mut *self.store, &d.id, "took the disk's version")
+    }
+
+    /// Leave the graph's version in place and write the other bytes beside the file (FR-196).
+    pub fn recover_keep_both(&mut self, id: &str) -> Result<crate::recovery::Divergence> {
+        let (d, path) = self.divergence_path(id)?;
+        let other = match &d.recovery {
+            Some(rec) => crate::recovery::displaced_bytes(&self.repo, rec)?,
+            None => fs::read(abs_path(&self.repo.root, &path)).unwrap_or_default(),
+        };
+        if let Ok(graph) = self.graph_file_bytes(&path) {
+            let abs = abs_path(&self.repo.root, &path);
+            if fs::read(&abs).unwrap_or_default() != graph {
+                crate::recovery::write_file(&abs, &graph)?;
+            }
+        }
+        let sidecar = format!("{path}.resonance-other");
+        crate::recovery::write_file(&abs_path(&self.repo.root, &sidecar), &other)?;
+        crate::recovery::resolve(
+            &mut *self.store,
+            &d.id,
+            &format!("kept both; the other version is at {sidecar}"),
+        )
+    }
+
+    /// Three-way merge of the file, using HEAD as the base when git has it (FR-196).
+    pub fn recover_merge(&mut self, id: &str) -> Result<crate::recovery::Divergence> {
+        let (d, path) = self.divergence_path(id)?;
+        let abs = abs_path(&self.repo.root, &path);
+        let current = fs::read(&abs).unwrap_or_default();
+        let base = self
+            .repo
+            .git_bytes(&["show", &format!("HEAD:{path}")])
+            .unwrap_or_default();
+        let other = match &d.recovery {
+            Some(rec) => crate::recovery::displaced_bytes(&self.repo, rec)?,
+            None => current.clone(),
+        };
+        let merged = crate::recovery::merge_three(&current, &base, &other)?;
+        crate::recovery::keep(
+            &self.repo,
+            &path,
+            d.class,
+            "merge",
+            &current,
+            Some(crate::model::content_hash(&merged)),
+            "merged three ways",
+        )?;
+        crate::recovery::write_file(&abs, &merged)?;
+        self.ingest_path(&path)?;
+        crate::recovery::resolve(&mut *self.store, &d.id, "merged three ways")
+    }
+
+    /// Apply the inverse of a reverted delta that the snapshot already folded (FR-159).
+    pub fn recover_inverse(&mut self, delta_id: &str) -> Result<usize> {
+        let (divergence_id, ops, offer) = crate::recovery::take_inverse(&self.repo, delta_id)?;
+        self.store.write(GraphScope::Primary, &mut |w| {
+            for op in &ops {
+                crate::ops::apply(w, op)?;
+                w.append_op(op)?;
+            }
+            Ok(())
+        })?;
+        let _ = fs::remove_file(&offer);
+        self.after_write()?;
+        if !divergence_id.is_empty() {
+            let _ = crate::recovery::resolve(
+                &mut *self.store,
+                &divergence_id,
+                "applied the inverse operations",
+            );
+        }
+        Ok(ops.len())
     }
 
     /// Attach a detached offline delta to `HEAD` (MVP-030).

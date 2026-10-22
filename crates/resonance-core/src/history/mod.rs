@@ -325,19 +325,47 @@ pub fn sync(repo: &Repo, store: &mut dyn GraphStore, mode: Mode, writer: &str) -
     let path = delta_path(repo, open.location, &open.id);
     let mut synced = Synced::default();
     if !content.ops.is_empty() || !content.manifest.is_empty() {
-        let bytes = content.to_bytes()?;
-        let hash = content_hash(&bytes);
-        let current = fs::read(&path).ok().map(|b| content_hash(&b));
-        if current.as_deref() != Some(hash.as_str()) {
-            write_atomic(&path, &bytes)?;
+        // A rebase, cherry-pick or revert checks this path out from the commit it is
+        // replaying. Creating the file now makes git refuse to overwrite an untracked
+        // file. The operations stay in the store and the next sync writes them.
+        if path.exists() || !replay_in_progress(repo) {
+            let bytes = content.to_bytes()?;
+            let hash = content_hash(&bytes);
+            let current = fs::read(&path).ok().map(|b| content_hash(&b));
+            if current.as_deref() != Some(hash.as_str()) {
+                write_atomic(&path, &bytes)?;
+            }
+            synced.open_path = Some(path);
+            synced.hash = Some(hash);
         }
-        synced.open_path = Some(path);
-        synced.hash = Some(hash);
     } else if path.is_file() {
         let _ = fs::remove_file(&path);
     }
     journal(repo, store)?;
     Ok(synced)
+}
+
+/// A path inside the git directory (`rebase-merge`, `CHERRY_PICK_HEAD`, …).
+fn git_path(repo: &Repo, name: &str) -> Option<PathBuf> {
+    let rel = repo.git(&["rev-parse", "--git-path", name]).ok()?;
+    let path = PathBuf::from(rel.trim());
+    Some(if path.is_absolute() {
+        path
+    } else {
+        repo.root.join(path)
+    })
+}
+
+/// True while git is replaying a commit that may add the open delta's path.
+fn replay_in_progress(repo: &Repo) -> bool {
+    [
+        "rebase-merge",
+        "rebase-apply",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+    ]
+    .iter()
+    .any(|name| git_path(repo, name).is_some_and(|p| p.exists()))
 }
 
 /// Append operations the journal has not seen (FR-194). The journal is independent of the
@@ -599,8 +627,11 @@ pub fn on_head_moved(
         mv.reassociated += moved.len();
         put_records(store, &moved)?;
     }
+    // `reset --soft` and `--mixed` keep the undone commit's changes. Those deltas go back
+    // to the uncommitted bucket. `--hard` leaves the work tree matching HEAD and detaches.
+    let uncommit = operation.starts_with("reset") && reset_kept_changes(repo);
     if operation.starts_with("rebase") || operation.starts_with("reset") || is_commit {
-        let (re, det) = reassociate(repo, store, mode)?;
+        let (re, det) = reassociate(repo, store, mode, uncommit)?;
         mv.reassociated += re;
         mv.detached += det;
     }
@@ -740,9 +771,55 @@ fn seal_shared(
     Ok(Some(open.id.clone()))
 }
 
+/// `git diff` still shows the commit a soft or mixed reset undid.
+///
+/// `--mixed` of a commit that added a file leaves that file untracked. `git diff`
+/// does not list untracked files, so the add is checked against `ORIG_HEAD`.
+/// `--hard` deletes the file. An untracked file the undone commit did not add is
+/// left out, so a hard reset still detaches.
+fn reset_kept_changes(repo: &Repo) -> bool {
+    let staged = repo
+        .git(&["diff", "--cached", "--name-only", "HEAD"])
+        .unwrap_or_default();
+    let work = repo
+        .git(&["diff", "--name-only", "HEAD"])
+        .unwrap_or_default();
+    if !staged.trim().is_empty() || !work.trim().is_empty() {
+        return true;
+    }
+    let added = repo
+        .git(&[
+            "diff",
+            "--name-only",
+            "--diff-filter=A",
+            "HEAD",
+            "ORIG_HEAD",
+        ])
+        .unwrap_or_default();
+    if added.trim().is_empty() {
+        return false;
+    }
+    let untracked = repo
+        .git(&["ls-files", "--others", "--exclude-standard"])
+        .unwrap_or_default();
+    let loose: BTreeSet<&str> = untracked
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    added.lines().any(|p| loose.contains(p.trim()))
+}
+
 /// Offline deltas whose commits are no longer ancestors of `HEAD` and no longer reachable from
 /// any branch are re-associated by patch ID with a commit of `HEAD`, or else detached.
-fn reassociate(repo: &Repo, store: &mut dyn GraphStore, mode: Mode) -> Result<(usize, usize)> {
+/// With `uncommit_unmatched` (a soft or mixed reset), an unmatched delta becomes uncommitted
+/// instead of detached, because its changes are still in the index or the work tree.
+fn reassociate(
+    repo: &Repo,
+    store: &mut dyn GraphStore,
+    mode: Mode,
+    uncommit_unmatched: bool,
+) -> Result<(usize, usize)> {
     let recs = records(&*store)?;
     let ancestors = ancestry(repo);
     let mut lost: Vec<(String, DeltaRecord)> = recs
@@ -782,6 +859,11 @@ fn reassociate(repo: &Repo, store: &mut dyn GraphStore, mode: Mode) -> Result<(u
                 rec.commit = Some(new);
                 re += 1;
             }
+            None if uncommit_unmatched => {
+                rec.commit = None;
+                rec.detached = false;
+                re += 1;
+            }
             None => {
                 rec.detached = true;
                 det += 1;
@@ -790,6 +872,52 @@ fn reassociate(repo: &Repo, store: &mut dyn GraphStore, mode: Mode) -> Result<(u
     }
     put_records(store, &lost)?;
     Ok((re, det))
+}
+
+/// Patch id → the greatest ancestry position of a commit with that patch, among the newest
+/// 500 ancestors. Used so a cherry-pick sees the source delta without moving its record.
+pub(super) fn patch_index(
+    repo: &Repo,
+    ancestors: &HashMap<String, usize>,
+) -> HashMap<String, usize> {
+    let mut ranked: Vec<(&String, usize)> = ancestors.iter().map(|(c, p)| (c, *p)).collect();
+    ranked.sort_by_key(|(_, p)| std::cmp::Reverse(*p));
+    let mut best = HashMap::new();
+    for (c, pos) in ranked.into_iter().take(500) {
+        if let Some(p) = patch_id(repo, c) {
+            best.entry(p).or_insert(pos);
+        }
+    }
+    best
+}
+
+/// When `HEAD`'s tree equals another branch that still contains `commit`, that commit's
+/// delta belongs at `HEAD` (a squash merge: the patch ids do not match).
+pub(super) fn squash_position(
+    repo: &Repo,
+    commit: &str,
+    ancestors: &HashMap<String, usize>,
+) -> Option<usize> {
+    let head_pos = ancestors.values().copied().max()?;
+    let head_tree = repo.git(&["rev-parse", "HEAD^{tree}"]).ok()?;
+    let branches = repo
+        .git(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .unwrap_or_default();
+    for branch in branches.lines().filter(|b| !b.is_empty()) {
+        if repo
+            .git(&["merge-base", "--is-ancestor", commit, branch])
+            .is_err()
+        {
+            continue;
+        }
+        let Ok(tree) = repo.git(&["rev-parse", &format!("{branch}^{{tree}}")]) else {
+            continue;
+        };
+        if tree == head_tree {
+            return Some(head_pos);
+        }
+    }
+    None
 }
 
 /// `git patch-id --stable` of one commit.

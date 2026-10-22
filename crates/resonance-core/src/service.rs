@@ -484,8 +484,13 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
                         .unwrap_or_default();
                     out(json!({"exported": engine.recover_drop(&id()?, &home)?}))
                 }
+                "take-graph" => out(engine.recover_take_graph(&id()?)?),
+                "take-disk" => out(engine.recover_take_disk(&id()?)?),
+                "keep-both" => out(engine.recover_keep_both(&id()?)?),
+                "merge" => out(engine.recover_merge(&id()?)?),
+                "inverse" => out(json!({"applied": engine.recover_inverse(&id()?)?})),
                 other => Err(Error::Usage(format!(
-                    "recover: unknown action `{other}` (expected list, undo, dismiss, attach or drop)"
+                    "recover: unknown action `{other}` (expected list, undo, dismiss, attach, drop, take-graph, take-disk, keep-both, merge or inverse)"
                 ))),
             }
         }

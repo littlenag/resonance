@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use super::{Engine, VERSION};
 use crate::error::{Error, Result};
 use crate::history::{
-    self, DeltaRecord, Location, PARTICIPATION_KEY, compact, delta, keys, read_open,
+    self, DeltaRecord, Location, PARTICIPATION_KEY, compact, delta, fold, keys, read_open,
 };
 use crate::hooks::{self, HookChange};
 use crate::ingest::ReconcileOptions;
@@ -475,6 +475,13 @@ impl Engine {
                 };
                 write_text(to, &String::from_utf8_lossy(&content.to_bytes()?))?;
                 view.export = Some(to.display().to_string());
+                // The export is the copy. The open delta must not stay behind to be committed.
+                let path = history::delta_path(&self.repo, open.location, &open.id);
+                if path.is_file() {
+                    fs::remove_file(&path)
+                        .map_err(|e| Error::io(format!("removing {}", path.display()), e))?;
+                }
+                fold::rebase_open(&mut *self.store)?;
             }
         }
         view.hooks = hooks::uninstall(&self.repo)?;
@@ -601,9 +608,17 @@ impl Engine {
                 "decide which change holds, then `resonance recover dismiss <conflict>` (see `resonance status`)",
             ).with_paths(open));
         }
+        // A staged delta that covers a C8 is the repair commit. Blocking it would
+        // make the repair the spec asks for impossible (FR-203).
+        let staged_cover = recovery::staged_manifest_paths(&self.repo);
         let pending: Vec<String> = recovery::list(self.reader(), false)?
             .into_iter()
             .filter(|d| d.level == Level::ActionRequired)
+            .filter(|d| {
+                !(d.class == recovery::Class::C8
+                    && !d.paths.is_empty()
+                    && d.paths.iter().all(|p| staged_cover.contains(p)))
+            })
             .map(|d| d.id)
             .collect();
         if !pending.is_empty() {

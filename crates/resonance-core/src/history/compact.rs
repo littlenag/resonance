@@ -233,8 +233,9 @@ pub fn compact(
     Ok(out)
 }
 
-/// Merge two snapshots: the union of their operations, ours first, then theirs that ours
-/// lacks; the union of their folded deltas (FR-157). Always succeeds.
+/// Merge two snapshots: the union of their operations, ordered by clock then id so the
+/// fold is the same whichever side is ours (FR-151, FR-157); the union of their folded
+/// deltas. Always succeeds.
 pub fn merge(ours: &Snapshot, theirs: &Snapshot) -> Snapshot {
     let mut seen: BTreeSet<&str> = ours.ops.iter().map(|o| o.op_id.as_str()).collect();
     let mut ops = ours.ops.clone();
@@ -243,6 +244,9 @@ pub fn merge(ours: &Snapshot, theirs: &Snapshot) -> Snapshot {
             ops.push(op.clone());
         }
     }
+    // The same order a fold uses when several deltas share a commit. Snapshot operations
+    // carry no commit id, so clock then id is the deterministic order (FR-151).
+    ops.sort_by(|a, b| a.hlc.cmp(&b.hlc).then(a.op_id.cmp(&b.op_id)));
     let folded: Vec<String> = ours
         .meta
         .folded_deltas
@@ -286,4 +290,44 @@ pub fn repair_conflicted_snapshot(repo: &Repo, store: &dyn GraphStore) -> Result
     repo.git(&["add", "--", ".resonance/graph.db"])?;
     let _ = fs::remove_dir_all(&dir);
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops::{Actor, ActorKind, Op};
+    use serde_json::json;
+
+    fn set(id: &str, hlc: &str, value: &str) -> Op {
+        Op {
+            op_id: id.into(),
+            kind: "node.set".into(),
+            actor: Actor {
+                kind: ActorKind::Human,
+                id: "dev".into(),
+            },
+            hlc: hlc.into(),
+            change_set: "cs".into(),
+            schema: SCHEMA_VERSION,
+            payload: json!({"id": "n", "key": "text", "value": value}),
+        }
+    }
+
+    #[test]
+    fn merge_orders_by_clock_from_either_side() {
+        let early = snapshot(
+            vec![set("b", "2020-01-01T00:00:00.000Z", "early")],
+            vec!["d1".into()],
+        );
+        let late = snapshot(
+            vec![set("a", "2020-01-02T00:00:00.000Z", "late")],
+            vec!["d2".into()],
+        );
+        let ab = merge(&early, &late);
+        let ba = merge(&late, &early);
+        assert_eq!(ab, ba, "the merged snapshot does not depend on direction");
+        let ids: Vec<&str> = ab.ops.iter().map(|o| o.op_id.as_str()).collect();
+        assert_eq!(ids, ["b", "a"], "the earlier clock applies first");
+        assert_eq!(ab.ops.last().unwrap().payload["value"], "late");
+    }
 }

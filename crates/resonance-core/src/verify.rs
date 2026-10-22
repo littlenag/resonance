@@ -209,12 +209,18 @@ fn kill_group(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
+/// One POSIX single-quoted argument. An embedded `'` becomes `'\''`.
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Fill `{name}`, `{path}` and `{address}` into a `test.command` template (MVP-017).
+/// Each value is one shell argument, so spaces and metacharacters stay inside it.
 pub fn substitute(template: &str, name: &str, path: &str, address: &str) -> String {
     template
-        .replace("{name}", name)
-        .replace("{path}", path)
-        .replace("{address}", address)
+        .replace("{name}", &shell_quote(name))
+        .replace("{path}", &shell_quote(path))
+        .replace("{address}", &shell_quote(address))
 }
 
 #[cfg(test)]
@@ -269,7 +275,16 @@ mod tests {
                 "a.rs",
                 "a.rs::t"
             ),
-            "cargo test -- --exact t # a.rs a.rs::t"
+            "cargo test -- --exact 't' # 'a.rs' 'a.rs::t'"
         );
+        assert_eq!(substitute("echo {name}", "a'b", "p", "a"), "echo 'a'\\''b'");
+    }
+
+    #[test]
+    fn a_metacharacter_in_a_name_is_one_argument() {
+        let cmd = substitute("printf '%s' {name}", "a b; echo PWNED", "p", "a");
+        let out = run(&cmd);
+        assert_eq!(out.result, TestResult::Pass, "{:?}", out.output_tail);
+        assert_eq!(out.output_tail.trim(), "a b; echo PWNED");
     }
 }

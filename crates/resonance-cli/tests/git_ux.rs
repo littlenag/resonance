@@ -68,6 +68,11 @@ fn pull_edit_commit_push_round_trip() {
         repo.read("src/store.rs")
             .contains("conn.check(); // pulled")
     );
+    assert_eq!(
+        repo.git_status(),
+        "",
+        "a fast-forward pull of a covered file leaves no open delta"
+    );
     attached(&repo, "open");
     assert_eq!(
         annotations_on(&repo, "open"),
@@ -86,10 +91,12 @@ fn pull_edit_commit_push_round_trip() {
         annotations_on(&mate, "open"),
         ["after the pull", "keep the signature"]
     );
-    // The sender is clean. The receiver is not: a fast-forward pull of a file the
-    // incoming delta already covers still writes an untracked open delta. That is
-    // an open issue (see docs/testing.md); this test does not require it to be clean.
     assert_eq!(repo.git_status(), "");
+    assert_eq!(
+        mate.git_status(),
+        "",
+        "the receiver of a fast-forward pull is clean too"
+    );
 }
 
 #[test]
@@ -481,4 +488,108 @@ fn autosquash_of_code_commits_keeps_the_anchor() {
         !subjects.lines().any(|l| l.starts_with("fixup!")),
         "autosquash folded the fixup commit: {subjects}"
     );
+}
+
+#[test]
+fn pull_rebase_replays_a_commit_that_carries_a_delta() {
+    let (repo, mate, _bare) = shared_pair();
+    repo.annotate("open", "note", "rebased");
+    repo.write("LOCAL.md", "local\n");
+    repo.commit_all("local delta");
+    mate.write("MATE.md", "from the other clone\n");
+    mate.commit_all("mate moves main");
+    mate.git(&["push", "-q", "origin", "main"]);
+    let pull = repo.git_output(&["pull", "-q", "--rebase", "origin", "main"]);
+    assert!(
+        pull.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&pull.stdout),
+        String::from_utf8_lossy(&pull.stderr)
+    );
+    assert_eq!(repo.read("MATE.md"), "from the other clone\n");
+    assert_eq!(repo.read("LOCAL.md"), "local\n");
+    assert!(annotations_on(&repo, "open").contains(&"rebased".to_string()));
+    attached(&repo, "open");
+}
+
+#[test]
+fn cherry_pick_of_a_delta_commit_is_visible_on_both_branches() {
+    let repo = TestRepo::with_project();
+    repo.declare_sample();
+    repo.write("NOTE.md", "n\n");
+    repo.commit_all("base");
+    repo.git(&["switch", "-q", "-c", "feature"]);
+    repo.annotate("open", "note", "picked");
+    repo.write("PICK.md", "p\n");
+    repo.commit_all("feature note");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["cherry-pick", "feature"]);
+    assert_eq!(repo.read("PICK.md"), "p\n");
+    assert_eq!(annotations_on(&repo, "open"), ["picked"]);
+    repo.git(&["switch", "-q", "feature"]);
+    assert_eq!(annotations_on(&repo, "open"), ["picked"]);
+    attached(&repo, "open");
+}
+
+#[test]
+fn squash_merge_keeps_an_offline_delta() {
+    let repo = TestRepo::with_project();
+    repo.declare_sample();
+    repo.write("NOTE.md", "n\n");
+    repo.commit_all("base");
+    repo.git(&["switch", "-q", "-c", "feature"]);
+    repo.annotate("close", "note", "squashed");
+    repo.write("SQ.md", "s\n");
+    repo.commit_all("feature note");
+    repo.git(&["switch", "-q", "main"]);
+    repo.git(&["merge", "--squash", "feature"]);
+    repo.git(&["commit", "-q", "-m", "squash feature"]);
+    assert_eq!(repo.read("SQ.md"), "s\n");
+    assert_eq!(annotations_on(&repo, "close"), ["squashed"]);
+    attached(&repo, "close");
+}
+
+#[test]
+fn reset_soft_and_mixed_keep_the_delta_uncommitted() {
+    for mode in ["--soft", "--mixed"] {
+        let repo = TestRepo::with_project();
+        repo.declare_sample();
+        repo.write("NOTE.md", "n\n");
+        repo.commit_all("base");
+        repo.annotate("open", "note", mode);
+        repo.write("RESET.md", "r\n");
+        repo.commit_all("to reset");
+        repo.git(&["reset", "-q", mode, "HEAD~1"]);
+        assert_eq!(annotations_on(&repo, "open"), [mode], "{mode}");
+        let detached = repo.json(&["status"])["history"]["detached"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert_eq!(detached, 0, "{mode} must not detach the delta");
+        attached(&repo, "open");
+    }
+}
+
+#[test]
+fn a_deleted_delta_file_is_recovered_from_the_journal() {
+    let repo = TestRepo::with_project();
+    repo.declare_sample();
+    repo.write("NOTE.md", "n\n");
+    repo.commit_all("base");
+    repo.annotate("open", "note", "journaled");
+    repo.write("J.md", "j\n");
+    repo.commit_all("seal the note");
+    let dir = repo.path().join(".resonance/deltas");
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|e| e == "delta") {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    repo.write("K.md", "k\n");
+    repo.git(&["add", "K.md"]);
+    repo.git(&["commit", "-q", "--no-verify", "-m", "move HEAD"]);
+    repo.ok(&["status"]);
+    assert_eq!(annotations_on(&repo, "open"), ["journaled"]);
+    attached(&repo, "open");
 }

@@ -527,9 +527,18 @@ fn apply(
 
 /// After a re-fold (MVP-027): recreate File nodes from the stat cache and stored blobs, and
 /// re-check every anchor against the stored content of its file, re-locating those that no
-/// longer match. Derived containment is rebuilt. The disk is not read; an ordinary reconcile
-/// afterwards picks up anything that changed there.
-pub fn settle(store: &mut dyn GraphStore, index: &mut LineIndex) -> Result<ReconcileReport> {
+/// longer match. Derived containment is rebuilt.
+///
+/// An anchor is left alone when the worktree file differs from the stored blob. The fold
+/// may already describe the commit while the stat cache still holds the previous blob.
+/// Relocating against that blob, and then again when reconcile reads the worktree, records
+/// both halves of a round trip in the open delta. A fast-forward pull then leaves an
+/// untracked delta for a file the incoming commit already covers.
+pub fn settle(
+    store: &mut dyn GraphStore,
+    index: &mut LineIndex,
+    root: &Path,
+) -> Result<ReconcileReport> {
     let started = Instant::now();
     *index = LineIndex::default();
     let mut report = ReconcileReport::default();
@@ -572,7 +581,7 @@ pub fn settle(store: &mut dyn GraphStore, index: &mut LineIndex) -> Result<Recon
                 let intact = current
                     .and_then(|t| t.get(anchor.start_byte..anchor.end_byte))
                     .is_some_and(|q| content_hash(q.as_bytes()) == anchor.quote_hash);
-                if intact {
+                if intact || disk_differs(root, &anchor.path, current) {
                     continue;
                 }
                 let r = relocate_with(&anchor, None, current, &others, &mut |_| Vec::new());
@@ -722,6 +731,30 @@ pub fn put_anchor(tx: &mut Tx<'_>, id: &str, old: &Anchor, new: &Anchor) -> Resu
     Ok(())
 }
 
+/// Same quote, range and context. `method` is how the range was found, not a new edit.
+fn same_attachment(a: &Anchor, b: &Anchor) -> bool {
+    a.path == b.path
+        && a.start_byte == b.start_byte
+        && a.end_byte == b.end_byte
+        && a.start_line == b.start_line
+        && a.end_line == b.end_line
+        && a.quote == b.quote
+        && a.prefix == b.prefix
+        && a.suffix == b.suffix
+        && a.quote_hash == b.quote_hash
+        && a.confidence.to_bits() == b.confidence.to_bits()
+        && a.state == b.state
+}
+
+/// The worktree file is not the stored blob. Reconcile, which reads the disk, owns
+/// relocating anchors in that file.
+fn disk_differs(root: &Path, path: &str, stored: Option<&str>) -> bool {
+    match fs::read(root.join(path)) {
+        Ok(bytes) => stored.is_none_or(|text| bytes.as_slice() != text.as_bytes()),
+        Err(_) => stored.is_some(),
+    }
+}
+
 fn apply_relocation(
     tx: &mut Tx<'_>,
     unit: &Node,
@@ -739,7 +772,10 @@ fn apply_relocation(
         }
         Step::Unchanged => return Ok(()),
         Step::Diff | Step::Exact => {
-            if &new == old {
+            // The place is already right. A fast-forward pull folds the sender's
+            // anchor (method `diff`) and then finds the same quote exactly. Recording
+            // that method change would open a new delta for a file the commit covers.
+            if &new == old || same_attachment(&new, old) {
                 return Ok(());
             }
             if new.confidence < 1.0 {
