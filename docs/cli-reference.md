@@ -70,6 +70,14 @@ resonance tui
 
 A terminal UI to list, view, edit, add and retire spec items, and to see the change log. See [The TUI and the change log](tui-and-change-log.md).
 
+### ui
+
+```
+resonance ui [<key>] [--no-open]
+```
+
+Opens this repository's web UI in your default browser (`$BROWSER` if set), starting the daemon if needed: spec items, the change log, diagnostics and logs. With a key, it opens that spec item. `--no-open` prints the address instead, and `--json` gives `url`, `address`, `port` and `root`. The address carries this repository's key, so don't share it. Not available with `--no-daemon`. See [The web UI, diagnostics and logs](web-ui.md).
+
 ### share, unshare, leave
 
 ```

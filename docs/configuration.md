@@ -43,6 +43,28 @@ paths = []
 [changes]
 # Also log changes made by agents in the change log.
 includeAgents = false
+
+[ui]
+# Serve the web UI on 127.0.0.1 while the daemon runs.
+enabled = true
+# A port to prefer; 0 reuses this working tree's last port when free, else lets the system choose.
+port = 0
+
+[log]
+# The daemon's log file; empty means .resonance/local/daemon.log.
+file = ""
+# error, warn, info, debug or trace, optionally per component: "info,ingest=debug".
+level = "info"
+# text or json.
+format = "text"
+# Past this size the file moves to <file>.1 and a new one starts.
+maxBytes = 1048576
+# Records the web UI can show, kept in memory.
+bufferLines = 5000
+
+[diagnostics]
+# Events the web UI's diagnostics view can show, kept in memory.
+bufferEvents = 10000
 ```
 
 | Setting | Default | Meaning |
@@ -59,6 +81,14 @@ includeAgents = false
 | `compaction.trunk` | `""` | The branch compactions happen on. Empty: the remote's default branch, else `main`, else `master`. |
 | `governance.paths` | `[]` | Globs of paths Resonance governs when you've opted in: edits there made while Resonance wasn't running are restored from the graph (`C3`), and uncovered changes there are reported by `check`. Empty means everything. |
 | `changes.includeAgents` | `false` | Also record agents' changes to spec items in the [change log](tui-and-change-log.md). |
+| `ui.enabled` | `true` | Serve the [web UI](web-ui.md) while the daemon runs. |
+| `ui.port` | `0` | A port to prefer for the web UI. `0`: this repository's last port when free, else one the system assigns. |
+| `log.file` | `""` | The daemon's log file. Relative paths are from the repository root, and `~` is your home directory. Empty: `.resonance/local/daemon.log`. A file in the working tree outside `.resonance/local/` is refused. |
+| `log.level` | `"info"` | How much the daemon logs: `error`, `warn`, `info`, `debug` or `trace`, optionally per component, for example `"info,ingest=debug"`. |
+| `log.format` | `"text"` | `text`, or `json` for one JSON object per line. |
+| `log.maxBytes` | `1048576` (1 MiB) | Past this size the log file moves to `<file>.1` and a new one starts. |
+| `log.bufferLines` | `5000` | Log records the web UI can show, kept in memory. |
+| `diagnostics.bufferEvents` | `10000` | Events the web UI's diagnostics view can show, kept in memory. The oldest are dropped first. |
 
 ## Environment variables
 
@@ -72,6 +102,8 @@ Most settings can be overridden for one command, or for a whole shell session, w
 | `RESONANCE_TEST_ZERO_TESTS_PATTERN` | `test.zeroTestsPattern` |
 | `RESONANCE_TEST_TIMEOUT_SECONDS` | `test.timeoutSeconds` |
 | `RESONANCE_DAEMON_IDLE_SECONDS` | `daemon.idleSeconds` |
+| `RESONANCE_LOG` | `log.level` (read when the daemon starts) |
+| `RESONANCE_LOG_FILE` | `log.file` (read when the daemon starts) |
 
 For example:
 

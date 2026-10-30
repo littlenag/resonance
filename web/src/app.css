@@ -1,0 +1,35 @@
+html,
+body,
+#root {
+  height: 100%;
+}
+
+.row-selected {
+  background: var(--mantine-color-default-hover);
+}
+
+.row-clickable {
+  cursor: pointer;
+}
+
+.mono {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: var(--mantine-font-size-xs);
+}
+
+.markdown p:first-child {
+  margin-top: 0;
+}
+
+.markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown pre {
+  overflow-x: auto;
+}
+
+.stream-row {
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  padding: 2px 8px;
+}

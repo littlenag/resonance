@@ -10,9 +10,10 @@ Each repository that uses Resonance gets a background process, the **daemon**. I
 
 ## Life cycle
 
-- **Started on demand.** The first request in a repository (from your agent, the TUI or a `resonance` command) starts its daemon and waits until it's ready. A daemon that starts up first brings the graph up to date with everything that changed while none was running.
+- **Started on demand.** The first request in a repository (from your agent, the TUI, `resonance ui` or another `resonance` command) starts its daemon and waits until it's ready. A daemon that starts up first brings the graph up to date with everything that changed while none was running.
 - **One per repository.** The running daemon is the process that holds the lock inode at `.resonance/local/daemon.lock`, or the one whose health reports this repository. A process that merely accepts connections on the socket is not that daemon: while this daemon holds the lock it replaces that socket and keeps serving, and a socket that does not report this repository does not stop a new daemon from starting. A second Resonance daemon for this repository exits immediately. Deleting the lock file, the socket, or both does not make a running daemon gone: it keeps the store until it has reclaimed those files or stood down for a daemon that reports this repository, and it never removes that successor's socket.
-- **Exits when idle.** After 30 minutes without requests the daemon exits. Change this with `daemon.idleSeconds` in [the configuration](configuration.md).
+- **Exits when idle.** After 30 minutes without requests the daemon exits, unless a TUI or a web UI page is open. Change this with `daemon.idleSeconds` in [the configuration](configuration.md).
+- **Serves the web UI.** While it runs, the daemon serves this repository's [web UI](web-ui.md) on `127.0.0.1`, on a port of its own. Its diagnostics view shows what the daemon has done since it started.
 - **Replaced after an upgrade.** If you install a new build of `resonance`, the next command stops the daemon from the old build and starts a new one.
 - **Recovers from crashes.** If the daemon is killed or crashes, the next command starts a new one, which catches up with the disk before answering. A missing daemon only ever costs a short delay, never a wrong answer.
 - **Stops when Resonance is removed.** If `.resonance/` disappears, the daemon exits.
@@ -113,8 +114,9 @@ Daemons register with the registry when they start, renew their entry every 10 s
 | Path | What |
 | --- | --- |
 | `.resonance/local/daemon.lock` | Held by the running daemon. |
-| `.resonance/local/daemon.json` | The running daemon's socket, process ID, versions and start time. Clients find the daemon through it. |
-| `.resonance/local/daemon.log` | The daemon's diagnostics. Look here first when the daemon won't start. |
+| `.resonance/local/daemon.json` | The running daemon's socket, web UI address, process ID, versions and start time. Clients find the daemon through it. |
+| `.resonance/local/daemon.log` | The daemon's log (unless `log.file` names another file), moved to `daemon.log.1` past `log.maxBytes`. Look here first when the daemon won't start. |
+| `.resonance/local/ui.json` | The web UI's last port and its key. Readable only by you. |
 | `.resonance/local/cookies/` | Short-lived marker files the daemon uses to know it has seen every change made before a request. |
 | runtime directory | The daemons' sockets (`<hash>.sock`) and the registry's (`registry.sock`). |
 | `~/.resonance/known-roots` | Repositories that have run a daemon. |
@@ -126,4 +128,4 @@ The **runtime directory** holds Unix sockets, which must have short paths. It's 
 3. `~/.resonance/run`;
 4. `/tmp/resonance-<user>`, when the path above would be too long for a socket.
 
-The directory and the sockets are readable only by you. The daemon has no network listener.
+The directory and the sockets are readable only by you. The daemon's only network listener is the web UI's, on `127.0.0.1` and protected by its key (see [The web UI](web-ui.md#only-for-you-without-a-login)).

@@ -70,12 +70,14 @@ pub fn request(socket: &Path, method: &str, params: Value) -> Result<Value> {
 }
 
 /// Register or renew a daemon. Failures are ignored: the registry is optional (P5).
-pub fn heartbeat(dir: &Path, info: &DaemonInfo) {
-    let _ = request(
+/// Register or renew this daemon's lease. Failures are the caller's to ignore (P5).
+pub fn heartbeat(dir: &Path, info: &DaemonInfo) -> Result<()> {
+    request(
         &runtime::registry_socket(dir),
         "register",
         serde_json::to_value(info).unwrap_or_default(),
-    );
+    )
+    .map(|_| ())
 }
 
 pub fn unregister(dir: &Path, info: &DaemonInfo) {

@@ -38,3 +38,25 @@ paths = []
 [changes]
 # Also log changes made by agents in the change log (FR-274).
 includeAgents = false
+
+[ui]
+# Serve the web UI on 127.0.0.1 while the daemon runs (`resonance ui` opens it, MVP-043).
+enabled = true
+# A port to prefer; 0 reuses this working tree's last port when free, else lets the system choose.
+port = 0
+
+[log]
+# The daemon's log file; empty means .resonance/local/daemon.log (RESONANCE_LOG_FILE overrides it).
+file = ""
+# error, warn, info, debug or trace, optionally per component: "info,ingest=debug" (RESONANCE_LOG).
+level = "info"
+# text or json.
+format = "text"
+# Past this size the file moves to <file>.1 and a new one starts.
+maxBytes = 1048576
+# Records the web UI can show, kept in memory.
+bufferLines = 5000
+
+[diagnostics]
+# Events the web UI's diagnostics view can show, kept in memory (FR-294).
+bufferEvents = 10000

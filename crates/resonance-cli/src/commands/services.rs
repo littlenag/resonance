@@ -14,7 +14,7 @@ use resonance_core::store::SCHEMA_VERSION;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::{Ctx, confirm, exe, human_actor, open_store};
+use super::{Ctx, confirm, exe, human_actor, open_store, person_actor};
 use crate::cli::{DaemonCommand, RegistryCommand};
 use crate::render;
 
@@ -59,9 +59,17 @@ pub fn daemon(ctx: &Ctx, action: DaemonCommand) -> Result<()> {
         }
         DaemonCommand::Run => {
             let actor = human_actor(&repo);
+            // The web UI acts as the person, even when the agent kit set RESONANCE_ACTOR.
+            let person = person_actor(&repo);
+            let ui = resonance_core::repo::config::Config::load(&repo.config_path())
+                .map(|c| c.ui)
+                .unwrap_or_default();
             let opts = DaemonOptions {
                 binary_id: runtime::binary_id(&exe()?),
                 idle: None,
+                host: Some(Box::new(move |handle| {
+                    resonance_web::host(handle, person, &ui)
+                })),
             };
             daemon::run(repo, &open_store, actor, opts)
         }

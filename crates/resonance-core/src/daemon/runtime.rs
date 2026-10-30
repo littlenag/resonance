@@ -111,6 +111,9 @@ pub struct DaemonInfo {
     pub binary_id: String,
     pub schema_version: u32,
     pub started_at: String,
+    /// The web UI's address, without its token (MVP-043).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<String>,
 }
 
 pub fn info_path(repo: &Repo) -> PathBuf {
@@ -123,6 +126,48 @@ pub fn lock_path(repo: &Repo) -> PathBuf {
 
 pub fn log_path(repo: &Repo) -> PathBuf {
     repo.local_dir().join("daemon.log")
+}
+
+/// `.resonance/local/ui.json`: the web UI's last port and its token (MVP-043). User-only.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct UiState {
+    pub port: u16,
+    pub token: String,
+}
+
+pub fn ui_path(repo: &Repo) -> PathBuf {
+    repo.local_dir().join("ui.json")
+}
+
+pub fn read_ui(repo: &Repo) -> Option<UiState> {
+    let text = fs::read_to_string(ui_path(repo)).ok()?;
+    serde_json::from_str(&text)
+        .ok()
+        .filter(|s: &UiState| !s.token.is_empty())
+}
+
+/// Write `ui.json`, readable only by this user.
+pub fn write_ui(repo: &Repo, state: &UiState) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = ui_path(repo);
+    let tmp = path.with_extension("json.tmp");
+    let mut f = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| Error::io("writing .resonance/local/ui.json", e))?;
+    f.write_all(serde_json::to_string_pretty(state)?.as_bytes())
+        .map_err(|e| Error::io("writing .resonance/local/ui.json", e))?;
+    fs::rename(&tmp, &path).map_err(|e| Error::io("writing .resonance/local/ui.json", e))
+}
+
+/// The web UI's cookie for the repository at `root`. Browsers do not separate cookies by
+/// port, so the name carries a hash of the root and each daemon reads only its own (MVP-043).
+pub fn ui_cookie(root: &Path) -> String {
+    let hash = content_hash(root.as_os_str().as_encoded_bytes());
+    format!("resonance_{}", &hash[..12])
 }
 
 pub fn read_info(root: &Path) -> Option<DaemonInfo> {
@@ -269,6 +314,12 @@ pub struct Health {
     pub connections: usize,
     pub subscribers: usize,
     pub requests_served: u64,
+    /// The web UI's address, without its token (MVP-043).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<String>,
+    /// Why the web UI is not served, when it is not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_error: Option<String>,
 }
 
 #[cfg(test)]

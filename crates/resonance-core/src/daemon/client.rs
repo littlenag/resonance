@@ -27,7 +27,7 @@ use crate::service::{Backend, Call};
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long `stop` waits for a daemon to release its lock.
 const STOP_TIMEOUT: Duration = Duration::from_secs(15);
-/// The daemon log is started afresh when it grows past this.
+/// Past this size, the daemon log moves to `daemon.log.1` when a daemon starts (MVP-044).
 const LOG_LIMIT: u64 = 1 << 20;
 
 /// A connection to a repository's daemon.
@@ -222,7 +222,7 @@ fn log_tail(repo: &Repo) -> String {
 pub fn start(repo: &Repo, exe: &Path) -> Result<Child> {
     let log = runtime::log_path(repo);
     if fs::metadata(&log).is_ok_and(|m| m.len() > LOG_LIMIT) {
-        let _ = fs::remove_file(&log);
+        let _ = fs::rename(&log, crate::logging::rotated_path(&log));
     }
     let file = OpenOptions::new()
         .create(true)

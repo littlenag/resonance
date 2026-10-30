@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 resonance-core.workspace = true
 resonance-store-sqlite.workspace = true
+resonance-web.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 ratatui.workspace = true

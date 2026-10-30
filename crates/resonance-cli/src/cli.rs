@@ -1,6 +1,6 @@
 //! The command line (§11.3, FR-259): setup, the daemon, status, checks and repair. Graph work
 //! (bringing in intent, declaring code units and tests, linking, annotating, tracing, the
-//! change log) is not here: agents do it through MCP, and people in the spec TUI.
+//! change log) is not here: agents do it through MCP, and people in the web UI and the spec TUI.
 
 use std::path::PathBuf;
 
@@ -67,6 +67,14 @@ pub enum Command {
     Doctor,
     /// Browse and edit spec items in a terminal UI; edits land in the change log for your agent.
     Tui,
+    /// Open the web UI in your browser, starting the daemon if needed: spec items, the change log, diagnostics and logs.
+    Ui {
+        /// A spec item to open, by key (for example FR-001).
+        key: Option<String>,
+        /// Print the address instead of opening a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
     /// Share the graph with the team (stage 1 to stage 2): preview, then new files to commit.
     Share {
         /// Annotations to keep local (private), by ID (repeatable).

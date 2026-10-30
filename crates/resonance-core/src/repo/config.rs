@@ -21,6 +21,9 @@ pub struct Config {
     pub compaction: CompactionConfig,
     pub governance: GovernanceConfig,
     pub changes: ChangesConfig,
+    pub ui: UiConfig,
+    pub log: LogConfig,
+    pub diagnostics: DiagnosticsConfig,
 }
 
 /// `[repository]`: committed from stage 2 (MVP-033).
@@ -74,6 +77,69 @@ pub struct GovernanceConfig {
 pub struct ChangesConfig {
     /// Also log changes made by agents (OQ-27).
     pub include_agents: bool,
+}
+
+/// `[ui]`: the web UI each daemon serves (MVP-043).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UiConfig {
+    pub enabled: bool,
+    /// A port to prefer; 0 lets the daemon choose (FR-286).
+    pub port: u16,
+}
+
+impl Default for UiConfig {
+    fn default() -> Self {
+        UiConfig {
+            enabled: true,
+            port: 0,
+        }
+    }
+}
+
+/// `[log]`: the daemon's log (FR-297, MVP-044).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LogConfig {
+    /// The log file; empty means `.resonance/local/daemon.log`.
+    pub file: String,
+    /// `error`, `warn`, `info`, `debug` or `trace`, optionally with per-component directives
+    /// such as `info,ingest=debug`.
+    pub level: String,
+    /// `text` or `json`.
+    pub format: String,
+    /// The size past which the file moves to `<file>.1` and a new one starts.
+    pub max_bytes: u64,
+    /// Records kept in memory for the web UI.
+    pub buffer_lines: usize,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        LogConfig {
+            file: String::new(),
+            level: "info".into(),
+            format: "text".into(),
+            max_bytes: 1 << 20,
+            buffer_lines: 5000,
+        }
+    }
+}
+
+/// `[diagnostics]`: what the daemon remembers of its own activity (FR-294, MVP-044).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DiagnosticsConfig {
+    /// Events kept in memory; the oldest are dropped first.
+    pub buffer_events: usize,
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        DiagnosticsConfig {
+            buffer_events: 10_000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -166,7 +232,77 @@ impl Config {
         if let Some(v) = get("RESONANCE_DAEMON_IDLE_SECONDS") {
             self.daemon.idle_seconds = num("RESONANCE_DAEMON_IDLE_SECONDS", v)?;
         }
+        if let Some(v) = get("RESONANCE_LOG").filter(|v| !v.trim().is_empty()) {
+            self.log.level = v.trim().to_string();
+        }
+        if let Some(v) = get("RESONANCE_LOG_FILE").filter(|v| !v.trim().is_empty()) {
+            self.log.file = v.trim().to_string();
+        }
         Ok(())
+    }
+
+    /// Every setting in effect, with where its value came from (FR-293): `default`, `file`
+    /// or `env`.
+    pub fn sources(path: &Path, get: impl Fn(&str) -> Option<String>) -> Result<Vec<Source>> {
+        let text = fs::read_to_string(path).unwrap_or_default();
+        let file_value: toml::Value =
+            toml::from_str(&text).unwrap_or(toml::Value::Table(Default::default()));
+        let from_file: Config = toml::from_str(&text).unwrap_or_default();
+        let mut effective = from_file.clone();
+        effective.apply_env(get)?;
+        let mut file_flat = Vec::new();
+        flatten("", &serde_json::to_value(&from_file)?, &mut file_flat);
+        let mut flat = Vec::new();
+        flatten("", &serde_json::to_value(&effective)?, &mut flat);
+        Ok(flat
+            .into_iter()
+            .map(|(key, value)| {
+                let in_file = key
+                    .split('.')
+                    .try_fold(&file_value, |v, part| v.get(part))
+                    .is_some();
+                let from_env = file_flat
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .is_some_and(|(_, v)| *v != value);
+                let source = if from_env {
+                    "env"
+                } else if in_file {
+                    "file"
+                } else {
+                    "default"
+                };
+                Source {
+                    key,
+                    value,
+                    source: source.into(),
+                }
+            })
+            .collect())
+    }
+}
+
+/// One setting and where its value came from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Source {
+    pub key: String,
+    pub value: serde_json::Value,
+    pub source: String,
+}
+
+fn flatten(prefix: &str, v: &serde_json::Value, out: &mut Vec<(String, serde_json::Value)>) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                let key = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{prefix}.{k}")
+                };
+                flatten(&key, v, out);
+            }
+        }
+        other => out.push((prefix.to_string(), other.clone())),
     }
 }
 
@@ -258,5 +394,18 @@ mod tests {
         assert_eq!(c.test.timeout_seconds, 7);
         assert_eq!(c.ingest.ignore, ["a/**", "b"]);
         assert!(c.apply_env(|_| Some("x".into())).is_err());
+    }
+
+    #[test]
+    fn sources_name_file_env_and_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[daemon]\nidleSeconds = 60\n").unwrap();
+        let s = Config::sources(&path, |k| (k == "RESONANCE_LOG").then(|| "debug".into())).unwrap();
+        let of = |key: &str| s.iter().find(|x| x.key == key).unwrap().clone();
+        assert_eq!(of("daemon.idleSeconds").source, "file");
+        assert_eq!(of("log.level").source, "env");
+        assert_eq!(of("log.level").value, serde_json::json!("debug"));
+        assert_eq!(of("ui.enabled").source, "default");
     }
 }

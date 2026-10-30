@@ -9,12 +9,33 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list --unsorted
 
-# Everything CI should run: formatting, lints, tests (through daemons and in direct mode), store boundary, spec checks.
-check: fmt-check lint test test-direct boundary spec-check
+# Everything CI should run: formatting, lints, tests (through daemons and in direct mode), store boundary, spec checks, the web UI.
+check: fmt-check lint test test-direct boundary spec-check ui-check
 
-# Build every crate and target.
-build:
+# Build every crate and target, with the web UI embedded.
+build: ui-build
     cargo build --workspace --all-targets --locked
+
+# Build the web UI into web/dist, which the binary embeds (MVP-043). Needs Node and npm.
+ui-build: ui-deps
+    cd web && npm run build
+
+# The web UI's type checks, lint and component tests.
+ui-check: ui-deps
+    cd web && npm run typecheck && npm run lint && npm test
+
+# Install the web UI's dependencies from its lockfile, when they changed.
+ui-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd web
+    if [ ! -d node_modules ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
+        npm ci
+    fi
+
+# Work on the web UI with live reload, against a running daemon: `just ui-dev http://127.0.0.1:<port>`.
+ui-dev daemon:
+    cd web && RESONANCE_UI={{daemon}} npm run dev
 
 # Run all tests, including the store conformance suite.
 test:
@@ -60,8 +81,8 @@ spec-check *checks:
 run *args:
     cargo run --quiet --locked -p resonance-cli -- {{args}}
 
-# Install the resonance binary from source; the MVP's distribution channel (FR-261).
-install:
+# Install the resonance binary from source, with the web UI; the MVP's distribution channel (FR-261).
+install: ui-build
     cargo install --locked --path crates/resonance-cli
 
 # Create a fresh test repository from the starter fixtures, for field tests (never this repo).

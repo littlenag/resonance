@@ -115,7 +115,8 @@ def check_sections(root, sections, mvp, backlog):
 def check_spelling(root):
     problems = []
     for path in sorted(glob.glob(os.path.join(root, "**", "*.md"), recursive=True)):
-        if "/target/" in path or "/.git/" in path:
+        # Build output and third-party dependencies are not ours to spell.
+        if any(d in path for d in ("/target/", "/.git/", "/node_modules/", "/web/dist/")):
             continue
         for lineno, line in enumerate(read(path).splitlines(), 1):
             for m in UK.finditer(line):

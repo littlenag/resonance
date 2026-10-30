@@ -1,6 +1,6 @@
 # The TUI and the change log
 
-`resonance tui` is a deliberately simple terminal UI for your spec items: requirements, decisions, designs and constraints. Your edits there, and anywhere else you change the spec, land in a short **change log** that your agent reads and clears.
+`resonance tui` is a deliberately simple terminal UI for your spec items: requirements, decisions, designs and constraints. The [web UI](web-ui.md) (`resonance ui`) does the same in your browser, with more room. Your edits there, and anywhere else you change the spec, land in a short **change log** that your agent reads and clears.
 
 ## The TUI
 

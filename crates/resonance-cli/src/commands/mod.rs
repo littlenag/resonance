@@ -7,6 +7,7 @@ mod shared;
 pub use recover::divergence_line as recover_line;
 pub mod services;
 mod setup;
+mod ui;
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -233,6 +234,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Status => setup::status(&ctx),
         Command::Doctor => services::doctor(&ctx),
         Command::Tui => crate::tui::run(&ctx),
+        Command::Ui { key, no_open } => ui::ui(&ctx, key, no_open),
         Command::Share {
             keep_local,
             dry_run,
