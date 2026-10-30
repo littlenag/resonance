@@ -123,14 +123,15 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **FR-241** [parallel] *Gated.* Write-back only when parallel nodes carry enough information for exact edits of primary nodes (OQ-24).
 
 ## B14 — IDE
-*JetBrains is the intended primary interactive surface for Resonance (FR-141, decided); the TUI stays deliberately simple until then.*
+*JetBrains is the intended primary interactive surface for Resonance (FR-141, decided). The path there runs through the MVP's TUI (the simple fallback) and web UI (the next stage of verification, MVP-043), whose API the plugins build on and whose views they may reuse. A Nimbalyst extension follows.*
 
 - **FR-140** [ide] Works fully without an IDE plugin (already true; kept as a constraint).
-- **FR-141** [ide] A JetBrains (IntelliJ platform) plugin first; the intended primary interactive surface.
+- **FR-141** [ide] A JetBrains (IntelliJ platform) plugin first; the intended primary interactive surface, on the web UI's API, possibly embedding its views.
+- **FR-143** [ide] A Nimbalyst extension after it, once Nimbalyst's extension architecture is mature enough (OQ-31).
 - **FR-142** [ide] Gutter markers, navigation, an annotation UI, stale and orphan warnings, unverified requirements, spec-item editing and the change log, and architectural summaries (FR-280).
 
 ## B19 — TUI iteration 2: architectural summaries
-*Builds on the MVP's TUI (mvp.md, "3.19"). Naive linking is the starting point; agent-written summaries make the code behind a spec item understandable at an architectural level.*
+*Builds on the MVP's web UI and TUI (mvp.md, "3.19" and "3.20"). Naive linking is the starting point; agent-written summaries make the code behind a spec item understandable at an architectural level.*
 
 - **FR-280** [tui] For the selected spec item, present an architectural-level summary of the code linked to it.
 - **FR-281** [tui] Realization summaries are `Annotation`s of kind `summary` on the spec item, recording the code and hashes they describe, and go stale when either changes.

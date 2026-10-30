@@ -2,7 +2,7 @@
 
 Everything Resonance does on a developer's machine is delivered by **one executable, `resonance`**. It is a small operations CLI, a per-repository daemon, an MCP server, the system-wide registry, the quiet participant's helper, the git plumbing that hooks and drivers call, and the CI checker. These are subcommands of the same program, built from one Cargo workspace (MVP-001), so there is one thing to install, version, pin and trust. Separate deliverables (the IntelliJ plugin, CI wrappers, graph adapters) come later and sit on top of this binary (§13). [Decided]
 
-Resonance's primary user is the agent, which works through the MCP server; for developers Resonance runs in the background (G16). The binary's command surface reflects that: graph work is MCP tools, and people get the spec TUI plus a few commands to set up, run and repair Resonance (FR-259).
+Resonance's primary user is the agent, which works through the MCP server; for developers Resonance runs in the background (G16). The binary's command surface reflects that: graph work is MCP tools, and people get the web UI, the spec TUI and a few commands to set up, run and repair Resonance (FR-259).
 
 This section is the reference for the binary: what it is responsible for, how it runs, and its complete command and tool surface. Commands are specified in detail where their requirements live; this section collects them and records the conventions they share. The **Available** column says whether a command is in the MVP (`spec/mvp.md`) or which backlog increment (`spec/backlog.md`) adds it.
 
@@ -18,6 +18,7 @@ This section is the reference for the binary: what it is responsible for, how it
 | **MCP server** | Exposes the API and the agent kit's conventions to agents. | §8.11, §8.20 |
 | **Agent kit installer** | Installs the agent kit as part of `init`, refreshes it when `init` runs again, and reports on it in `status` and `doctor`; carries its content. | §8.20 |
 | **Daemon** | Watches the working tree, maintains the ingest watermark, serves the API over a socket. | §8.4, §8.7 |
+| **Web UI** | Serves the self-contained web UI on loopback; records diagnostics and logs for it. | §8.23 |
 | **Registry** | System-wide discovery and health for daemons. | §8.7 |
 | **Git integration** | Git monitor; open and sealed deltas; compaction; hooks; merge and diff drivers. | §8.6, §8.6.1, §9.6 |
 | **Sync and recovery** | Classifies divergence from git evidence; recovery journal; undo. | §8.18 |
@@ -36,8 +37,9 @@ This section is the reference for the binary: what it is responsible for, how it
 | --- | --- | --- | --- |
 | **CLI** | A person (setup, operation, repair) or an agent's shell (`check`, `status`, `recover`) | One command | A client of the daemon, which it starts on demand (FR-084). No graph work: that is MCP (FR-259). |
 | **TUI** (`resonance tui`) | A person | One session | The spec TUI (§8.22), a client of the daemon. |
+| **Web UI** (`resonance ui`) | A person | As long as the daemon | Served by the daemon on loopback (§8.23); `resonance ui` starts the daemon if needed and opens the browser. |
 | **MCP server** (`resonance mcp`) | The agent harness | One agent session | Speaks MCP over stdio; a client of the daemon. Carries all graph work. |
-| **Daemon** (`resonance daemon run`) | The CLI, TUI or MCP server, on demand | Until idle (FR-084) | One per repository root (FR-082). People start, stop and restart it with `resonance daemon start\|stop\|restart` when needed. |
+| **Daemon** (`resonance daemon run`) | The CLI, TUI, web UI command or MCP server, on demand | Until idle (FR-084) | One per repository root (FR-082). People start, stop and restart it with `resonance daemon start\|stop\|restart` when needed. |
 | **Registry** (`resonance registry run`) | launchd or `systemd --user` | Always on | Discovery and health only (FR-088). |
 | **Quiet** (`resonance quiet …`) | The quiet bootstrap script, or a quiet participant's agent | One command | Restricted capabilities, enforced in code: no daemon, no projection, no compaction, no stage changes, writes only to `.resonance/deltas/` and its own working area (FR-234, FR-257). |
 | **Plumbing** (`resonance hook …`, `resonance agent-hook …`, `resonance git-driver …`) | Git, or the agent harness | One invocation | Machine-facing entry points. Not intended for people to call. |
@@ -48,7 +50,7 @@ This section is the reference for the binary: what it is responsible for, how it
 
 The **Available** column gives *MVP*, or a backlog increment (B8–B19), or both when the MVP provides a narrower form that a later increment completes.
 
-- **FR-259** The CLI is an operations surface: setting up a repository, starting, stopping and restarting the daemon, status and health, consistency checks, and repair. Graph work (bringing in intent from documents, declaring code units and tests, linking, annotating, tracing, searching, verifying, reading and clearing the change log, reviewing) MUST be offered through the API, as MCP tools for agents and in the spec TUI for people, and MUST NOT be offered as CLI commands. A person who wants graph work done asks their agent. [Decided]
+- **FR-259** The CLI is an operations surface: setting up a repository, starting, stopping and restarting the daemon, status and health, consistency checks, and repair. Graph work (bringing in intent from documents, declaring code units and tests, linking, annotating, tracing, searching, verifying, reading and clearing the change log, reviewing) MUST be offered through the API, as MCP tools for agents and in the web UI and the spec TUI for people, and MUST NOT be offered as CLI commands. A person who wants graph work done asks their agent. [Decided]
 
 **Setup and lifecycle**
 
@@ -64,6 +66,7 @@ The **Available** column gives *MVP*, or a backlog increment (B8–B19), or both
 | `quiet setup` | Opt in to quiet participation locally. | FR-232 | B9 |
 | `version [--json]` | Binary version, supported schema and delta formats, MCP protocol version. | FR-256 | MVP |
 | `tui` | Terminal UI over spec items: list, view, edit, add, retire; the change log. | FR-270–FR-279 | MVP |
+| `ui [<key>] [--no-open]` | Open the web UI in the default browser, starting the daemon if needed: the spec, the change log, diagnostics and logs. | FR-286–FR-298 | MVP |
 
 **Daemon**
 

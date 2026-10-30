@@ -69,7 +69,7 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 
 **S15 — Try Resonance offline.** A developer wants to try Resonance on a team repository without committing anything or letting teammates know.
 - AC1: `resonance init` modifies no tracked file; `git status` is unchanged. `init` explains plainly what offline mode cannot do and what repair will cost (FR-180).
-- AC2: Every local feature works: the agent's import of spec documents, trace, annotate and verify through MCP, and the spec TUI (FR-181).
+- AC2: Every local feature works: the agent's import of spec documents, trace, annotate and verify through MCP, the web UI and the spec TUI (FR-181).
 - AC3: Branch switches, pulls and rebases keep the developer's local graph data attached to the right code (FR-183).
 - AC4: Teammates see no trace of Resonance: nothing in commits, branches, pull requests or code (FR-189).
 - AC5: After a teammate renames an annotated function, the next pull produces a repair list; the agent re-anchors the annotation, asking when unsure; and the cost is shown (FR-238, FR-239).
@@ -118,14 +118,20 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 - AC1: Before the push leaves the machine, Resonance detects that the commit is inconsistent with the graph and explains how (C8).
 - AC2: The agent repairs it by amending or adding a follow-up delta, with the developer's confirmation, and nothing is lost (FR-192, FR-203).
 
-**S25 — A person edits the spec; the agent picks it up.** A developer changes requirements in `resonance tui` (or in a spec document an agent imported), and later asks their agent to carry on.
+**S25 — A person edits the spec; the agent picks it up.** A developer changes requirements in the web UI or `resonance tui` (or in a spec document an agent imported), and later asks their agent to carry on.
 - AC1: Each change is an ordinary graph change attributed to the person, and appears in the change log as one concise entry per item (FR-274, FR-275).
 - AC2: The agent reads the entries after its remembered cursor, acts on each, and removes the handled ones (FR-276).
 - AC3: Before the agent commits, pushes or pulls, the change log is empty, or the developer has told the agent to proceed anyway (FR-277).
-- AC4: Retiring an item in the TUI never deletes it (FR-271). Editing an item that came from a document makes its link to that document stale, and the agent brings the document back in step; editing the document makes the same link stale, and the agent proposes the change to the item (FR-272).
+- AC4: Retiring an item in the web UI or the TUI never deletes it (FR-271). Editing an item that came from a document makes its link to that document stale, and the agent brings the document back in step; editing the document makes the same link stale, and the agent proposes the change to the item (FR-272).
 
 **S26 — The agent imports spec documents.** A developer asks their agent to bring the project's requirements into Resonance, from Markdown, a Spec Kit or Kiro spec, EARS statements or ADRs.
 - AC1: Resonance parses nothing; the agent reads the documents itself and works through the API (NG6, FR-122).
 - AC2: Before anything is written, the developer sees a preview: the items the agent will create or update, with keys, types and text, any key that clashes, and any reformatting it proposes for the documents (FR-122).
 - AC3: Each item is linked to the region of the document it came from (`derivedFrom`), so that later edits on either side make the link stale (FR-124).
 - AC4: Documents are kept. They are reformatted only with confirmation, so that each item is clearly delimited and carries its key. Afterwards the graph is the source of truth.
+
+**S27 — A person works in the web UI and looks inside the daemon.** A developer runs `resonance ui` in each of two repositories, works on the spec in one, and investigates why the other seems slow.
+- AC1: Each command opens the person's browser on its own repository's UI, starting the daemon if needed; the two daemons use different ports, and neither asks the person to log in (FR-286, FR-287).
+- AC2: Another web page, another user on the machine, or a request naming another host cannot read or change anything (FR-288).
+- AC3: Everything the TUI does can be done in the web UI, attributed to the person and logged in the change log, and the page stays current while an agent works (FR-290, FR-291).
+- AC4: The diagnostics view shows what the daemon has done since it started (requests, reconciles, git operations, change sets) with timings, who is connected, and the live log; the person raises the log level, reconciles, and exports the events for a bug report without item text in it (FR-293–FR-298).

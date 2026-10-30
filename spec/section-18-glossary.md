@@ -41,7 +41,9 @@
 | **Stewardship** | The agent's duty to keep the graph and the git tree in sync and pull requests clean, by running Resonance's checks and following its conventions. |
 | **Repair list** | What an offline graph needs fixed after outside changes arrive: orphaned or at-risk annotations, stale links, low-confidence identities (FR-238). |
 | **Detached pool** | Offline deltas whose commits were rewritten and could not be re-associated; kept and surfaced, never dropped. |
-| **Spec item** | A requirement, decision, design or constraint: the intent the TUI lists and edits. |
+| **Spec item** | A requirement, decision, design or constraint: the intent the web UI and the TUI list and edit. |
 | **Spec TUI** | `resonance tui`, a deliberately simple terminal UI over spec items (§8.22). |
+| **Web UI** | The browser UI each daemon serves on loopback, opened with `resonance ui`: the spec, the change log, diagnostics and logs (§8.23). |
+| **Diagnostics** | The web UI's view of what the daemon has done since it started: health, activity, counters, clients and the log, kept in memory only (FR-293, FR-294). |
 | **Change log** | A concise, local log of people's changes to spec items, which agents read from a remembered cursor and clear as they handle entries (FR-274–FR-278). |
 | **Realization summary** | An agent-written, architectural-level summary of how the code linked to a spec item behaves and satisfies it, stale when either changes (FR-280, FR-281). |
