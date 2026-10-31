@@ -1,13 +1,16 @@
 // One spec item (FR-291): every field, its links with their statuses and latest evidence,
-// annotations, where it came from, and its pending change.
+// annotations, where it came from, and its pending change. A link opens what it points to
+// in a drawer (FR-292).
 
-import { Alert, Badge, Button, Card, Divider, Group, Loader, Stack, Table, Text, Title, Typography } from '@mantine/core';
+import { useState } from 'react';
+import { Alert, Anchor, Badge, Button, Card, Divider, Group, Loader, Stack, Table, Text, Title, Typography } from '@mantine/core';
 import { IconAlertTriangle, IconArchive, IconFileDescription, IconPencil } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import Markdown from 'react-markdown';
 import { call } from '../api';
 import { FIELDS, fieldText, label } from '../fields';
-import type { ShowView, SpecItem } from '../types';
+import type { LinkView, ShowView, SpecItem } from '../types';
+import { LinkDrawer } from './LinkDrawer';
 import { StatusBadge } from '../pages/SpecPage';
 
 const SKIP = new Set(['source', 'alsoDefinedIn', 'key', 'specStatus', 'origin']);
@@ -40,6 +43,7 @@ export function ItemDetail({
     queryKey: ['item', itemRef, 'show'],
     queryFn: () => call<ShowView>('show', { ref: itemRef }),
   });
+  const [openLink, setOpenLink] = useState<LinkView | null>(null);
   const view = item.data ?? listItem;
   if (item.isLoading && !view) return <Loader size="sm" />;
   if (item.error && !view) return <Text c="red">{(item.error as Error).message}</Text>;
@@ -163,7 +167,15 @@ export function ItemDetail({
             {links.map((l, i) => (
               <Table.Tr key={i}>
                 <Table.Td>{l.relation}</Table.Td>
-                <Table.Td className="mono">{l.other?.label ?? '?'}</Table.Td>
+                <Table.Td className="mono">
+                  {l.other?.id ? (
+                    <Anchor component="button" className="mono" fz="sm" ta="left" onClick={() => setOpenLink(l)}>
+                      {l.other.label ?? l.other.id}
+                    </Anchor>
+                  ) : (
+                    (l.other?.label ?? '?')
+                  )}
+                </Table.Td>
                 <Table.Td>
                   <Badge size="sm" variant="light" color={LINK_COLORS[l.status] ?? 'gray'}>
                     {l.status}
@@ -193,6 +205,7 @@ export function ItemDetail({
           </Stack>
         </>
       )}
+      {openLink && <LinkDrawer link={openLink} onClose={() => setOpenLink(null)} />}
     </Card>
   );
 }

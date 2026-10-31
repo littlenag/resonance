@@ -724,6 +724,14 @@ fn dispatch_method(engine: &mut Engine, call: &Call) -> Result<Value> {
             let r: Ref = args(m, a)?;
             out(engine.show(&r.reference)?)
         }
+        "file_text" => {
+            #[derive(Deserialize)]
+            struct Path {
+                path: String,
+            }
+            let r: Path = args(m, a)?;
+            out(engine.file_text(&r.path)?)
+        }
         "trace" => {
             let r: Ref = args(m, a)?;
             out(engine.trace(&r.reference)?)

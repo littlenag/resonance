@@ -43,6 +43,7 @@ pub const ENGINE_METHODS: &[&str] = &[
     "spec_list",
     "spec_show",
     "show",
+    "file_text",
     "spec_suggest_key",
     "spec_add",
     "spec_edit",

@@ -28,9 +28,11 @@ export interface SpecItem {
 }
 
 export interface LinkView {
+  id?: string;
+  type?: string;
   relation: string;
   status: string;
-  other: { label?: string; type?: string; id?: string };
+  other: { label?: string; type?: string; id?: string; status?: string };
   latestEvidence?: { result?: string; timestamp?: string } | null;
 }
 
@@ -39,6 +41,8 @@ export interface ShowView {
   properties: Record<string, unknown>;
   links: LinkView[];
   annotations: { kind?: string; text?: string; author?: string }[];
+  /** Where a code unit, test or document region is (absent for spec items). */
+  location?: { path: string; startLine?: number; endLine?: number; state?: string; confidence?: number };
 }
 
 export interface ChangeEntry {

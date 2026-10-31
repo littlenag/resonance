@@ -622,3 +622,28 @@ fn a_log_file_in_the_working_tree_is_refused() {
     }));
     assert!(!repo.path().join("logs").exists());
 }
+
+#[test]
+fn file_text_serves_only_files_resonance_tracks() {
+    let repo = TestRepo::with_project_daemon();
+    let ui = open(&repo);
+    let v = ok(&ui, "file_text", json!({"path": "src/store.rs"}));
+    assert_eq!(v["path"], "src/store.rs");
+    assert_eq!(v["text"], repo.read("src/store.rs").as_str());
+    for path in [
+        "../outside.txt",
+        "/etc/passwd",
+        ".resonance/local/ui.json",
+        "no/such/file.rs",
+    ] {
+        let (status, v) = call(&ui, "file_text", json!({ "path": path }));
+        assert_ne!(status, 200, "{path}: {v}");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("not a file Resonance tracks"),
+            "{path}: {v}"
+        );
+    }
+}

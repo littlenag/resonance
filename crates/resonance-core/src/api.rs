@@ -2526,6 +2526,29 @@ impl Engine {
         Ok((d, path))
     }
 
+    /// The text of a file the graph holds, for viewers such as the web UI's link drawer
+    /// (MVP-043). Read from the graph, not the disk, so only files Resonance tracks can be
+    /// read; large files (recorded by hash only, MVP-016) and binary files are refused.
+    pub fn file_text(&self, path: &str) -> Result<Value> {
+        let file = self
+            .store
+            .get_file(path)?
+            .ok_or_else(|| Error::NotFound(format!("{path} is not a file Resonance tracks")))?;
+        let bytes = self.store.get_blob(&file.blob)?.ok_or_else(|| {
+            Error::Invalid(format!(
+                "{path} is larger than ingest.maxBlobBytes, so the graph keeps only its hash"
+            ))
+        })?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| Error::Invalid(format!("{path} is not a text file")))?;
+        Ok(json!({
+            "path": file.path,
+            "size": file.size,
+            "lines": text.lines().count(),
+            "text": text,
+        }))
+    }
+
     fn graph_file_bytes(&self, path: &str) -> Result<Vec<u8>> {
         let file = self
             .store

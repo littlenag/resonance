@@ -20,9 +20,16 @@ The address `resonance ui --no-open` prints contains the key. Open it yourself, 
 
 ## Spec items
 
-The **Spec** page lists your requirements, decisions, designs and constraints beside the selected item. You can filter the list by text, type and status. A `•` marks an item with a change your agent hasn't handled yet.
+The **Spec** page lists your requirements, decisions, designs and constraints beside the selected item. A `•` marks an item with a change your agent hasn't handled yet.
+
+- **Search** matches keys, titles and text.
+- **Filters** are columns of checkboxes: type, status, change log (pending or not), links (some stale, all current, none) and source (from a document, or graph only). With nothing checked, everything shows. Checking values narrows the list to them; values of one filter are alternatives, and filters narrow each other. Each value shows how many items it would show; hover over one and click **only** to check just that value.
+- **Sort** by any column by clicking its header; click again to reverse.
+
+The search, filters and sort are part of the page's address, so you can bookmark a view.
 
 - **Details** show every field (long text as Markdown), links with their statuses and latest test results, annotations, the document and line the item came from, and any pending change.
+- **Links** open what they point to: click a code unit, test or document region and a drawer shows the whole file with the linked lines highlighted (or where they were last seen, if Resonance lost track of them). Click a spec item to see it and open it.
 - **Add** suggests the next free key for the type (`FR-043`, `ADR-0007`). A key that already exists is refused.
 - **Edit** changes the item in place. If someone else changes it while you're editing (a teammate through git, your agent, another window), the form says so, and you choose whether to keep your edits or take the newer version before anything is saved.
 - **Retire** asks first, and shows how many links the item has. Items are retired, never deleted, and their links stay.
