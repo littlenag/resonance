@@ -8,6 +8,15 @@ body,
   background: var(--mantine-color-default-hover);
 }
 
+/* Items with a pending change-log entry (FR-284). */
+.row-pending {
+  background: var(--mantine-color-orange-light);
+}
+
+.row-pending.row-selected {
+  background: var(--mantine-color-orange-light-hover);
+}
+
 .row-clickable {
   cursor: pointer;
 }

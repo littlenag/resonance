@@ -3,7 +3,7 @@
 // are in the query string, so that a view can be bookmarked.
 
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { Badge, Box, Button, Flex, Group, Menu, Stack, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, Box, Button, Flex, Group, Menu, Stack, Table, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -192,7 +192,6 @@ export function SpecPage() {
           <Table highlightOnHover stickyHeader verticalSpacing={4} fz="sm">
               <Table.Thead>
                 <Table.Tr>
-                  {th('pending', '•', 28)}
                   {th('key', 'Key')}
                   {th('type', 'Type')}
                   {th('status', 'Status')}
@@ -206,20 +205,17 @@ export function SpecPage() {
                   return (
                     <Table.Tr
                       key={item.id}
-                      className={`row-clickable ${isSelected ? 'row-selected' : ''}`}
+                      className={`row-clickable ${isSelected ? 'row-selected' : ''} ${item.pendingChange ? 'row-pending' : ''}`}
                       onClick={() => select(item)}
                       aria-selected={isSelected}
+                      data-pending={item.pendingChange ? true : undefined}
+                      title={
+                        item.pendingChange
+                          ? `Pending change #${item.pendingChange.seq} (${item.pendingChange.kind}): not handled by your agent yet`
+                          : undefined
+                      }
                       data-testid={`item-${refOf(item)}`}
                     >
-                      <Table.Td>
-                        {item.pendingChange && (
-                          <Tooltip label={`Pending change #${item.pendingChange.seq} (${item.pendingChange.kind}): not handled by your agent yet`}>
-                            <Text c="yellow.7" fw={700} aria-label="pending change">
-                              •
-                            </Text>
-                          </Tooltip>
-                        )}
-                      </Table.Td>
                       <Table.Td className="mono" style={{ whiteSpace: 'nowrap' }}>
                         {item.key ?? '—'}
                       </Table.Td>
@@ -234,15 +230,7 @@ export function SpecPage() {
                           {item.title}
                         </Text>
                       </Table.Td>
-                      <Table.Td style={{ whiteSpace: 'nowrap' }}>
-                        {item.links}
-                        {item.staleLinks > 0 && (
-                          <Text span c="orange" size="xs">
-                            {' '}
-                            ({item.staleLinks} stale)
-                          </Text>
-                        )}
-                      </Table.Td>
+                      <Table.Td style={{ whiteSpace: 'nowrap' }}>{item.links}</Table.Td>
                     </Table.Tr>
                   );
                 })}

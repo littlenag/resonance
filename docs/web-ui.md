@@ -20,7 +20,7 @@ The address `resonance ui --no-open` prints contains the key. Open it yourself, 
 
 ## Spec items
 
-The **Spec** page lists your requirements, decisions, designs and constraints beside the selected item. A `•` marks an item with a change your agent hasn't handled yet.
+The **Spec** page lists your requirements, decisions, designs and constraints beside the selected item. An item with a change your agent hasn't handled yet has an orange row.
 
 - **Search** matches keys, titles and text.
 - **Filters** are columns of checkboxes: type, status, change log (pending or not), links (some stale, all current, none) and source (from a document, or graph only). With nothing checked, everything shows. Checking values narrows the list to them; values of one filter are alternatives, and filters narrow each other. Each value shows how many items it would show; hover over one and click **only** to check just that value.

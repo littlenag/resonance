@@ -40,8 +40,8 @@ describe('spec items', () => {
     });
     renderAt('/spec/FR-002', routes);
     expect(await screen.findByTestId('item-FR-001')).toBeInTheDocument();
-    expect(within(screen.getByTestId('item-FR-001')).getByLabelText('pending change')).toBeInTheDocument();
-    expect(within(screen.getByTestId('item-FR-002')).queryByLabelText('pending change')).toBeNull();
+    expect(screen.getByTestId('item-FR-001')).toHaveAttribute('data-pending');
+    expect(screen.getByTestId('item-FR-002')).not.toHaveAttribute('data-pending');
     // The detail is the item in the address.
     expect(await screen.findByRole('heading', { name: 'FR-002' })).toBeInTheDocument();
     expect(await screen.findByText('src/greet.rs::greet')).toBeInTheDocument();

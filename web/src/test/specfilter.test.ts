@@ -63,9 +63,8 @@ describe('sorting', () => {
     expect(sortItems(items, 'key', 'desc').map((i) => i.key)).toEqual([null, 'FR-10', 'FR-2', 'ADR-0001']);
   });
 
-  it('sorts by links (stale first when descending) and pending changes', () => {
+  it('sorts by links, stale first when descending', () => {
     expect(sortItems(items, 'links', 'desc')[0].key).toBe('FR-10');
-    expect(sortItems(items, 'pending', 'asc')[0].key).toBe('ADR-0001');
   });
 });
 

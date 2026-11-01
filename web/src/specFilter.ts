@@ -90,15 +90,13 @@ export function facetCounts(items: SpecItem[], text: string, selection: Selectio
   return out;
 }
 
-export type SortKey = 'pending' | 'key' | 'type' | 'status' | 'title' | 'links';
+export type SortKey = 'key' | 'type' | 'status' | 'title' | 'links';
 export type SortDir = 'asc' | 'desc';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 function compare(a: SpecItem, b: SpecItem, key: SortKey): number {
   switch (key) {
-    case 'pending':
-      return Number(!!b.pendingChange) - Number(!!a.pendingChange);
     case 'key':
       // Items without a key go last; FR-2 comes before FR-10.
       if (!a.key || !b.key) return Number(!a.key) - Number(!b.key);
@@ -132,7 +130,7 @@ export function readView(params: URLSearchParams): { text: string; selection: Se
     if (v) selection[f.id] = v.split(',').filter(Boolean);
   }
   const sort = params.get('sort') as SortKey | null;
-  const valid: SortKey[] = ['pending', 'key', 'type', 'status', 'title', 'links'];
+  const valid: SortKey[] = ['key', 'type', 'status', 'title', 'links'];
   return {
     text: params.get('q') ?? '',
     selection,
