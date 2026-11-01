@@ -35,6 +35,7 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { call } from './api';
+import { statusLabel } from './fields';
 import { connect, useLive } from './live';
 import type { Health, Session, SpecItem, Status } from './types';
 import { SPEC_TYPES } from './types';
@@ -154,7 +155,7 @@ export function App() {
       list.push({
         id: `item-${item.id}`,
         label: `${item.key ?? ''} ${item.title}`.trim(),
-        description: `${item.type} · ${item.status}`,
+        description: `${item.type} · ${statusLabel(item.status)}`,
         group: 'Spec items',
         keywords: [item.text.slice(0, 200)],
         onClick: () => navigate(`/spec/${encodeURIComponent(ref)}`),

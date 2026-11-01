@@ -2,7 +2,7 @@
 // checked means everything; values of one facet are alternatives, facets narrow each other),
 // and sortable columns. Kept in the address so that a view can be bookmarked.
 
-import { STATUSES } from './fields';
+import { STATUSES, statusLabel } from './fields';
 import type { SpecItem } from './types';
 import { SPEC_TYPES } from './types';
 
@@ -19,7 +19,7 @@ export interface Facet {
 
 export const FACETS: Facet[] = [
   { id: 'type', label: 'Type', value: (i) => i.type, known: SPEC_TYPES },
-  { id: 'status', label: 'Status', value: (i) => i.status, known: [] },
+  { id: 'status', label: 'Status', value: (i) => i.status, known: [], show: statusLabel },
   {
     id: 'pending',
     label: 'Change log',

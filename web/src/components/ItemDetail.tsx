@@ -8,7 +8,7 @@ import { IconAlertTriangle, IconArchive, IconFileDescription, IconPencil } from 
 import { useQuery } from '@tanstack/react-query';
 import Markdown from 'react-markdown';
 import { call } from '../api';
-import { FIELDS, fieldText, label } from '../fields';
+import { FIELDS, fieldText, label, valueLabel } from '../fields';
 import type { LinkView, ShowView, SpecItem } from '../types';
 import { LinkDrawer } from './LinkDrawer';
 import { StatusBadge } from '../pages/SpecPage';
@@ -127,7 +127,7 @@ export function ItemDetail({
                   </Text>
                 )
               ) : (
-                <Text size="sm">{value || '—'}</Text>
+                <Text size="sm">{valueLabel(view.type, f.name, value) || '—'}</Text>
               )}
             </div>
           );

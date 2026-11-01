@@ -11,6 +11,7 @@ import { IconChevronDown, IconChevronUp, IconPlus, IconSearch, IconSelector } fr
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { call } from '../api';
+import { statusLabel } from '../fields';
 import type { SpecItem, SpecType } from '../types';
 import { SPEC_TYPES } from '../types';
 import { ItemDetail } from '../components/ItemDetail';
@@ -312,8 +313,15 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <Badge size="sm" variant="light" color={STATUS_COLORS[status] ?? 'gray'} style={{ overflow: 'visible' }} miw="fit-content">
-      {status}
+    <Badge
+      size="sm"
+      variant="light"
+      tt="none"
+      color={STATUS_COLORS[status] ?? 'gray'}
+      style={{ overflow: 'visible' }}
+      miw="fit-content"
+    >
+      {statusLabel(status)}
     </Badge>
   );
 }

@@ -36,6 +36,38 @@ export const FIELDS: Record<SpecType, FieldSpec[]> = {
 
 export const STATUSES = ['active', 'draft', 'proposed', 'accepted', 'superseded', 'deprecated', 'retired'];
 
+/** The statuses each type allows: the same as the daemon checks. */
+export const STATUSES_BY_TYPE: Record<SpecType, string[]> = {
+  Requirement: ['draft', 'active', 'superseded', 'retired'],
+  Decision: ['proposed', 'accepted', 'superseded', 'deprecated', 'retired'],
+  Design: ['draft', 'active', 'superseded', 'retired'],
+  Constraint: ['draft', 'active', 'superseded', 'retired'],
+};
+
+/** A status as people read it: `active` is "Active". */
+export function statusLabel(status: string): string {
+  return label(status);
+}
+
+/** A requirement's kinds (§6.2). */
+export const KINDS = ['functional', 'non-functional'];
+
+/** A requirement's priorities, highest first. */
+export const PRIORITIES = ['high', 'medium', 'low'];
+
+/** The values a field takes, for the fields that pick from a list rather than take text. */
+export function choicesOf(type: SpecType, field: string): string[] | null {
+  if (field === 'status') return STATUSES_BY_TYPE[type];
+  if (field === 'kind' && type === 'Requirement') return KINDS;
+  if (field === 'priority' && type === 'Requirement') return PRIORITIES;
+  return null;
+}
+
+/** A field's value as people read it: picked values start with a capital, `functional` is "Functional". */
+export function valueLabel(type: SpecType, field: string, value: string): string {
+  return choicesOf(type, field) ? label(value) : value;
+}
+
 /** A property as text, the way the TUI's forms show it. */
 export function fieldText(v: unknown): string {
   if (v === null || v === undefined) return '';

@@ -5,7 +5,6 @@
 import { useMemo, useState } from 'react';
 import {
   Alert,
-  Autocomplete,
   Button,
   Group,
   Modal,
@@ -22,7 +21,7 @@ import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
 import Markdown from 'react-markdown';
 import { call } from '../api';
-import { FIELDS, STATUSES, label, valuesOf } from '../fields';
+import { FIELDS, choicesOf, label, valuesOf } from '../fields';
 import type { SpecItem, SpecType } from '../types';
 import { SPEC_TYPES } from '../types';
 import { SPEC_TYPE_GUIDE } from '../specTypes';
@@ -173,13 +172,16 @@ export function ItemForm({
               value={values[f.name] ?? ''}
               onChange={(v) => setValues((s) => ({ ...s, [f.name]: v }))}
             />
-          ) : f.name === 'status' ? (
-            <Autocomplete
+          ) : choicesOf(type, f.name) ? (
+            <Select
               key={f.name}
-              label="Status"
-              data={STATUSES}
-              value={values[f.name] ?? ''}
-              onChange={(v) => setValues((s) => ({ ...s, [f.name]: v }))}
+              label={label(f.name)}
+              data={options(choicesOf(type, f.name) ?? [], values[f.name] ?? '')}
+              value={values[f.name] || null}
+              placeholder={editing ? undefined : f.name === 'priority' ? 'None' : 'Default for the type'}
+              allowDeselect={!editing}
+              clearable={!editing}
+              onChange={(v) => setValues((s) => ({ ...s, [f.name]: v ?? '' }))}
             />
           ) : (
             <TextInput
@@ -214,6 +216,12 @@ export function ItemForm({
       </Stack>
     </Modal>
   );
+}
+
+/** The field's values, and the current one if it is not among them, so that it shows. */
+function options(allowed: string[], current: string) {
+  const all = current && !allowed.includes(current) ? [...allowed, current] : allowed;
+  return all.map((v) => ({ value: v, label: label(v) }));
 }
 
 function emptyValues(type: SpecType): Record<string, string> {
