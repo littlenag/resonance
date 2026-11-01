@@ -96,13 +96,25 @@ function FacetGroup({
                   }
                   styles={{ label: { opacity: count === 0 && !isChecked ? 0.5 : 1 } }}
                 />
-                <Box style={{ flexShrink: 0 }}>
+                {/* Fixed box so swapping the count for "only" on hover never resizes the row. */}
+                <Box
+                  h={18}
+                  miw={32}
+                  style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}
+                >
                   {hover === value && !(checked.length === 1 && isChecked) ? (
-                    <Anchor size="xs" component="button" onClick={() => onChange([value])} aria-label={`only ${value}`}>
+                    <Anchor
+                      size="xs"
+                      lh={1}
+                      p={0}
+                      component="button"
+                      onClick={() => onChange([value])}
+                      aria-label={`only ${value}`}
+                    >
                       only
                     </Anchor>
                   ) : (
-                    <Text size="xs" c="dimmed">
+                    <Text size="xs" lh={1} c="dimmed">
                       {count}
                     </Text>
                   )}
