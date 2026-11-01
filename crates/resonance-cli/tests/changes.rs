@@ -69,7 +69,7 @@ fn entries_are_replaced_per_item_and_cleared_by_the_agent() {
     // A second change to the same item replaces its entry, with a new sequence number.
     repo.tool(
         "resonance_edit_item",
-        json!({"ref": "FR-100", "fields": {"priority": "high"}}),
+        json!({"ref": "FR-100", "fields": {"kind": "non-functional"}}),
     );
     let second = entries(&repo);
     assert_eq!(second.len(), 1, "{second:?}");
@@ -80,7 +80,7 @@ fn entries_are_replaced_per_item_and_cleared_by_the_agent() {
         second[0]["fields"]
             .as_array()
             .unwrap()
-            .contains(&json!("priority"))
+            .contains(&json!("kind"))
     );
 
     repo.tool(
@@ -92,7 +92,7 @@ fn entries_are_replaced_per_item_and_cleared_by_the_agent() {
 
     // `show` gives the full before and after.
     let show = repo.tool("resonance_changes_show", json!({"seq": seq2}));
-    assert_eq!(show["after"]["priority"], "high");
+    assert_eq!(show["after"]["kind"], "non-functional");
     assert_eq!(show["after"]["text"], "Exports are complete");
 
     // Handling an edit: before is what the agent last saw.

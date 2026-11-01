@@ -178,7 +178,7 @@ export function ItemForm({
               label={label(f.name)}
               data={options(choicesOf(type, f.name) ?? [], values[f.name] ?? '')}
               value={values[f.name] || null}
-              placeholder={editing ? undefined : f.name === 'priority' ? 'None' : 'Default for the type'}
+              placeholder={editing ? undefined : 'Default for the type'}
               allowDeselect={!editing}
               clearable={!editing}
               onChange={(v) => setValues((s) => ({ ...s, [f.name]: v ?? '' }))}

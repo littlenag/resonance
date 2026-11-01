@@ -1968,7 +1968,7 @@ impl Engine {
     /// The fields each spec-item type accepts, besides `key`.
     fn spec_fields(ntype: NodeType) -> &'static [&'static str] {
         match ntype {
-            NodeType::Requirement => &["text", "kind", "priority", "status"],
+            NodeType::Requirement => &["text", "kind", "status"],
             NodeType::Decision => &["title", "decision", "context", "consequences", "status"],
             NodeType::Design => &["title", "text", "status"],
             NodeType::Constraint => &["title", "text", "scope", "status"],
@@ -2041,20 +2041,9 @@ impl Engine {
                 let text =
                     get("text").ok_or_else(|| Error::Usage("a requirement needs text".into()))?;
                 let mut v = self.req_add(key, &text, get("kind").as_deref())?;
-                let mut extra = Vec::new();
-                for k in ["priority", "status"] {
-                    if let Some(val) = get(k) {
-                        extra.push((k, val));
-                    }
-                }
-                if !extra.is_empty() {
+                if let Some(status) = get("status") {
                     let id = v.id.clone();
-                    self.mutate(|tx| {
-                        for (k, val) in &extra {
-                            tx.set_prop(&id, k, json!(val))?;
-                        }
-                        Ok(())
-                    })?;
+                    self.mutate(|tx| tx.set_prop(&id, "status", json!(status)))?;
                     v = self.requirement(&id)?;
                 }
                 v.id
@@ -2359,7 +2348,7 @@ impl Engine {
             }
             if changed {
                 links::refresh_statuses(tx, &id)?;
-                // Status, priority and kind are not in `node_hash` (FR-124).
+                // Status and kind are not in `node_hash` (FR-124).
                 links::stale_document_links(tx, &id)?;
             }
             Ok(())

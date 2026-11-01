@@ -35,7 +35,7 @@ fn designs_constraints_and_their_links() {
     repo.link("CON-1", "constrains", "open");
     repo.tool(
         "resonance_create_item",
-        json!({"type": "Requirement", "key": "FR-010", "fields": {"text": "Opening is atomic", "priority": "high", "status": "draft"}}),
+        json!({"type": "Requirement", "key": "FR-010", "fields": {"text": "Opening is atomic", "kind": "non-functional", "status": "draft"}}),
     );
     repo.link("FR-010", "derivedFrom", "FR-001");
     let why = repo.tool("resonance_show", json!({"ref": "open"}));
@@ -45,7 +45,7 @@ fn designs_constraints_and_their_links() {
         "{why}"
     );
     let r = repo.tool("resonance_show_item", json!({"ref": "FR-010"}));
-    assert_eq!(r["priority"], "high");
+    assert_eq!(r["kind"], "non-functional");
     assert_eq!(r["status"], "draft");
 
     // A design cannot satisfy a requirement; the error says what can.

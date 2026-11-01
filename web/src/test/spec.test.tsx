@@ -14,7 +14,6 @@ const item = (key: string, text: string, extra: Partial<SpecItem> = {}): SpecIte
   text,
   status: 'active',
   kind: 'functional',
-  priority: null,
   source: null,
   props: { text, kind: 'functional', status: 'active' },
   links: 2,

@@ -10,7 +10,6 @@ const item = (key: string | null, type: SpecItem['type'], extra: Partial<SpecIte
   text: `Text of ${key}`,
   status: 'active',
   kind: null,
-  priority: null,
   source: null,
   props: {},
   links: 0,

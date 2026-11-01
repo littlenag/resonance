@@ -11,7 +11,6 @@ export const FIELDS: Record<SpecType, FieldSpec[]> = {
   Requirement: [
     { name: 'text', long: true },
     { name: 'kind', long: false },
-    { name: 'priority', long: false },
     { name: 'status', long: false },
   ],
   Decision: [
@@ -52,14 +51,10 @@ export function statusLabel(status: string): string {
 /** A requirement's kinds (§6.2). */
 export const KINDS = ['functional', 'non-functional'];
 
-/** A requirement's priorities, highest first. */
-export const PRIORITIES = ['high', 'medium', 'low'];
-
 /** The values a field takes, for the fields that pick from a list rather than take text. */
 export function choicesOf(type: SpecType, field: string): string[] | null {
   if (field === 'status') return STATUSES_BY_TYPE[type];
   if (field === 'kind' && type === 'Requirement') return KINDS;
-  if (field === 'priority' && type === 'Requirement') return PRIORITIES;
   return null;
 }
 

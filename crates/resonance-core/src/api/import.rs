@@ -515,9 +515,6 @@ fn write_spec(
                     .unwrap_or_else(|| ids::requirement_kind(key).to_string());
                 p.insert("text".into(), json!(text));
                 p.insert("kind".into(), json!(kind));
-                if let Some(v) = field_value(fields, "priority") {
-                    p.insert("priority".into(), json!(v));
-                }
             }
             NodeType::Decision => {
                 let title = field_value(fields, "title")

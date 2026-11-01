@@ -14,7 +14,6 @@ const base: SpecItem = {
   text: 'Greet',
   status: 'active',
   kind: 'functional',
-  priority: null,
   source: null,
   props: { text: 'Greet', kind: 'functional', status: 'active' },
   links: 0,
@@ -42,7 +41,7 @@ describe('editing', () => {
     expect(saved).toBe('FR-001');
   });
 
-  it('picks status, kind and priority from lists, not free text', async () => {
+  it('picks status and kind from lists, not free text', async () => {
     const calls = mockApi({ spec_show: () => base, spec_edit: () => base });
     const user = userEvent.setup();
     renderAt('/', [{ path: '/', element: <ItemForm mode={{ mode: 'edit', item: base }} onClose={() => {}} onSaved={() => {}} /> }]);
@@ -56,9 +55,6 @@ describe('editing', () => {
     expect(kind).toHaveValue('Functional');
     await user.click(kind);
     expect(await optionsOf(kind)).toEqual(['Functional', 'Non-functional']);
-    const priority = screen.getByLabelText('Priority', { selector: 'input' });
-    await user.click(priority);
-    expect(await optionsOf(priority)).toEqual(['High', 'Medium', 'Low']);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() =>
       expect(calls.find((c) => c.method === 'spec_edit')?.args).toEqual({ ref: 'req:FR-001', fields: { status: 'draft' } }),

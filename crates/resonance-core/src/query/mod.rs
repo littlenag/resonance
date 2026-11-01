@@ -141,8 +141,6 @@ pub struct RequirementView {
     pub kind: String,
     pub status: String,
     pub source: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub priority: Option<String>,
 }
 
 /// Any spec item: a requirement, decision, design or constraint (§8.22), for listing and
@@ -160,7 +158,6 @@ pub struct SpecItemView {
     pub text: String,
     pub status: String,
     pub kind: Option<String>,
-    pub priority: Option<String>,
     /// The document region the item came from, from its `derivedFrom` link (FR-124).
     /// A legacy `source` property left by the removed importer is not a document link.
     pub source: Option<Value>,
@@ -195,7 +192,6 @@ pub fn spec_item_view(node: &Node) -> SpecItemView {
         text,
         status: status_of(node),
         kind: node.str_prop("kind").map(String::from),
-        priority: node.str_prop("priority").map(String::from),
         source: None,
         props: Value::Object(node.props.clone()),
         pending_change: None,
@@ -228,7 +224,6 @@ pub fn requirement_view(node: &Node) -> RequirementView {
         kind: s(node, "kind"),
         status: s(node, "status"),
         source: None,
-        priority: node.str_prop("priority").map(String::from),
     }
 }
 

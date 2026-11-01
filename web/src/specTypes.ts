@@ -18,7 +18,7 @@ export const SPEC_TYPE_GUIDE: Record<SpecType, SpecTypeDoc> = {
   Requirement: {
     captures: 'What the software must do: a statement of required behavior or quality.',
     keys: 'FR-042 (functional), NFR- (non-functional).',
-    fields: 'text, kind, priority, and status (draft, active, superseded, retired).',
+    fields: 'text, kind, and status (draft, active, superseded, retired).',
     graph: 'Code satisfies it. Tests verify it.',
   },
   Decision: {

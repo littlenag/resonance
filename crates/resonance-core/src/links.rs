@@ -227,8 +227,8 @@ pub fn refresh_statuses(tx: &mut Tx<'_>, node: &str) -> Result<StatusChanges> {
 
 /// Mark document links stale when a spec item's fields change (FR-124, FR-272).
 ///
-/// `node_hash` covers only some of an item's text, so a change to `status`, `priority`
-/// or `kind` would otherwise leave `derivedFrom` asserted. The target is the document:
+/// `node_hash` covers only some of an item's text, so a change to `status` or
+/// `kind` would otherwise leave `derivedFrom` asserted. The target is the document:
 /// a code unit of kind `spec`, or a file. Other `derivedFrom` edges (a requirement
 /// refined from another requirement) are left to the hash rules.
 pub fn stale_document_links(tx: &mut Tx<'_>, node: &str) -> Result<StatusChanges> {

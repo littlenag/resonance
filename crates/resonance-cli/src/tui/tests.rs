@@ -202,12 +202,14 @@ fn adds_with_a_suggested_key_and_refuses_a_duplicate() {
     );
     app.finish_text("text", "Exports are complete.\n");
     app.on_key(key(KeyCode::Down));
-    app.on_key(key(KeyCode::Down));
-    type_text(&mut app, "high");
+    type_text(&mut app, "non-functional");
     save(&mut app);
     assert_eq!(app.screen, Screen::List, "{:?}", app.message);
     assert_eq!(app.selected().unwrap().key.as_deref(), Some("FR-003"));
-    assert_eq!(app.selected().unwrap().priority.as_deref(), Some("high"));
+    assert_eq!(
+        app.selected().unwrap().kind.as_deref(),
+        Some("non-functional")
+    );
 
     // A duplicate key is refused, and the form stays open.
     press(&mut app, 'a');
@@ -254,13 +256,13 @@ fn a_tui_edit_is_logged_for_the_git_user_when_the_agent_kit_set_the_actor() {
     call(
         &mut app,
         "spec_edit",
-        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+        json!({"ref": "FR-001", "fields": {"kind": "non-functional"}}),
     );
     press(&mut app, 'l');
     assert_eq!(app.log.len(), 1, "{:?}", app.log);
     assert_eq!(app.log[0].origin, "tui");
     assert_eq!(app.log[0].actor, "human:person@example.com");
-    assert_eq!(app.log[0].fields, vec!["priority".to_string()]);
+    assert_eq!(app.log[0].fields, vec!["kind".to_string()]);
 }
 
 #[test]
@@ -270,7 +272,7 @@ fn pending_changes_are_marked_and_the_person_can_clear_them() {
     call(
         &mut app,
         "spec_edit",
-        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+        json!({"ref": "FR-001", "fields": {"kind": "non-functional"}}),
     );
     call(&mut app, "spec_retire", json!({"ref": "FR-002"}));
     app.refresh();
@@ -283,7 +285,7 @@ fn pending_changes_are_marked_and_the_person_can_clear_them() {
     app.on_key(key(KeyCode::Enter));
     let screen = render(&mut app);
     assert!(
-        screen.contains("Pending change #") && screen.contains("edited: priority"),
+        screen.contains("Pending change #") && screen.contains("edited: kind"),
         "{screen}"
     );
     app.on_key(key(KeyCode::Esc));
@@ -323,7 +325,7 @@ fn escaping_the_log_back_to_detail_reloads_it() {
     call(
         &mut app,
         "spec_edit",
-        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+        json!({"ref": "FR-001", "fields": {"kind": "non-functional"}}),
     );
     app.refresh();
     select(&mut app, "FR-001");

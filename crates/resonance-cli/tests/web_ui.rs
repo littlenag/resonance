@@ -307,7 +307,7 @@ fn spec_work_goes_to_the_change_log_as_the_person_from_the_ui() {
     ok(
         &ui,
         "spec_edit",
-        json!({"ref": key, "fields": {"priority": "high"}}),
+        json!({"ref": key, "fields": {"kind": "non-functional"}}),
     );
     let log = ok(&ui, "changes", json!({}));
     let entry = log

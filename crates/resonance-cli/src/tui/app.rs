@@ -135,12 +135,7 @@ const STATUSES: &[&str] = &[
 /// Fields per type, and which are long (MVP-041).
 pub fn fields_of(t: NodeType) -> &'static [(&'static str, bool)] {
     match t {
-        NodeType::Requirement => &[
-            ("text", true),
-            ("kind", false),
-            ("priority", false),
-            ("status", false),
-        ],
+        NodeType::Requirement => &[("text", true), ("kind", false), ("status", false)],
         NodeType::Decision => &[
             ("title", false),
             ("decision", true),

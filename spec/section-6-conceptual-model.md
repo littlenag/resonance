@@ -6,7 +6,7 @@ The graph is divided into layers by where information comes from, because origin
 
 | Layer | Contents | Origin | Versioned in git? |
 | --- | --- | --- | --- |
-| **Intent** | Requirements, decisions, designs, constraints | Authored by people and agents | Yes |
+| **Intent** | Requirements, decisions, designs, constraints, and the milestones requirements are planned for | Authored by people and agents | Yes |
 | **Realization** | Files (as content); code units (named regions of file content) | Files: authored as text. Code units: declared by people and agents; their current positions are tracked from the text | Files: yes, as ordinary files. Code units: yes (identity and anchors); positions recomputed |
 | **Verification** | Tests (code units with a way to run them), test runs, evidence records | Tests: declared by people and agents. Evidence: recorded from execution | Evidence summaries: [Open] (OQ-09) |
 | **Annotation** | Notes, call-outs, constraints on specific code units | Authored | Yes |
@@ -20,10 +20,11 @@ Keep the core small. Everything else goes through namespaced extensions (§6.6).
 
 | Type | Purpose | Key properties |
 | --- | --- | --- |
-| `Requirement` | A statement of required behavior or quality | `key` (e.g. `FR-042`), `text`, `kind` (functional, non-functional), `status` (draft, active, superseded, retired), `priority` |
+| `Requirement` | A statement of required behavior or quality | `key` (e.g. `FR-042`), `text`, `kind` (functional, non-functional), `status` (draft, active, superseded, retired). No priority: a requirement is satisfied or not, and when it is to be satisfied is its milestone (§8.24) |
 | `Decision` | A recorded choice and its rationale (ADR-like) | `title`, `context`, `decision`, `consequences`, `status` |
 | `Design` | A design element: component, interface, flow | `title`, `description` |
 | `Constraint` | A rule code must obey (performance, compatibility, policy) | `text`, `scope` |
+| `Milestone` | A stage of the project that requirements are planned for (§8.24) | `key` (e.g. `M1`, `v0.3`), `title`, `description`, `targetDate` (optional), `order`, `status` (planned, current, done, retired) |
 | `File` | A file in the working tree | `path`, `blob` (content hash), `language` |
 | `CodeUnit` | A named region of a file's content, such as a function or type as a person or agent sees it. Declared by a person or agent; Resonance does not parse code to find it (§2.5) | `name`, `kind` (free text: function, type, test, block…), `file`, `anchor` (byte range plus quoted text and surrounding context, §8.3) |
 | `Test` | A test case (a `CodeUnit` specialization) | `run` (how to run it alone), `framework` (optional) |
@@ -41,6 +42,7 @@ Keep the core small. Everything else goes through namespaced extensions (§6.6).
 | `constrains` | Decision/Constraint → any | This decision or constraint limits the target | Sometimes (for example, with architecture rules) |
 | `supersedes` | Requirement/Decision → same type | Replaces an earlier version | No |
 | `realizes` | CodeUnit → Design | This code is the current realization of a design element | No |
+| `plannedFor` | Requirement → Milestone | The requirement is to be satisfied by this milestone; at most one per requirement (§8.24) | No |
 | `annotates` | Annotation → any | Attaches an annotation | No |
 | `contains` | File/CodeUnit → CodeUnit | Containment of one region in another | Derived from anchor ranges |
 | `references` | CodeUnit → CodeUnit | Calls, uses, imports, inherits | Never in the primary graph; only in a parallel code-structure graph (§6.7, FR-112) |

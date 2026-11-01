@@ -224,7 +224,7 @@ pub fn definitions() -> Vec<Value> {
                     "properties": {
                         "type": s("Requirement, Decision, Design or Constraint."),
                         "key": s("The item's key, for example FR-042 or ADR-0007."),
-                        "fields": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Requirement: text, kind, priority, status. Decision: title, decision, context, consequences, status. Design: title, text, status. Constraint: title, text, scope, status."},
+                        "fields": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Requirement: text, kind, status. Decision: title, decision, context, consequences, status. Design: title, text, status. Constraint: title, text, scope, status."},
                         "region": {"type": "object", "properties": {
                             "startLine": {"type": "integer", "minimum": 1},
                             "endLine": {"type": "integer", "minimum": 1},
@@ -255,7 +255,7 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "resonance_create_item",
-            "Create a spec item. Requirements need key and fields.text; decisions fields.title and fields.decision; designs fields.title; constraints fields.text. Optional fields: kind, priority, status, scope, context, consequences.",
+            "Create a spec item. Requirements need key and fields.text; decisions fields.title and fields.decision; designs fields.title; constraints fields.text. Optional fields: kind, status, scope, context, consequences.",
             json!({
                 "type": s("Requirement, Decision, Design or Constraint."),
                 "key": s("A key: FR-042 for requirements; optional for the others."),

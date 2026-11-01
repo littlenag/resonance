@@ -47,3 +47,4 @@
 | **Diagnostics** | The web UI's view of what the daemon has done since it started: health, activity, counters, clients and the log, kept in memory only (FR-293, FR-294). |
 | **Change log** | A concise, local log of people's changes to spec items, which agents read from a remembered cursor and clear as they handle entries (FR-274–FR-278). |
 | **Realization summary** | An agent-written, architectural-level summary of how the code linked to a spec item behaves and satisfies it, stale when either changes (FR-280, FR-281). |
+| **Milestone** | A named stage of the project that requirements are planned for. The requirements in the **current** milestone are in scope: the work in hand. Those in later milestones, and unscheduled ones, are planned but not yet to be implemented (§8.24). |

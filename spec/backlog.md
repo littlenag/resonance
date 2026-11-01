@@ -137,6 +137,19 @@ Items are grouped into **suggested increments**, in a sensible build order. Each
 - **FR-281** [tui] Realization summaries are `Annotation`s of kind `summary` on the spec item, recording the code and hashes they describe, and go stale when either changes.
 - **FR-282** [tui] The agent kit makes writing and refreshing summaries part of implementing a spec item, and agents can be asked for one.
 
+## B20 — Milestones
+*Builds on the MVP's intent API, web UI and TUI. Milestones replace requirement priority, which the MVP no longer has.*
+
+- **FR-299** [intent] `Milestone` nodes: key, title, description, target date, order, status (planned, current, done, retired); authored, versioned, never deleted.
+- **FR-300** [intent] A requirement in at most one milestone (`plannedFor`); unscheduled requirements; moves are logged in the change log and stale nothing.
+- **FR-301** [intent] At most one current milestone, chosen by a person, never by an agent on its own.
+- **FR-302** [agent] Requirements in the current milestone are in scope; later and unscheduled ones are planned, not implemented unless asked; verification views report gaps in scope by default.
+- **FR-303** [verification] Milestone progress (satisfied, verified); completing one never moves requirements silently.
+- **FR-304** [ui] Milestones in the web UI, TUI and MCP: picked from a list, filtered and sorted by, and a milestones view with progress.
+- **FR-305** [intent] Agents may propose milestones and placements when importing, in the preview.
+- **S28** [intent] Requirements staged in milestones.
+- **OQ-32** [intent] Milestones for decisions, designs and constraints too.
+
 ## B15 — Regeneration workflows (roadmap Phase 6)
 - **S5 / S7 end to end** [model] A requirement change drives agent regeneration; `realizes` and `satisfies` links recomputed and re-verified.
 

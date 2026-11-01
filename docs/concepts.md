@@ -16,7 +16,7 @@ Requirements, decisions, designs and constraints are **spec items**. Each has a 
 
 | Item | What it says | Typical fields |
 | --- | --- | --- |
-| **Requirement** | What the software must do. Keys starting with `NFR-` are non-functional. | text, kind, priority, status (`draft`, `active`, `superseded`, `retired`) |
+| **Requirement** | What the software must do. Keys starting with `NFR-` are non-functional. | text, kind, status (`draft`, `active`, `superseded`, `retired`) |
 | **Decision** | A choice and its reasons. | title, decision, context, consequences, status (`proposed`, `accepted`, `superseded`, `deprecated`, `retired`) |
 | **Design** | How something is built. Code *realizes* it. | title, text, status |
 | **Constraint** | A limit on how something is built. It *constrains* what it applies to. | title, text, scope, status |

@@ -135,3 +135,9 @@ Each scenario lists acceptance criteria (AC). Scenario IDs are referenced from r
 - AC2: Another web page, another user on the machine, or a request naming another host cannot read or change anything (FR-288).
 - AC3: Everything the TUI does can be done in the web UI, attributed to the person and logged in the change log, and the page stays current while an agent works (FR-290, FR-291).
 - AC4: The diagnostics view shows what the daemon has done since it started (requests, reconciles, git operations, change sets) with timings, who is connected, and the live log; the person raises the log level, reconciles, and exports the events for a bug report without item text in it (FR-293–FR-298).
+
+**S28 — Requirements are staged in milestones.** A developer splits the spec into a current milestone and a later one, asks their agent to implement the spec, and later closes the first milestone.
+- AC1: The developer creates milestones `M1` (current) and `M2` and places requirements in each; in the web UI the milestone is picked from a list, and the spec list filters by it (FR-299, FR-300, FR-304).
+- AC2: Asked to implement the spec, the agent implements, links and verifies only `M1`'s requirements. It refines an `M2` requirement when asked, without implementing it (FR-302).
+- AC3: `resonance_unverified` reports gaps only in `M1`, and all of them on request (FR-302).
+- AC4: Marking `M1` done while one of its requirements is unverified asks where that requirement goes; `M2` becomes current only when the developer says so (FR-301, FR-303).

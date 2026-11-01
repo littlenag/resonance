@@ -220,12 +220,12 @@ fn reimporting_text_that_disagrees_with_the_region_does_not_reset_the_link() {
 }
 
 #[test]
-fn editing_priority_or_retiring_stales_the_document_link() {
+fn editing_kind_or_retiring_stales_the_document_link() {
     let repo = TestRepo::with_project();
     repo.import_sample();
     repo.tool(
         "resonance_edit_item",
-        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+        json!({"ref": "FR-001", "fields": {"kind": "non-functional"}}),
     );
     assert_eq!(source_link_status(&repo, "FR-001"), "stale");
     let kinds: Vec<String> = repo.json(&["status"])["repair"]
@@ -247,11 +247,11 @@ fn every_item_is_edited_through_the_graph() {
     // An item that came from a document is edited in the graph like any other (FR-272).
     repo.tool(
         "resonance_edit_item",
-        json!({"ref": "FR-001", "fields": {"priority": "high"}}),
+        json!({"ref": "FR-001", "fields": {"kind": "non-functional"}}),
     );
     assert_eq!(
-        repo.tool("resonance_show_item", json!({"ref": "FR-001"}))["priority"],
-        "high"
+        repo.tool("resonance_show_item", json!({"ref": "FR-001"}))["kind"],
+        "non-functional"
     );
     repo.tool(
         "resonance_create_requirement",

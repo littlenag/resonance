@@ -19,7 +19,6 @@ export interface SpecItem {
   text: string;
   status: string;
   kind: string | null;
-  priority: string | null;
   source: { path?: string; line?: number } | null;
   props: Record<string, unknown>;
   pendingChange?: PendingChange;
