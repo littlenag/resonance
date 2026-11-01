@@ -3,7 +3,7 @@
 // are in the query string, so that a view can be bookmarked.
 
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { Badge, Box, Button, Flex, Group, Menu, ScrollArea, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { Badge, Box, Button, Flex, Group, Menu, Stack, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
@@ -16,6 +16,7 @@ import { SPEC_TYPES } from '../types';
 import { ItemDetail } from '../components/ItemDetail';
 import { ItemForm, type FormMode } from '../components/ItemForm';
 import { Facets } from '../components/Facets';
+import { SpecTypesGuide } from '../components/SpecTypesGuide';
 import {
   applyFilters,
   facetCounts,
@@ -145,8 +146,8 @@ export function SpecPage() {
   );
 
   return (
-    <>
-      <Group mb="sm" gap="sm" wrap="wrap">
+    <Stack gap="sm" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <Group gap="sm" wrap="wrap">
         <TextInput
           ref={filterRef}
           placeholder="Search keys and text (/)"
@@ -178,19 +179,17 @@ export function SpecPage() {
         </Text>
       </Group>
       {list.error && (
-        <Text c="red" mb="sm">
+        <Text c="red">
           {(list.error as Error).message}
         </Text>
       )}
-      <Flex gap="md" align="flex-start" wrap="nowrap">
-        <Box w={210} style={{ flexShrink: 0 }}>
-          <ScrollArea h="calc(100vh - 150px)" type="auto" offsetScrollbars>
-            <Facets counts={counts} selection={view.selection} onChange={(s: Selection) => setView({ selection: s })} />
-          </ScrollArea>
+      <SpecTypesGuide />
+      <Flex gap="md" align="stretch" wrap="nowrap" style={{ flex: '1 1 0', minHeight: 0, overflow: 'hidden' }}>
+        <Box w={210} style={{ flex: '0 0 210px', minHeight: 0, overflow: 'auto' }}>
+          <Facets counts={counts} selection={view.selection} onChange={(s: Selection) => setView({ selection: s })} />
         </Box>
-        <Box style={{ flex: '1.2 1 0', minWidth: 0 }}>
-          <ScrollArea h="calc(100vh - 150px)" type="auto">
-            <Table highlightOnHover stickyHeader verticalSpacing={4} fz="sm">
+        <Box style={{ flex: '1.2 1 0', minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+          <Table highlightOnHover stickyHeader verticalSpacing={4} fz="sm">
               <Table.Thead>
                 <Table.Tr>
                   {th('pending', '•', 28)}
@@ -248,30 +247,27 @@ export function SpecPage() {
                   );
                 })}
               </Table.Tbody>
-            </Table>
-            {!list.isLoading && items.length === 0 && (
-              <Text c="dimmed" p="md">
-                {filtered
-                  ? 'No spec items match these filters.'
-                  : 'No spec items yet: add one, or ask your agent to bring in your spec documents.'}
-              </Text>
-            )}
-          </ScrollArea>
+          </Table>
+          {!list.isLoading && !list.error && items.length === 0 && (
+            <Text c="dimmed" p="md">
+              {filtered
+                ? 'No spec items match these filters.'
+                : 'No spec items yet: add one, or ask your agent to bring in your spec documents.'}
+            </Text>
+          )}
         </Box>
-        <Box style={{ flex: '1 1 0', minWidth: 0 }}>
-          <ScrollArea h="calc(100vh - 150px)" type="auto">
-            {selectedRef ? (
-              <ItemDetail
-                // The address's reference when there is one, so that the detail is fetched once.
-                itemRef={decoded ?? current?.id ?? selectedRef}
-                listItem={current}
-                onEdit={(item) => setForm({ mode: 'edit', item })}
-                onRetire={retire}
-              />
-            ) : (
-              <Text c="dimmed">Select an item to see its details.</Text>
-            )}
-          </ScrollArea>
+        <Box style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, overflow: 'auto' }}>
+          {selectedRef ? (
+            <ItemDetail
+              // The address's reference when there is one, so that the detail is fetched once.
+              itemRef={decoded ?? current?.id ?? selectedRef}
+              listItem={current}
+              onEdit={(item) => setForm({ mode: 'edit', item })}
+              onRetire={retire}
+            />
+          ) : (
+            <Text c="dimmed">Select an item to see its details.</Text>
+          )}
         </Box>
       </Flex>
       {openForm && (
@@ -286,7 +282,7 @@ export function SpecPage() {
           }}
         />
       )}
-    </>
+    </Stack>
   );
 }
 

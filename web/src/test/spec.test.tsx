@@ -97,6 +97,25 @@ describe('spec items', () => {
     await waitFor(() => expect(order()).toEqual(['item-FR-001', 'item-ADR-0001']));
   });
 
+  it('explains what each spec type captures, and the explanation can be folded away', async () => {
+    mockApi({
+      spec_list: () => [],
+    });
+    const user = userEvent.setup();
+    renderAt('/spec', routes);
+    const guide = await screen.findByRole('region', { name: 'Spec types' });
+    expect(guide).toHaveTextContent('What the software must do');
+    expect(guide).toHaveTextContent('recorded choice and its rationale');
+    expect(guide).toHaveTextContent('How something is shaped');
+    expect(guide).toHaveTextContent('rule the work must obey');
+    expect(guide).toHaveTextContent('Code satisfies it');
+    expect(guide).toHaveTextContent('Code realizes it');
+    const toggle = screen.getByRole('button', { name: 'What these types capture' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  });
+
   it('opens what a link points to, with its lines highlighted', async () => {
     const fr = item('FR-001', 'The system shall greet.');
     mockApi({

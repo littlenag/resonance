@@ -25,6 +25,7 @@ import { call } from '../api';
 import { FIELDS, STATUSES, label, valuesOf } from '../fields';
 import type { SpecItem, SpecType } from '../types';
 import { SPEC_TYPES } from '../types';
+import { SPEC_TYPE_GUIDE } from '../specTypes';
 
 export type FormMode = { mode: 'add'; type: SpecType } | { mode: 'edit'; item: SpecItem };
 
@@ -161,6 +162,9 @@ export function ItemForm({
             />
           </Group>
         )}
+        <Text size="sm" c="dimmed">
+          {SPEC_TYPE_GUIDE[type].captures} {SPEC_TYPE_GUIDE[type].graph}
+        </Text>
         {fields.map((f) =>
           f.long ? (
             <LongField

@@ -1,6 +1,6 @@
 // The web UI (MVP-043): the spec, the change log, diagnostics and logs, served by the daemon.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionIcon,
   Alert,
@@ -42,6 +42,8 @@ import { SpecPage } from './pages/SpecPage';
 import { ChangeLogPage } from './pages/ChangeLogPage';
 import { DiagnosticsPage } from './pages/DiagnosticsPage';
 import { LogsPage } from './pages/LogsPage';
+import { BootScreen } from './components/BootScreen';
+import { bootPhase, describeState } from './boot';
 
 const STATE_COLORS: Record<string, string> = {
   ready: 'green',
@@ -69,19 +71,41 @@ export function App() {
   }, [queryClient]);
 
   const session = useQuery({ queryKey: ['session'], queryFn: () => call<Session>('session') });
-  const status = useQuery({
-    queryKey: ['status'],
-    queryFn: () => call<Status>('status', {}, { cached: true }),
-  });
   const health = useQuery({
     queryKey: ['health'],
     queryFn: () => call<Health>('health'),
-    refetchInterval: 5000,
+    // Poll quickly until the daemon can serve the graph, then settle (FR-095).
+    refetchInterval: (query) => (query.state.data?.ready ? 5000 : 300),
+  });
+  const ready = health.data?.ready === true;
+  // Spec items are fetched only once the daemon is ready, or the person asks to look anyway.
+  // A fetch during startup can fail or come back empty and then stay cached.
+  const [proceeded, setProceeded] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (ready) return;
+    const start = Date.now();
+    const id = window.setInterval(() => setElapsed(Date.now() - start), 200);
+    return () => window.clearInterval(id);
+  }, [ready]);
+  const serveGraph = ready || proceeded;
+  const status = useQuery({
+    queryKey: ['status'],
+    queryFn: () => call<Status>('status', {}, { cached: true }),
+    enabled: serveGraph,
   });
   const allItems = useQuery({
     queryKey: ['spec', 'all'],
     queryFn: () => call<SpecItem[]>('spec_list', {}),
+    enabled: serveGraph,
   });
+  const wasReady = useRef(false);
+  useEffect(() => {
+    if (!ready || wasReady.current) return;
+    wasReady.current = true;
+    void queryClient.invalidateQueries({ queryKey: ['spec'] });
+    void queryClient.invalidateQueries({ queryKey: ['status'] });
+  }, [ready, queryClient]);
 
   useHotkeys([
     ['shift+/', () => setHelp(true)],
@@ -142,6 +166,10 @@ export function App() {
   const state = health.data?.state ?? '…';
   const pending = status.data?.pendingChanges ?? 0;
   const path = location.pathname;
+  const phase = bootPhase(ready, elapsed, proceeded);
+  // Logs and diagnostics read the daemon's own buffers and answer during startup.
+  const escape = path.startsWith('/logs') || path.startsWith('/diagnostics');
+  const showBoot = phase !== 'ready' && !escape;
 
   return (
     <AppShell header={{ height: 52 }} navbar={{ width: 200, breakpoint: 'sm' }} padding="md">
@@ -220,16 +248,44 @@ export function App() {
         />
       </AppShell.Navbar>
       <AppShell.Main>
-        <ConnectionBanner />
-        <Routes>
-          <Route path="/" element={<Navigate to="/spec" replace />} />
-          <Route path="/spec" element={<SpecPage />} />
-          <Route path="/spec/:ref" element={<SpecPage />} />
-          <Route path="/changes" element={<ChangeLogPage />} />
-          <Route path="/diagnostics" element={<DiagnosticsPage />} />
-          <Route path="/logs" element={<LogsPage />} />
-          <Route path="*" element={<Navigate to="/spec" replace />} />
-        </Routes>
+        <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 84px)', minHeight: 0 }}>
+          <ConnectionBanner />
+          <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {showBoot ? (
+              <BootScreen
+                phase={phase}
+                elapsedMs={elapsed}
+                state={health.data?.state}
+                pendingEvents={health.data?.pendingEvents ?? 0}
+                lagMs={health.data?.lagMs ?? 0}
+                error={health.error ? (health.error as Error).message : (health.data?.lastError ?? null)}
+                onLogs={() => navigate('/logs')}
+                onDiagnostics={() => navigate('/diagnostics')}
+                onProceed={() => {
+                  setProceeded(true);
+                  navigate('/spec');
+                }}
+              />
+            ) : (
+            <>
+            {proceeded && !ready && (
+              <Alert mb="sm" color="yellow" title="The daemon is not ready">
+                The daemon is still {describeState(health.data?.state)}. Spec items refresh when it is ready.
+              </Alert>
+            )}
+            <Routes>
+              <Route path="/" element={<Navigate to="/spec" replace />} />
+              <Route path="/spec" element={<SpecPage />} />
+              <Route path="/spec/:ref" element={<SpecPage />} />
+              <Route path="/changes" element={<ChangeLogPage />} />
+              <Route path="/diagnostics" element={<DiagnosticsPage />} />
+              <Route path="/logs" element={<LogsPage />} />
+              <Route path="*" element={<Navigate to="/spec" replace />} />
+            </Routes>
+            </>
+            )}
+          </div>
+        </div>
       </AppShell.Main>
       <Spotlight
         actions={actions}

@@ -12,6 +12,7 @@ import { FIELDS, fieldText, label } from '../fields';
 import type { LinkView, ShowView, SpecItem } from '../types';
 import { LinkDrawer } from './LinkDrawer';
 import { StatusBadge } from '../pages/SpecPage';
+import { SPEC_TYPE_GUIDE } from '../specTypes';
 
 const SKIP = new Set(['source', 'alsoDefinedIn', 'key', 'specStatus', 'origin']);
 
@@ -70,6 +71,11 @@ export function ItemDetail({
           <Text fw={500} mt={4}>
             {view.title}
           </Text>
+          {SPEC_TYPE_GUIDE[view.type] && (
+            <Text size="sm" c="dimmed" mt={4}>
+              {SPEC_TYPE_GUIDE[view.type].captures}
+            </Text>
+          )}
         </div>
         <Group gap="xs" wrap="nowrap">
           <Button size="xs" variant="light" leftSection={<IconPencil size={14} />} onClick={() => onEdit(view)}>
